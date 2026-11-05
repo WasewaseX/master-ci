@@ -160,6 +160,21 @@ Profile presets (quick / standard / strict / custom) only change the
 - **Disable:** `run_rust: 'false'`.
 - **Time:** 5-20 minutes cold, 1-5 warm (shared `rust-cache`).
 
+## `go-lint` / `go-test` - Go stack
+
+- **Inspects:** the module rooted at the repository `go.mod`: gofmt
+  formatting, `go vet`, golangci-lint, `go build ./...`, and the test suite
+  under the race detector (`go test -race -shuffle=on ./...`).
+- **Does not inspect:** nested modules (root manifest only), vendored
+  trees (`vendor/` is excluded from path filtering like every stack).
+- **Fails when:** formatting drift, vet findings, golangci-lint findings,
+  build or test failures.
+- **False positives:** golangci-lint defaults on legacy code - add a
+  `.golangci.yml` to tune; repos with no tests still pass.
+- **Disable:** `run_go: 'false'`; force with `run_go: 'true'`, pin the
+  toolchain with `go_version` (default `stable`).
+- **Time:** 1-5 minutes warm (module cache), 5-10 cold.
+
 ## `security` - Semgrep, Trivy, OSV
 
 - **Inspects:** source with Semgrep packs (default
@@ -242,3 +257,21 @@ positive rate documented above.
 
 A regression that makes the pipeline pass when it should fail - or fail for
 the wrong reason - turns the selftest red.
+
+## `heal` and `audit` - the reactive loop and the whole-repo sweep
+
+`heal.yml` is the reactive self-heal loop. When CI, Master CI or the
+selftest reports a failure on the default branch, it applies the same safe
+fixers as the weekly autofix (rustfmt, ruff, Biome, gofmt, markdownlint)
+and opens or updates the `ci/autofix` PR. Circuit breakers: it reacts to
+default-branch failures only, one heal runs at a time, and it stops while
+a fix PR is already open - a failing fix PR needs a human, not another
+iteration. It never pushes to a branch; the PR is the whole change.
+
+`audit.yml` is the whole-repository deep audit: scheduled (Saturdays 06:00
+UTC) and on demand, never on push or PR. It re-examines what the
+incremental gates only sample - full git history (gitleaks), every file in
+the tree (integrity engine), every dependency manifest (osv-scanner), Go
+modules (govulncheck), SQL sources (sqlfluff) - and appends the result to
+one tracking issue labeled `audit`. Every scan is `continue-on-error` by
+design: findings inform, they never gate.

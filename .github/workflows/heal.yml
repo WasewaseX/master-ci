@@ -1,0 +1,128 @@
+# =============================================================================
+# Self-Heal - reactive companion to the weekly autofix loop
+# =============================================================================
+# workflow_run is used ONLY to react to CI failures on the default branch;
+# no untrusted code is checked out or executed (fixers run against the
+# repository's own default branch, and all changes land through a
+# reviewable PR, never a push).
+# =============================================================================
+# When CI fails on the default branch, this workflow applies the same safe
+# fixers the weekly autofix uses and opens/updates the `ci/autofix` PR.
+# Merge the PR and the branch is green again: the loop closes itself.
+#
+# Circuit breakers (a self-healing loop must never loop forever):
+#   1. It only reacts to failures on the DEFAULT branch. Failures on fix
+#      PRs or feature branches never trigger another heal.
+#   2. If a `ci/autofix` PR is already open it stops: a failing fix PR
+#      needs a human, not another iteration.
+#   3. It never pushes to a branch - all changes land as one reviewable PR,
+#      and closing the PR is the rollback.
+#   4. A fixed concurrency group serializes heals; nothing runs in parallel.
+#
+# PRs created with GITHUB_TOKEN intentionally do not re-trigger workflows.
+# To have Master CI run on the heal PR automatically, store a PAT with
+# `repo` + `workflow` scopes as the AUTOFIX_TOKEN repository secret.
+# =============================================================================
+
+name: Self-Heal
+
+on:
+  # zizmor: ignore[dangerous-triggers] - reactive self-heal on default-branch
+  # CI failures only; no untrusted checkout, no push, PR-only changes
+  workflow_run:
+    workflows: ["CI", "Master CI", "Master CI Selftest"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: self-heal
+  cancel-in-progress: false
+
+jobs:
+  heal:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'failure' &&
+       github.event.workflow_run.head_branch == github.event.workflow_run.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Circuit breaker - skip when a fix PR is already open
+        id: breaker
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prs=$(gh pr list --head ci/autofix --state open --json number --jq 'length')
+          if [ "$prs" -gt 0 ]; then
+            echo "::notice::ci/autofix PR is already open - not healing over it; merge or close it first"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Apply Rust fixes
+        if: steps.breaker.outputs.skip != 'true' && hashFiles('Cargo.toml') != ''
+        run: |
+          rustup component add rustfmt
+          cargo fmt --all
+
+      - name: Apply Python fixes
+        if: steps.breaker.outputs.skip != 'true' && hashFiles('**/*.py') != ''
+        run: |
+          python -m pip install --quiet ruff
+          ruff check --fix .
+          ruff format .
+
+      - name: Apply Node fixes
+        if: steps.breaker.outputs.skip != 'true' && hashFiles('**/package.json') != ''
+        run: |
+          npx --yes @biomejs/biome check --write --no-errors-on-unmatched .
+
+      - name: Apply Go fixes
+        if: steps.breaker.outputs.skip != 'true' && hashFiles('go.mod') != ''
+        run: |
+          find . -name '*.go' -type f \
+            -not -path './vendor/*' -not -path './node_modules/*' -print0 \
+            | xargs -0 gofmt -w
+
+      - name: Apply Markdown fixes
+        if: steps.breaker.outputs.skip != 'true'
+        run: |
+          # copy the default config only when it ships with the repo
+          if [ ! -f .markdownlint-cli2.jsonc ] && [ -f configs/.markdownlint-cli2.jsonc ]; then
+            cp configs/.markdownlint-cli2.jsonc .
+          fi
+          npx --yes markdownlint-cli2 --fix "**/*.md"
+
+      - name: Open or update the fix PR
+        if: steps.breaker.outputs.skip != 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ secrets.AUTOFIX_TOKEN || github.token }}
+          branch: ci/autofix
+          title: 'ci: self-heal formatting and safe lint fixes'
+          body: |
+            Opened automatically because CI failed on the default branch
+            (run: ${{ github.event.workflow_run.html_url || 'manual dispatch' }}).
+
+            This PR applies only deterministic safe fixers (rustfmt, ruff,
+            Biome, gofmt, markdownlint). If the failure was not format or
+            lint drift, there is nothing to heal here - close this PR and
+            fix the cause.
+
+            Safety rails:
+            - Nothing is pushed directly: this PR is the whole change.
+            - Master CI re-runs on this branch; only merge with green CI.
+            - Close this PR to roll back, or reopen it any time.
+          labels: |
+            automation
+            autofix
+          commit-message: 'ci: self-heal automated formatting and safe lint fixes'

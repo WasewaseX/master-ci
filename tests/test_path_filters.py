@@ -157,10 +157,16 @@ SINGLE_FILE_CASES: dict[str, frozenset[str]] = {
     "biome.jsonc": frozenset({"node"}),
     "tsconfig.json": frozenset({"node"}),
     "packages/app/tsconfig.base.json": frozenset({"node"}),
+    # Go
+    "main.go": frozenset({"code", "go"}),
+    "cmd/server/main.go": frozenset({"code", "go"}),
+    "cmd/x/z.go": frozenset({"code", "go"}),
+    "internal/store/db.go": frozenset({"code", "go"}),
+    "go.mod": frozenset({"go"}),
+    "go.sum": frozenset({"go"}),
+    "go.work": frozenset({"go"}),
+    ".golangci.yml": frozenset({"go"}),
     # Other languages: code-level checks only
-    "main.go": frozenset({"code"}),
-    "cmd/server/main.go": frozenset({"code"}),
-    "cmd/x/z.go": frozenset({"code"}),
     "vendor/x/z.go": frozenset(),
     "lib/User.java": frozenset({"code"}),
     "app/models/user.rb": frozenset({"code"}),
@@ -217,8 +223,6 @@ SINGLE_FILE_CASES: dict[str, frozenset[str]] = {
     ".github/CODEOWNERS": frozenset(),
     ".github/workflows/ci.yml.bak": frozenset({"workflows"}),
     "Makefile": frozenset(),
-    "go.mod": frozenset(),
-    "go.sum": frozenset(),
     "config.yaml": frozenset(),
     ".editorconfig": frozenset(),
     ".gitignore": frozenset(),
@@ -254,6 +258,7 @@ def test_multi_file_layouts_are_the_union_of_single_files() -> None:
         ["Dockerfile", "main.go"],
         ["dist/bundle.js", "src/index.ts"],
         ["Cargo.toml", "Cargo.lock", "src/main.rs"],
+        ["go.mod", "go.sum", "cmd/x/z.go"],
         ["setup.py", "crates/core/src/lib.rs"],
         ["docs/guide.md", "coverage/lcov-report/index.js"],
         ["node_modules/pkg/index.js", "src/index.ts"],
@@ -313,7 +318,7 @@ def test_every_stack_filter_has_a_force_run_input() -> None:
     data = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     trigger = data[True] if True in data else data["on"]
     inputs = trigger["workflow_call"]["inputs"]
-    for stack in ("node", "python", "rust"):
+    for stack in ("node", "python", "rust", "go"):
         assert stack in FILTERS, f"missing {stack} filter"
         assert f"run_{stack}" in inputs, f"missing run_{stack} input to force {stack}"
 

@@ -90,6 +90,8 @@ works for consumers too.
 | `node-test` | Node changed | Test suite |
 | `python` | Python changed | Lint, format, types, dead code, complexity, tests |
 | `rust` | Rust changed | Format, clippy, advisories, licenses, tests |
+| `go-lint` | Go changed | gofmt, go vet, golangci-lint |
+| `go-test` | Go changed | Build + race-tested, shuffled test suite |
 | `security` | meta ok | Semgrep, Trivy, OSV scanning |
 | `deps-review` | PRs | Dependency and license review |
 | `scorecard` | pushes to default branch | OSSF Scorecard |
@@ -162,6 +164,16 @@ Rust:
 | 33 | Format drift | rustfmt --check |
 | 34 | Lint gate | clippy -D warnings |
 | 35 | Tests | cargo test |
+
+Go:
+
+| # | Check | Tool |
+|---|---|---|
+| 36 | Format drift | gofmt |
+| 37 | Static analysis | go vet |
+| 38 | Lint gate | golangci-lint |
+| 39 | Build | go build ./... |
+| 40 | Test suite (race detector, shuffled) | go test -race |
 
 Integrity engine (the detector in this repo, `scripts/ai_slop_detector.py`).
 It checks code, documents and frontend files for machine-written filler and
@@ -343,30 +355,35 @@ autofix PR ──> safe formatters ──> merge ──┘
 | Fixture contracts | `ci.yml` | every push / PR | Detector and tooling run against `fixtures/` edge cases (empty, slop, ignore-file, malformed YAML) |
 | **Selftest** | `selftest.yml` | every push / PR | Calls the reusable workflow three ways: must pass (quick profile), must fail (broken Semgrep pack), must reject an unsafe `template_ref` - the `verify` job asserts all three verdicts |
 | Self-update | `dependabot.yml` | weekly | Bumps every pinned action, grouped PR |
-| Self-heal | `autofix.yml` | weekly + manual | Runs ruff, Biome, rustfmt, markdownlint `--fix`, opens a PR |
+| Autofix | `autofix.yml` | weekly + manual | Runs ruff, Biome, rustfmt, gofmt, markdownlint `--fix`, opens a PR |
+| **Self-Heal** | `heal.yml` | after CI failures on the default branch | Applies the same safe fixers reactively, opens/updates the `ci/autofix` PR; circuit breakers: default-branch failures only, one heal at a time, stops while a fix PR is open |
 | Deep sweep | `nightly.yml` | nightly + manual | Full-severity Trivy, CodeQL quality suites, verbose AI report |
+| **Deep Audit** | `audit.yml` | weekly (Saturdays) + manual | Whole-repository sweep - full git history (gitleaks), every file (integrity engine), every dependency manifest (osv-scanner), Go modules (govulncheck), SQL (sqlfluff) - one tracking issue labeled `audit`; never gates CI |
 | Housekeeping | `stale.yml` | weekly | Marks and closes inactive issues and PRs (never security-labeled ones) |
 | Auto-label | `label.yml` | every PR | Labels PRs by touched paths |
 
-Autofix opens **reviewable PRs**; nothing merges or rewrites code without a
-human pressing the button, CI must be green before the PR merges, and
-closing the PR is the rollback.
+Autofix and Self-Heal open **reviewable PRs**; nothing merges or rewrites
+code without a human pressing the button, CI must be green before the PR
+merges, and closing the PR is the rollback. The Deep Audit never gates CI
+at all - it is a clock-driven, read-only sweep with one tracking issue.
 
 ## Testing the template
 
 The template ships three layers of self-tests, all runnable locally:
 
 ```bash
-python -m pytest -q          # 74 tests:
+python -m pytest -q          # 78 tests:
                              # - detector contracts (43): every rule family,
                              #   slop pairs, scoring, SARIF, baseline
-                             # - path-filter regression (12): 85+ synthetic
+                             # - path-filter regression (12): 100 synthetic
                              #   repo layouts with exact expected stacks,
                              #   picomatch-semantics translator, output wiring
-                             # - workflow contracts (19): SHA pins, no
+                             # - workflow contracts (23): SHA pins, no
                              #   secrets:inherit, no template injection in
                              #   run blocks, timeouts, permissions, helper
-                             #   configs, automation safety, selftest wiring
+                             #   configs, automation safety, selftest wiring,
+                             #   self-heal circuit breakers, deep-audit
+                             #   schedule/no-gate guarantees
 .github/workflows/selftest.yml  # in CI: three live calls of the reusable
                                 # workflow (pass / enforced fail / invalid input)
 ```

@@ -59,6 +59,16 @@ on:
         required: false
         type: string
         default: auto
+      run_go:
+        description: 'auto | true | false - run the Go stack'
+        required: false
+        type: string
+        default: auto
+      go_version:
+        description: Go toolchain for the Go stack
+        required: false
+        type: string
+        default: 'stable'
       semgrep_config:
         description: Space-separated Semgrep registry packs (used by standard/strict/custom)
         required: false
@@ -229,6 +239,7 @@ jobs:
       node: ${{ steps.filter.outputs.node }}
       python: ${{ steps.filter.outputs.python }}
       rust: ${{ steps.filter.outputs.rust }}
+      go: ${{ steps.filter.outputs.go }}
       docs: ${{ steps.filter.outputs.docs }}
       docker: ${{ steps.filter.outputs.docker }}
       workflows: ${{ steps.filter.outputs.workflows }}
@@ -307,6 +318,19 @@ jobs:
               - '**/Cargo.lock'
               - '**/rust-toolchain*'
               - '**/deny.toml'
+              - '!**/dist/**'
+              - '!**/build/**'
+              - '!**/target/**'
+              - '!**/vendor/**'
+              - '!**/coverage/**'
+              - '!**/node_modules/**'
+            go:
+              - '**/*.go'
+              - '**/go.mod'
+              - '**/go.sum'
+              - '**/go.work'
+              - '**/.golangci.yml'
+              - '**/.golangci.yaml'
               - '!**/dist/**'
               - '!**/build/**'
               - '!**/target/**'
@@ -749,6 +773,83 @@ jobs:
         run: cargo test --workspace --all-features
 
   # ---------------------------------------------------------------------------
+  # Go stack: formatting, vet, golangci-lint (root go.mod only)
+  # ---------------------------------------------------------------------------
+  go-lint:
+    needs: [changes, meta]
+    if: needs.meta.result == 'success' && ((inputs.run_go == 'auto' && needs.changes.outputs.go == 'true') || inputs.run_go == 'true')
+    runs-on: ${{ inputs.runs_on }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Detect Go module
+        id: detect
+        run: |
+          if [ -f go.mod ]; then
+            echo "manifest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "manifest=false" >> "$GITHUB_OUTPUT"
+            echo "No go.mod at repository root - Go stack supports root manifests only"
+          fi
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: steps.detect.outputs.manifest == 'true'
+        with:
+          go-version: ${{ inputs.go_version }}
+      - name: Check formatting (gofmt)
+        if: steps.detect.outputs.manifest == 'true'
+        run: |
+          unformatted=$(find . -name '*.go' -type f \
+            -not -path './vendor/*' -not -path './node_modules/*' -print0 \
+            | xargs -0 gofmt -l)
+          if [ -n "$unformatted" ]; then
+            echo "::error::Files not gofmt-formatted:"
+            printf '%s\n' "$unformatted"
+            exit 1
+          fi
+      - name: Vet standard library checks
+        if: steps.detect.outputs.manifest == 'true'
+        run: go vet ./...
+      - name: Lint (golangci-lint)
+        if: steps.detect.outputs.manifest == 'true'
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          args: --timeout=10m
+
+  # ---------------------------------------------------------------------------
+  # Go stack: build + race-tested tests
+  # ---------------------------------------------------------------------------
+  go-test:
+    needs: [changes, meta]
+    if: needs.meta.result == 'success' && ((inputs.run_go == 'auto' && needs.changes.outputs.go == 'true') || inputs.run_go == 'true')
+    runs-on: ${{ inputs.runs_on }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Detect Go module
+        id: detect
+        run: |
+          if [ -f go.mod ]; then
+            echo "manifest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "manifest=false" >> "$GITHUB_OUTPUT"
+            echo "No go.mod at repository root - skipping Go build and tests"
+          fi
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: steps.detect.outputs.manifest == 'true'
+        with:
+          go-version: ${{ inputs.go_version }}
+      - name: Build
+        if: steps.detect.outputs.manifest == 'true'
+        run: go build ./...
+      - name: Test (race detector, shuffled)
+        if: steps.detect.outputs.manifest == 'true'
+        run: go test -race -shuffle=on ./...
+
+  # ---------------------------------------------------------------------------
   # Security: semgrep + trivy + osv-scanner, results pushed to the Security tab
   # ---------------------------------------------------------------------------
   security:
@@ -902,7 +1003,7 @@ jobs:
   # Dashboard comment on pull requests
   # ---------------------------------------------------------------------------
   dashboard:
-    needs: [changes, meta, hygiene, secrets, ai-integrity, docs, node-lint, node-test, python, rust, security, deps-review, scorecard]
+    needs: [changes, meta, hygiene, secrets, ai-integrity, docs, node-lint, node-test, python, rust, go-lint, go-test, security, deps-review, scorecard]
     if: always() && github.event_name == 'pull_request'
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 5
@@ -930,6 +1031,8 @@ jobs:
               ("node-test", "Node tests"),
               ("python", "Python"),
               ("rust", "Rust"),
+              ("go-lint", "Go lint"),
+              ("go-test", "Go tests"),
               ("security", "Security"),
               ("deps-review", "Dependency review"),
               ("scorecard", "Scorecard"),
@@ -981,7 +1084,7 @@ jobs:
   # Single required check: fails when any non-skipped job failed
   # ---------------------------------------------------------------------------
   ci-success:
-    needs: [changes, meta, hygiene, secrets, ai-integrity, docs, node-lint, node-test, python, rust, security, deps-review, scorecard]
+    needs: [changes, meta, hygiene, secrets, ai-integrity, docs, node-lint, node-test, python, rust, go-lint, go-test, security, deps-review, scorecard]
     if: always()
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 5
@@ -1010,6 +1113,8 @@ jobs:
               "node-test",
               "python",
               "rust",
+              "go-lint",
+              "go-test",
               "security",
               "deps-review",
               "scorecard",
@@ -1025,6 +1130,8 @@ jobs:
               "node-test": "Node tests",
               "python": "Python",
               "rust": "Rust",
+              "go-lint": "Go lint",
+              "go-test": "Go tests",
               "security": "Security",
               "deps-review": "Dependency review",
               "scorecard": "Scorecard",

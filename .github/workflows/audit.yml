@@ -1,0 +1,208 @@
+# =============================================================================
+# Deep Audit - the whole-repository sweep, on a clock instead of on push
+# =============================================================================
+# Master CI gates every change incrementally: path filters decide which
+# stacks run, secrets scan the new commits, the detector reports on the
+# diff context. The deep audit is deliberately different: it re-examines
+# the ENTIRE repository - the full database of code, history and
+# dependencies - on a schedule and on demand, never on push:
+#
+#   - full git history: gitleaks sweep (not just the new commits)
+#   - full tree: the AI/structural integrity engine, every file
+#   - every dependency manifest: osv-scanner (go.sum, Cargo.lock,
+#     package-lock, requirements*, pom.xml, composer.lock, ...)
+#   - Go modules: govulncheck call-graph analysis
+#   - SQL sources: sqlfluff lint when .sql files exist
+#
+# Findings never gate CI. They land in one report: the step summary and a
+# single tracking issue (label `audit`) that is created once and appended
+# to on every run, so drift between "what CI sees" and "what is actually
+# in the repository" surfaces on a clock instead of after an incident.
+# =============================================================================
+
+name: Deep Audit
+
+on:
+  schedule:
+    - cron: '0 6 * * 6' # Saturdays 06:00 UTC - its own slot, away from the other loops
+  workflow_dispatch:
+    inputs:
+      template_repo:
+        description: Repo holding master-ci helpers (auto-detected when empty)
+        required: false
+        type: string
+        default: ''
+      template_ref:
+        description: Ref of the master-ci repo to fetch helpers from
+        required: false
+        type: string
+        default: main
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: deep-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      TEMPLATE_REPO_INPUT: ${{ inputs.template_repo }}
+      TEMPLATE_REF: ${{ inputs.template_ref }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0 # the full history IS the audit database
+          persist-credentials: false
+
+      - name: Validate helper ref
+        run: |
+          case "$TEMPLATE_REF" in
+            -*|*..*|*[!A-Za-z0-9._/-]*)
+              echo "::error::template_ref contains unsafe characters or sequences"
+              exit 1 ;;
+          esac
+
+      - name: Resolve helper repo
+        id: repo
+        run: |
+          fallback='WasewaseX/master-ci'
+          if [ -n "$TEMPLATE_REPO_INPUT" ]; then
+            echo "template_repo=$TEMPLATE_REPO_INPUT" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          ref="${GITHUB_WORKFLOW_REF:-}"
+          parsed="${ref%%/.github/*}"
+          if [ -n "$parsed" ] && [ "$parsed" != "$ref" ]; then
+            echo "template_repo=$parsed" >> "$GITHUB_OUTPUT"
+          else
+            echo "template_repo=$fallback" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fetch master-ci helpers
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          repository: ${{ steps.repo.outputs.template_repo }}
+          ref: ${{ env.TEMPLATE_REF }}
+          path: _ci
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Prepare report directory
+        run: mkdir -p audit
+
+      # --- scan 1: every commit ever made -------------------------------------
+      - name: Sweep full git history for secrets (gitleaks)
+        continue-on-error: true
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # --- scan 2: every file in the working tree -----------------------------
+      - name: Full-tree integrity scan (AI + structural slop)
+        continue-on-error: true
+        run: |
+          python3 _ci/scripts/ai_slop_detector.py . \
+            --max-score 100 \
+            --report-file audit/slop.md \
+            --annotate || true
+
+      # --- scan 3: every dependency manifest ----------------------------------
+      - name: Dependency vulnerability sweep (osv-scanner, all manifests)
+        continue-on-error: true
+        run: |
+          curl -fsSL -o osv-scanner \
+            https://github.com/google/osv-scanner/releases/download/v2.7.0/osv-scanner_linux_amd64
+          chmod +x osv-scanner
+          ./osv-scanner scan source -r . --format text | tee audit/osv.txt || true
+
+      # --- scan 4: Go modules with call-graph precision ------------------------
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: hashFiles('go.mod') != ''
+        with:
+          go-version: stable
+      - name: Go module vulnerability audit (govulncheck)
+        if: hashFiles('go.mod') != ''
+        continue-on-error: true
+        run: |
+          go run golang.org/x/vuln/cmd/govulncheck@latest ./... \
+            | tee audit/govulncheck.txt || true
+
+      # --- scan 5: SQL sources, advisory ---------------------------------------
+      - name: SQL lint (sqlfluff)
+        if: hashFiles('**/*.sql') != ''
+        continue-on-error: true
+        run: |
+          python -m pip install --quiet sqlfluff
+          sqlfluff lint . --disable-progress-bar | tee audit/sqlfluff.txt || true
+
+      # --- report: summary + one tracking issue --------------------------------
+      - name: Assemble the report
+        run: |
+          {
+            echo "# Deep audit - $(date -u '+%Y-%m-%d')"
+            echo
+            echo "Whole-repository sweep: full git history (gitleaks), every file"
+            echo "(integrity engine), every dependency manifest (osv-scanner),"
+            echo "Go modules (govulncheck), SQL sources (sqlfluff)."
+            echo
+            echo "Each scheduled run appends a dated section to this issue."
+            echo
+            if [ -s audit/slop.md ]; then
+              echo "## Integrity (AI / structural slop)"
+              echo
+              cat audit/slop.md
+              echo
+            fi
+            if [ -s audit/osv.txt ]; then
+              echo "## Dependency vulnerabilities (OSV)"
+              echo
+              echo '```'
+              cat audit/osv.txt
+              echo '```'
+              echo
+            fi
+            if [ -s audit/govulncheck.txt ]; then
+              echo "## Go modules (govulncheck)"
+              echo
+              echo '```'
+              cat audit/govulncheck.txt
+              echo '```'
+              echo
+            fi
+            if [ -s audit/sqlfluff.txt ]; then
+              echo "## SQL lint (sqlfluff)"
+              echo
+              echo '```'
+              cat audit/sqlfluff.txt
+              echo '```'
+              echo
+            fi
+          } > audit/report.md
+          cat audit/report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Ensure the audit label exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label create audit --color 1d76db \
+            --description "Scheduled whole-repository deep audit" --force || true
+
+      - name: Post or update the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          number=$(gh issue list --label audit --state open --limit 1 \
+            --json number --jq '.[0].number // ""')
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body-file audit/report.md
+            echo "Appended this run's report to the existing audit issue #$number"
+          else
+            gh issue create --label audit \
+              --title "Deep audit report (appended on every scheduled run)" \
+              --body-file audit/report.md
+          fi

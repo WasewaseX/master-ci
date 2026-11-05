@@ -310,3 +310,59 @@ def test_master_ci_supports_distinct_concurrency_keys():
     assert "concurrency_key" in group, (
         "callers running master-ci multiple times need distinct concurrency keys"
     )
+
+
+# ---------------------------------------------------------------------------
+# Self-heal loop (heal.yml)
+# ---------------------------------------------------------------------------
+
+
+def test_heal_loop_is_pr_only_and_gated_on_default_branch_failures():
+    data = load(WF_DIR / "heal.yml")
+    text = (WF_DIR / "heal.yml").read_text(encoding="utf-8")
+    # PRs are the whole change; the workflow never pushes
+    assert "git push" not in text, "self-heal must never push to a branch"
+    steps = [str(s.get("uses", "")) for s in data["jobs"]["heal"]["steps"]]
+    assert any("create-pull-request" in u for u in steps), "self-heal must go through PRs"
+    # it only reacts to failures on the default branch (never to its own PRs)
+    condition = str(data["jobs"]["heal"].get("if", ""))
+    assert "conclusion == 'failure'" in condition
+    assert "default_branch" in condition, "heal must only react to default-branch failures"
+    # circuit breaker: stop when the fix PR is already open
+    assert "ci/autofix" in text, "an open fix PR must stop the loop"
+    # serialized: one heal at a time
+    assert (data.get("concurrency") or {}).get("group") == "self-heal"
+
+
+def test_heal_fixers_match_autofix():
+    """The reactive loop and the weekly loop apply the same tools."""
+    fixers = ("rustfmt", "ruff", "biome", "gofmt", "markdownlint")
+    for wf_name in ("autofix.yml", "heal.yml"):
+        text = (WF_DIR / wf_name).read_text(encoding="utf-8")
+        for tool in fixers:
+            assert tool in text, f"{wf_name}: missing fixer {tool}"
+
+
+# ---------------------------------------------------------------------------
+# Deep audit (audit.yml)
+# ---------------------------------------------------------------------------
+
+
+def test_deep_audit_runs_on_a_clock_never_on_push():
+    data = load(WF_DIR / "audit.yml")
+    trigger = data[True] if True in data else data["on"]
+    assert set(trigger) == {"schedule", "workflow_dispatch"}, (
+        "the deep audit is a scheduled/manual sweep, not a push or PR gate"
+    )
+    assert set(trigger["schedule"][0]["cron"].split()) <= {"*", "/"} | set("0123456789")
+
+
+def test_deep_audit_never_gates_ci_and_never_fails_on_findings():
+    data = load(WF_DIR / "audit.yml")
+    perms = data.get("permissions") or {}
+    assert perms.get("contents") == "read"
+    assert perms.get("issues") == "write"
+    assert "security-events" not in perms, "audit reports to issues, not the Security tab"
+    steps = data["jobs"]["audit"]["steps"]
+    scan_steps = [s for s in steps if s.get("continue-on-error") is True]
+    assert len(scan_steps) >= 4, "scan steps must tolerate findings without failing the run"

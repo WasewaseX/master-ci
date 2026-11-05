@@ -38,6 +38,12 @@ jobs:
         if: hashFiles('**/package.json') != ''
         run: |
           npx --yes @biomejs/biome check --write --no-errors-on-unmatched .
+      - name: Apply Go fixes
+        if: hashFiles('go.mod') != ''
+        run: |
+          find . -name '*.go' -type f \
+            -not -path './vendor/*' -not -path './node_modules/*' -print0 \
+            | xargs -0 gofmt -w
       - name: Apply Markdown fixes
         run: |
           # copy the default config only when it ships with the repo
