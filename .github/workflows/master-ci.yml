@@ -310,10 +310,14 @@ jobs:
           pip install --quiet yamllint
           yamllint -s -c _ci/configs/.yamllint.yaml .
       - name: Check editorconfig compliance
+        # the pip package is legacy and no longer builds on Python 3.13;
+        # download the maintained release binary directly (with retries)
         run: |
           [ -f .editorconfig ] || cp _ci/configs/.editorconfig .
-          pip install --quiet editorconfig-checker
-          ec
+          curl -fsSL --retry 3 --retry-all-errors -o /tmp/ec.tar.gz \
+            https://github.com/editorconfig-checker/editorconfig-checker/releases/download/v4.0.2/editorconfig-checker-linux-amd64.tar.gz
+          tar -xzf /tmp/ec.tar.gz -C /tmp
+          /tmp/editorconfig-checker-linux-amd64/editorconfig-checker
       - name: Lint shell scripts
         run: |
           mapfile -t files < <(git ls-files '*.sh')
