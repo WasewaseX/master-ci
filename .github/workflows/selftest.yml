@@ -41,6 +41,7 @@ jobs:
       contents: read
       security-events: write
       pull-requests: write
+      id-token: write
 
   enforced-failure:
     if: inputs.failure_paths == 'true'
@@ -54,6 +55,7 @@ jobs:
       contents: read
       security-events: write
       pull-requests: write
+      id-token: write
 
   input-validation:
     if: inputs.failure_paths == 'true'
@@ -65,6 +67,8 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      security-events: write
+      id-token: write
 
   verify:
     needs: [happy-path, enforced-failure, input-validation]

@@ -494,6 +494,28 @@ class Comment:
     kind: str  # 'line' | 'block' | 'docstring'
 
 
+def _py_docstring_step(
+    idx: int,
+    stripped: str,
+    in_doc: bool,
+    doc_delim: str,
+) -> tuple[Comment, bool, str] | None:
+    """Handle one line while in/entering Python docstring state.
+
+    Returns (comment, still_in_doc, delim), or None when the line is not
+    docstring state and the caller should fall through to other rules.
+    """
+    if in_doc:
+        closing = doc_delim in stripped
+        return Comment(idx, stripped, "docstring"), not closing, doc_delim
+    if not stripped.startswith(('"""', "'''")):
+        return None
+    delim = stripped[:3]
+    if stripped.count(delim) >= 2 and len(stripped) > 3:
+        return Comment(idx, stripped, "docstring"), False, doc_delim
+    return Comment(idx, stripped, "docstring"), True, delim
+
+
 def extract_comments(text: str, family: str) -> list[Comment]:
     """Extract comments with a small state machine per language family."""
     line_prefixes = {
@@ -514,19 +536,10 @@ def extract_comments(text: str, family: str) -> list[Comment]:
                 in_block = False
             continue
         if family == "py":
-            if in_doc:
-                comments.append(Comment(idx, stripped, "docstring"))
-                if doc_delim in stripped:
-                    in_doc = False
-                continue
-            if stripped.startswith(('"""', "'''")):
-                delim = stripped[:3]
-                if stripped.count(delim) >= 2 and len(stripped) > 3:
-                    comments.append(Comment(idx, stripped, "docstring"))
-                else:
-                    in_doc = True
-                    doc_delim = delim
-                    comments.append(Comment(idx, stripped, "docstring"))
+            step = _py_docstring_step(idx, stripped, in_doc, doc_delim)
+            if step is not None:
+                comments.append(step[0])
+                in_doc, doc_delim = step[1], step[2]
                 continue
         if family == "ruby" and stripped.startswith("=begin"):
             in_block = True
@@ -580,35 +593,37 @@ def _phrase_in_any(comment_texts: list[str], phrase: str) -> int:
     return sum(1 for text in comment_texts if phrase.lower() in text.lower())
 
 
-def scan_comment_vocabulary(path: Path, comments: list[Comment], phrases: dict) -> list[Finding]:
+def _phrase_rule_findings(
+    path: Path,
+    comments: list[Comment],
+    texts: list[str],
+    phrases: list[str],
+    check: str,
+    message_fmt: str,
+    weight: int,
+) -> list[Finding]:
+    """One finding per phrase family that appears in any comment."""
     findings: list[Finding] = []
-    texts = [c.text for c in comments]
-    for phrase in phrases["code_phrases"]:
+    for phrase in phrases:
         count = _phrase_in_any(texts, phrase)
-        if count:
-            line = next(c.line for c in comments if phrase.lower() in c.text.lower())
-            findings.append(
-                Finding(
-                    path=str(path),
-                    line=line,
-                    check="ai-vocab",
-                    message=f"{phrase!r} in comment ({count}x)",
-                    weight=2,
-                )
+        if not count:
+            continue
+        line = next(c.line for c in comments if phrase.lower() in c.text.lower())
+        findings.append(
+            Finding(
+                path=str(path),
+                line=line,
+                check=check,
+                message=message_fmt.format(phrase=phrase, count=count),
+                weight=weight,
             )
-    for phrase in CHATBOT_COMMENT_PHRASES:
-        count = _phrase_in_any(texts, phrase)
-        if count:
-            line = next(c.line for c in comments if phrase.lower() in c.text.lower())
-            findings.append(
-                Finding(
-                    path=str(path),
-                    line=line,
-                    check="chatbot-residue",
-                    message=f"assistant-voice {phrase!r} in comment ({count}x)",
-                    weight=2,
-                )
-            )
+        )
+    return findings
+
+
+def _comment_style_findings(path: Path, comments: list[Comment]) -> list[Finding]:
+    """Emoji padding, trivial restatements and step-by-step narration."""
+    findings: list[Finding] = []
     emoji_hits = sum(bool(EMOJI_PATTERN.search(c.text)) for c in comments)
     if emoji_hits:
         findings.append(
@@ -645,6 +660,30 @@ def scan_comment_vocabulary(path: Path, comments: list[Comment], phrases: dict) 
                 advisory=True,
             )
         )
+    return findings
+
+
+def scan_comment_vocabulary(path: Path, comments: list[Comment], phrases: dict) -> list[Finding]:
+    texts = [c.text for c in comments]
+    findings = _phrase_rule_findings(
+        path,
+        comments,
+        texts,
+        phrases["code_phrases"],
+        "ai-vocab",
+        "{phrase!r} in comment ({count}x)",
+        2,
+    )
+    findings += _phrase_rule_findings(
+        path,
+        comments,
+        texts,
+        CHATBOT_COMMENT_PHRASES,
+        "chatbot-residue",
+        "assistant-voice {phrase!r} in comment ({count}x)",
+        2,
+    )
+    findings += _comment_style_findings(path, comments)
     return findings
 
 
@@ -785,6 +824,80 @@ def _py_func_findings(path: Path, node) -> list[Finding]:
     return findings
 
 
+def _py_stub_body(body: list[ast.stmt]) -> bool:
+    stmts = [
+        s for s in body if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))
+    ]
+    if len(stmts) != 1:
+        return False
+    only = stmts[0]
+    if isinstance(only, ast.Pass):
+        return True
+    if isinstance(only, ast.Raise):
+        exc = only.exc
+        if isinstance(exc, ast.Call) and isinstance(exc.func, ast.Name):
+            return exc.func.id in ("NotImplementedError", "NotImplemented")
+        if isinstance(exc, ast.Name):
+            return exc.id == "NotImplementedError"
+    return False
+
+
+def _py_has_assert(node: ast.AST) -> bool:
+    return any(isinstance(child, (ast.Assert, ast.Raise)) for child in ast.walk(node))
+
+
+def _py_def_findings(path: Path, node) -> list[Finding]:
+    """FunctionDef branch: stub bodies, assertion-less tests, function smells."""
+    findings: list[Finding] = []
+    if _py_stub_body(node.body):
+        findings.append(
+            Finding(
+                path=str(path),
+                line=node.lineno,
+                check="stub-function",
+                message=f"function {node.name!r} has a stub-only body",
+                weight=2,
+            )
+        )
+    if node.name.startswith("test_") and not _py_has_assert(node):
+        findings.append(
+            Finding(
+                path=str(path),
+                line=node.lineno,
+                check="empty-test",
+                message=f"test {node.name!r} contains no assert or raise",
+                weight=2,
+            )
+        )
+    findings.extend(_py_func_findings(path, node))
+    return findings
+
+
+def _py_handler_findings(path: Path, node: ast.ExceptHandler) -> list[Finding]:
+    """ExceptHandler branch: bare excepts and swallowed exceptions."""
+    if node.type is not None and not all(isinstance(s, ast.Pass) for s in node.body):
+        return []
+    if node.type is None:
+        return [
+            Finding(
+                path=str(path),
+                line=node.lineno,
+                check="bare-except",
+                message="bare `except:` catches everything including SystemExit",
+                weight=2,
+            )
+        ]
+    return [
+        Finding(
+            path=str(path),
+            line=node.lineno,
+            check="swallowed-exception",
+            message="exception swallowed (pass-only handler)",
+            weight=2,
+        )
+    ]
+
+
 def check_py_ast(path: Path, text: str, family: str) -> list[Finding]:
     """AST-backed Python checks: stubs, empty tests, exceptions, smells."""
     if family != "py":
@@ -794,71 +907,11 @@ def check_py_ast(path: Path, text: str, family: str) -> list[Finding]:
     except SyntaxError:
         return []
     findings: list[Finding] = []
-
-    def body_is_stub(body: list[ast.stmt]) -> bool:
-        stmts = [
-            s for s in body if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))
-        ]
-        if len(stmts) != 1:
-            return False
-        only = stmts[0]
-        if isinstance(only, ast.Pass):
-            return True
-        if isinstance(only, ast.Raise):
-            exc = only.exc
-            if isinstance(exc, ast.Call) and isinstance(exc.func, ast.Name):
-                return exc.func.id in ("NotImplementedError", "NotImplemented")
-            if isinstance(exc, ast.Name):
-                return exc.id == "NotImplementedError"
-        return False
-
-    def has_assert(node: ast.AST) -> bool:
-        return any(isinstance(child, (ast.Assert, ast.Raise)) for child in ast.walk(node))
-
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if body_is_stub(node.body):
-                findings.append(
-                    Finding(
-                        path=str(path),
-                        line=node.lineno,
-                        check="stub-function",
-                        message=f"function {node.name!r} has a stub-only body",
-                        weight=2,
-                    )
-                )
-            if node.name.startswith("test_") and not has_assert(node):
-                findings.append(
-                    Finding(
-                        path=str(path),
-                        line=node.lineno,
-                        check="empty-test",
-                        message=f"test {node.name!r} contains no assert or raise",
-                        weight=2,
-                    )
-                )
-            findings.extend(_py_func_findings(path, node))
+            findings.extend(_py_def_findings(path, node))
         elif isinstance(node, ast.ExceptHandler):
-            if node.type is None:
-                findings.append(
-                    Finding(
-                        path=str(path),
-                        line=node.lineno,
-                        check="bare-except",
-                        message="bare `except:` catches everything including SystemExit",
-                        weight=2,
-                    )
-                )
-            elif all(isinstance(s, ast.Pass) for s in node.body):
-                findings.append(
-                    Finding(
-                        path=str(path),
-                        line=node.lineno,
-                        check="swallowed-exception",
-                        message="exception swallowed (pass-only handler)",
-                        weight=2,
-                    )
-                )
+            findings.extend(_py_handler_findings(path, node))
         elif isinstance(node, ast.ImportFrom) and node.module and node.names:
             if any(a.name == "*" for a in node.names):
                 findings.append(
@@ -1113,11 +1166,8 @@ def check_phantom_imports(path: Path, text: str, family: str) -> list[Finding]:
     return []
 
 
-def _py_phantom_imports(path: Path, text: str) -> list[Finding]:
-    try:
-        tree = ast.parse(text)
-    except SyntaxError:
-        return []
+def _py_imported_names(tree: ast.AST) -> list[tuple[str, int]]:
+    """Collect (bound name, line) for every import in the module."""
     imported: list[tuple[str, int]] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -1129,9 +1179,14 @@ def _py_phantom_imports(path: Path, text: str) -> list[Finding]:
                 if alias.name != "*":
                     name = alias.asname or alias.name
                     imported.append((name, node.lineno))
-    body = "\n".join(
-        line for line in text.splitlines() if not line.lstrip().startswith(("import ", "from "))
-    )
+    return imported
+
+
+def _py_unused_import_findings(
+    path: Path,
+    body: str,
+    imported: list[tuple[str, int]],
+) -> list[Finding]:
     findings: list[Finding] = []
     for name, lineno in imported[:40]:
         if name in ("__future__", "annotations"):
@@ -1148,6 +1203,18 @@ def _py_phantom_imports(path: Path, text: str) -> list[Finding]:
                 )
             )
     return findings[:5]
+
+
+def _py_phantom_imports(path: Path, text: str) -> list[Finding]:
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return []
+    imported = _py_imported_names(tree)
+    body = "\n".join(
+        line for line in text.splitlines() if not line.lstrip().startswith(("import ", "from "))
+    )
+    return _py_unused_import_findings(path, body, imported)
 
 
 def _js_phantom_imports(path: Path, text: str) -> list[Finding]:
@@ -1246,6 +1313,78 @@ def collect_js_dependencies(root: Path) -> set[str]:
     return deps
 
 
+def _py_undeclared_findings(
+    path: Path,
+    text: str,
+    py_manifests: tuple[set[str], set[str]],
+) -> list[Finding]:
+    """Python imports that no manifest declares (advisory)."""
+    declared, local = py_manifests
+    if not declared and not local:
+        return []
+    findings: list[Finding] = []
+    seen: set[str] = set()
+    for match in re.finditer(r"^\s*(?:import|from)\s+([A-Za-z_][\w.]*)", text, re.MULTILINE):
+        top = match.group(1).split(".")[0]
+        if top in seen:
+            continue
+        seen.add(top)
+        norm = top.lower().replace("_", "-")
+        if top in STD_LIB_NAMES or top in local:
+            continue
+        aliased = PY_IMPORT_ALIASES.get(top, "").lower()
+        if norm in declared or (aliased and aliased in declared):
+            continue
+        if norm.replace("-", "") in {d.replace("-", "") for d in declared}:
+            continue
+        findings.append(
+            _finding(
+                path,
+                text,
+                match.start(),
+                "undeclared-import",
+                (
+                    f"import {top!r} is neither stdlib, local nor declared in a "
+                    "manifest - verify it exists (slopsquatting)"
+                ),
+                2,
+                advisory=True,
+            )
+        )
+    return findings[:5]
+
+
+def _js_undeclared_findings(path: Path, text: str, js_deps: set[str]) -> list[Finding]:
+    """npm packages that package.json does not declare (advisory)."""
+    findings: list[Finding] = []
+    seen_pkgs: set[str] = set()
+    for match in re.finditer(
+        r"(?:import\s+[^'\"]*?from\s+|import\s+|require\s*\(\s*)[\"']([^\"']+)[\"']", text
+    ):
+        spec = match.group(1)
+        if spec.startswith((".", "/", "node:")):
+            continue
+        pkg = spec if spec.startswith("@") else spec.split("/")[0]
+        if pkg in seen_pkgs or pkg in NODE_BUILTINS or pkg in js_deps:
+            continue
+        seen_pkgs.add(pkg)
+        findings.append(
+            _finding(
+                path,
+                text,
+                match.start(),
+                "undeclared-import",
+                (
+                    f"package {pkg!r} is not declared in package.json - verify it "
+                    "exists (slopsquatting)"
+                ),
+                2,
+                advisory=True,
+            )
+        )
+    return findings[:5]
+
+
 def check_undeclared_imports(
     path: Path,
     text: str,
@@ -1256,68 +1395,11 @@ def check_undeclared_imports(
     js_deps: set[str],
 ) -> list[Finding]:
     """Imports that no manifest declares (slopsquatting guard, advisory)."""
-    findings: list[Finding] = []
     if family == "py":
-        declared, local = py_manifests
-        if not declared and not local:
-            return []
-        seen: set[str] = set()
-        for match in re.finditer(r"^\s*(?:import|from)\s+([A-Za-z_][\w.]*)", text, re.MULTILINE):
-            top = match.group(1).split(".")[0]
-            if top in seen:
-                continue
-            seen.add(top)
-            norm = top.lower().replace("_", "-")
-            if top in STD_LIB_NAMES or top in local:
-                continue
-            aliased = PY_IMPORT_ALIASES.get(top, "").lower()
-            if norm in declared or (aliased and aliased in declared):
-                continue
-            if norm.replace("-", "") in {d.replace("-", "") for d in declared}:
-                continue
-            findings.append(
-                _finding(
-                    path,
-                    text,
-                    match.start(),
-                    "undeclared-import",
-                    (
-                        f"import {top!r} is neither stdlib, local nor declared in a "
-                        "manifest - verify it exists (slopsquatting)"
-                    ),
-                    2,
-                    advisory=True,
-                )
-            )
-        return findings[:5]
+        return _py_undeclared_findings(path, text, py_manifests)
     if family == "js" and js_deps:
-        seen_pkgs: set[str] = set()
-        for match in re.finditer(
-            r"(?:import\s+[^'\"]*?from\s+|import\s+|require\s*\(\s*)[\"']([^\"']+)[\"']", text
-        ):
-            spec = match.group(1)
-            if spec.startswith((".", "/", "node:")):
-                continue
-            pkg = spec if spec.startswith("@") else spec.split("/")[0]
-            if pkg in seen_pkgs or pkg in NODE_BUILTINS or pkg in js_deps:
-                continue
-            seen_pkgs.add(pkg)
-            findings.append(
-                _finding(
-                    path,
-                    text,
-                    match.start(),
-                    "undeclared-import",
-                    (
-                        f"package {pkg!r} is not declared in package.json - verify it "
-                        "exists (slopsquatting)"
-                    ),
-                    2,
-                    advisory=True,
-                )
-            )
-        return findings[:5]
-    return findings
+        return _js_undeclared_findings(path, text, js_deps)
+    return []
 
 
 def check_ui_slop(path: Path, text: str, ext: str) -> list[Finding]:
@@ -1770,6 +1852,29 @@ def fingerprint(item: Finding) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _scan_one_file(
+    path: Path,
+    suffix: str,
+    rel: str,
+    phrases: dict,
+    py_manifests: tuple[set[str], set[str]],
+    js_deps: set[str],
+    provenance: bool,
+) -> list[Finding]:
+    findings: list[Finding] = []
+    if suffix in DOC_EXTS:
+        findings.extend(scan_doc_file(path, suffix, phrases))
+    elif suffix in CODE_EXTS or suffix in UI_EXTS:
+        findings.extend(scan_code_file(path, suffix, rel, phrases, py_manifests, js_deps))
+    else:
+        return findings
+    if provenance:
+        findings.extend(
+            provenance_findings(path, path.read_text(encoding="utf-8", errors="replace"))
+        )
+    return findings
+
+
 def scan(
     root: Path,
     phrases: dict,
@@ -1789,19 +1894,17 @@ def scan(
             rel = path.as_posix()
         if is_ignored(rel, globs):
             continue
-        suffix = path.suffix.lower()
-        if suffix in DOC_EXTS:
-            findings.extend(scan_doc_file(path, suffix, phrases))
-            if provenance:
-                findings.extend(
-                    provenance_findings(path, path.read_text(encoding="utf-8", errors="replace"))
-                )
-        elif suffix in CODE_EXTS or suffix in UI_EXTS:
-            findings.extend(scan_code_file(path, suffix, rel, phrases, py_manifests, js_deps))
-            if provenance:
-                findings.extend(
-                    provenance_findings(path, path.read_text(encoding="utf-8", errors="replace"))
-                )
+        findings.extend(
+            _scan_one_file(
+                path,
+                path.suffix.lower(),
+                rel,
+                phrases,
+                py_manifests,
+                js_deps,
+                provenance,
+            )
+        )
     findings.extend(scan_duplicates(files))
     if provenance:
         findings.extend(inventory_findings(root, files, globs))
@@ -1823,6 +1926,74 @@ def advisory_score(findings: list[Finding]) -> int:
 # ---------------------------------------------------------------------------
 
 
+def _report_rule_table(rule_counts: Counter) -> list[str]:
+    lines = ["| Rule | Findings | Severity |", "|---|---|---|"]
+    for check, count in rule_counts.most_common():
+        severity = "blocking" if check in BLOCKING_CHECKS else "advisory"
+        lines.append(f"| {check} | {count} | {severity} |")
+    return lines
+
+
+def _report_fix_first(blocking: list[Finding]) -> list[str]:
+    lines = ["", "### Fix these first", ""]
+    priority = sorted(blocking, key=lambda f: -f.weight)[:5]
+    if priority:
+        for idx, item in enumerate(priority, start=1):
+            lines.append(
+                f"{idx}. `{item.path}:{item.line}` [{item.check}] {item.message} -> {item.remedy}"
+            )
+    else:
+        lines.append("No blocking findings - nothing to fix first.")
+    lines += [""]
+    return lines
+
+
+def _report_blocking_table(blocking: list[Finding]) -> list[str]:
+    if not blocking:
+        return ["No blocking AI-slop signals above threshold.", ""]
+    lines = [
+        "### Blocking findings",
+        "",
+        "| Check | Where | Detail | Weight | Fix |",
+        "|---|---|---|---|---|",
+    ]
+    for item in blocking:
+        lines.append(
+            f"| {item.check} | `{item.path}:{item.line}` | {item.message} "
+            f"| {item.weight} | {item.remedy} |"
+        )
+    lines.append("")
+    return lines
+
+
+def _report_advisory_table(advisory: list[Finding]) -> list[str]:
+    if not advisory:
+        return []
+    lines = [
+        "### Advisory signals (never fail a build)",
+        "",
+        "| Check | Where | Detail | Weight |",
+        "|---|---|---|---|---|",
+    ]
+    for item in advisory:
+        lines.append(
+            f"| {item.check} | `{item.path}:{item.line}` | {item.message} | {item.weight} |"
+        )
+    lines.append("")
+    return lines
+
+
+def _report_top_files(deficits: dict[str, int]) -> list[str]:
+    top_files = sorted(deficits.items(), key=lambda kv: -kv[1])[:5]
+    if not top_files or top_files[0][1] <= 0:
+        return []
+    lines = ["### Highest-deficit files", "", "| File | Deficit |", "|---|---|"]
+    for name, value in top_files:
+        lines.append(f"| `{name}` | {value} |")
+    lines.append("")
+    return lines
+
+
 def write_report(
     path: str,
     root: Path,
@@ -1836,7 +2007,6 @@ def write_report(
         per_file.setdefault(item.path, []).append(item)
     deficits = {name: file_deficit(items) for name, items in per_file.items()}
     score, grade, verdict = project_score(list(deficits.values()))
-    rule_counts = Counter(f.check for f in findings)
     lines = [
         "",
         f"Scanned `{root}`: {len(blocking)} blocking / {len(advisory)} advisory finding(s).",
@@ -1850,55 +2020,12 @@ def write_report(
         f"**Slop score {score}/100 - grade {grade} - {verdict}** "
         "(0.6x worst file + 0.4x mean file deficit).",
         "",
-        "| Rule | Findings | Severity |",
-        "|---|---|---|",
     ]
-    for check, count in rule_counts.most_common():
-        severity = "blocking" if check in BLOCKING_CHECKS else "advisory"
-        lines.append(f"| {check} | {count} | {severity} |")
-    lines += ["", "### Fix these first", ""]
-    priority = sorted(blocking, key=lambda f: -f.weight)[:5]
-    if priority:
-        for idx, item in enumerate(priority, start=1):
-            lines.append(
-                f"{idx}. `{item.path}:{item.line}` [{item.check}] {item.message} -> {item.remedy}"
-            )
-    else:
-        lines.append("No blocking findings - nothing to fix first.")
-    lines += [""]
-    if blocking:
-        lines.append("### Blocking findings")
-        lines.append("")
-        lines.append("| Check | Where | Detail | Weight | Fix |")
-        lines.append("|---|---|---|---|---|")
-        for item in blocking:
-            lines.append(
-                f"| {item.check} | `{item.path}:{item.line}` | {item.message} "
-                f"| {item.weight} | {item.remedy} |"
-            )
-        lines.append("")
-    else:
-        lines.append("No blocking AI-slop signals above threshold.")
-        lines.append("")
-    if advisory:
-        lines.append("### Advisory signals (never fail a build)")
-        lines.append("")
-        lines.append("| Check | Where | Detail | Weight |")
-        lines.append("|---|---|---|---|---|")
-        for item in advisory:
-            lines.append(
-                f"| {item.check} | `{item.path}:{item.line}` | {item.message} | {item.weight} |"
-            )
-        lines.append("")
-    top_files = sorted(deficits.items(), key=lambda kv: -kv[1])[:5]
-    if top_files and top_files[0][1] > 0:
-        lines.append("### Highest-deficit files")
-        lines.append("")
-        lines.append("| File | Deficit |")
-        lines.append("|---|---|")
-        for name, value in top_files:
-            lines.append(f"| `{name}` | {value} |")
-        lines.append("")
+    lines += _report_rule_table(Counter(f.check for f in findings))
+    lines += _report_fix_first(blocking)
+    lines += _report_blocking_table(blocking)
+    lines += _report_advisory_table(advisory)
+    lines += _report_top_files(deficits)
     lines.append(
         f"Opt out per path or check via `{IGNORE_FILE}` "
         "(glob lines, or `check:<id>` to disable one rule); "

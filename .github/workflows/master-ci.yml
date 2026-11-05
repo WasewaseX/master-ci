@@ -155,7 +155,7 @@ jobs:
             ! printf '%s' "$TEMPLATE_REPO_INPUT" | grep -Eqx '[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+'; then
             die "template_repo must look like owner/repo (letters, digits, dot, dash, underscore)"
           fi
-          for ref in "$TEMPLATE_REF"; do
+          for ref in $(printf '%s' "$TEMPLATE_REF"); do
             [ -z "$ref" ] && continue
             case "$ref" in
               -*|*..*|*[!A-Za-z0-9._/-]*)
