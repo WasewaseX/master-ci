@@ -70,10 +70,12 @@ jobs:
       - name: Apply the fix policy
         run: |
           cfg="${SEMGREP_INPUT:-p/default p/security-audit p/secrets}"
+          # reports live outside the worktree: they must never leak into
+          # the fix PR itself (RUNNER_TEMP is runner-local scratch space)
           python3 scripts/fix_engine.py \
             --tier safe --tier lint \
             --semgrep-config "$cfg" \
-            --manifest-dir fix
+            --manifest-dir "$RUNNER_TEMP/fix"
 
       - name: Assemble the PR body
         run: |
@@ -84,9 +86,9 @@ jobs:
               echo "the rest stays in the audit tracking issue."
               echo
             fi
-            cat fix/pr-body.md
-          } > fix/final-body.md
-          cat fix/summary.md >> "$GITHUB_STEP_SUMMARY"
+            cat "$RUNNER_TEMP/fix/pr-body.md"
+          } > "$RUNNER_TEMP/fix/final-body.md"
+          cat "$RUNNER_TEMP/fix/summary.md" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Open or update the autofix PR
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
@@ -94,7 +96,7 @@ jobs:
           token: ${{ secrets.AUTOFIX_TOKEN || github.token }}
           branch: ci/autofix
           title: 'ci: automated fixes from the audit and drift sweeps'
-          body-file: fix/final-body.md
+          body-file: "$RUNNER_TEMP/fix/final-body.md"
           labels: |
             automation
             autofix

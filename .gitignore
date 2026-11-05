@@ -10,3 +10,6 @@ target/
 osv-scanner
 ai_report.md
 dashboard.md
+
+# fix-engine report output (default local dir)
+fix/

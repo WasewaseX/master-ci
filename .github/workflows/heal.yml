@@ -81,10 +81,12 @@ jobs:
       - name: Apply the fix policy
         if: steps.breaker.outputs.skip != 'true'
         run: |
+          # reports live outside the worktree: they must never leak into
+          # the fix PR itself (RUNNER_TEMP is runner-local scratch space)
           python3 scripts/fix_engine.py \
             --tier safe --tier lint \
             --semgrep-config 'p/default p/security-audit p/secrets' \
-            --manifest-dir fix
+            --manifest-dir "$RUNNER_TEMP/fix"
 
       - name: Assemble the PR body
         if: steps.breaker.outputs.skip != 'true'
@@ -98,9 +100,9 @@ jobs:
               echo "close this PR and fix the cause."
               echo
             fi
-            cat fix/pr-body.md
-          } > fix/final-body.md
-          cat fix/summary.md >> "$GITHUB_STEP_SUMMARY"
+            cat "$RUNNER_TEMP/fix/pr-body.md"
+          } > "$RUNNER_TEMP/fix/final-body.md"
+          cat "$RUNNER_TEMP/fix/summary.md" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Open or update the fix PR
         if: steps.breaker.outputs.skip != 'true'
@@ -109,7 +111,7 @@ jobs:
           token: ${{ secrets.AUTOFIX_TOKEN || github.token }}
           branch: ci/autofix
           title: 'ci: self-heal applied the fix policy'
-          body-file: fix/final-body.md
+          body-file: "$RUNNER_TEMP/fix/final-body.md"
           labels: |
             automation
             autofix

@@ -1,29 +1,21 @@
 #!/usr/bin/env python3
 """fix_engine.py - the single fix policy behind every master-ci auto-fix loop.
 
-One source of truth for WHAT gets auto-fixed and HOW, shared by:
+One source of truth for WHAT gets auto-fixed and HOW. It is shared by the
+autofix workflow (weekly drift sweep plus the post-audit "find -> fix"
+response) and the heal workflow (reactive response to a red default
+branch). Because CI and the fix engine share the same tool set, a fix can
+never fight its own check (no fix/check oscillation): the engine only
+applies fixes for findings whose checks the same tools then re-verify.
 
-  - .github/workflows/autofix.yml  (weekly drift sweep + the post-audit
-    "find -> fix" response)
-  - .github/workflows/heal.yml     (reactive response to a red default
-    branch)
-
-Because CI and the fix engine share the same tool set, a fix can never
-fight its own check (no fix/check oscillation): the engine only applies
-fixes for findings whose checks the same tools then re-verify.
-
-Fix tiers
----------
-``safe``
-    Pure formatting and whitespace normalization. Cannot change program
-    behaviour: rustfmt, gofmt, ``ruff format``, Biome safe fixes, shfmt,
-    markdownlint --fix, and the generic trailing-whitespace /
-    final-newline normalizer.
-``lint``
-    Tool-verified code transforms: ``ruff check --fix``, ``go mod tidy``,
-    ``sqlfluff fix``, and ``semgrep --autofix`` (only for rules that ship
-    a machine-applicable fix). These tools only change code when their
-    own analysis says the change is equivalent.
+The safe tier is pure formatting and whitespace normalization and cannot
+change program behaviour: rustfmt, gofmt, ``ruff format``, Biome safe
+fixes, shfmt, markdownlint --fix, and the generic trailing-whitespace /
+final-newline normalizer. The lint tier applies tool-verified code
+transforms: ``ruff check --fix``, ``go mod tidy``, ``sqlfluff fix``, and
+``semgrep --autofix`` (only for rules that ship a machine-applicable fix).
+These tools only change code when their own analysis says the change is
+equivalent.
 
 Never auto-fixed (needs a human; the audit issue tracks them instead):
 secrets (rotate), dependency vulnerabilities (upgrade decisions),
@@ -178,7 +170,9 @@ def normalize_file(path: Path) -> tuple[bool, str]:
 
 def scan_generic(root: Path, dry_run: bool) -> dict:
     """Normalize every text file, or only count when dry_run."""
-    stats = {"files_scanned": 0, "files_changed": 0, "skipped": {}}
+    scanned = 0
+    changed = 0
+    skipped: dict[str, int] = {}
     for name in find_files(root, lambda p: True):
         path = root / name
         raw = _safe_read(path, MAX_TEXT_BYTES)
@@ -189,19 +183,19 @@ def scan_generic(root: Path, dry_run: bool) -> dict:
         except (UnicodeDecodeError, OSError):
             continue
         if dry_run:
-            stats["files_scanned"] += 1
+            scanned += 1
             if _fix_text(content, path.suffix) != content:
-                stats["files_changed"] += 1
+                changed += 1
             continue
         ok, reason = normalize_file(path)
         if ok:
-            stats["files_changed"] += 1
-            stats["files_scanned"] += 1
+            changed += 1
+            scanned += 1
         elif reason == "already-clean":
-            stats["files_scanned"] += 1
+            scanned += 1
         else:
-            stats["skipped"][reason] = stats["skipped"].get(reason, 0) + 1
-    return stats
+            skipped[reason] = skipped.get(reason, 0) + 1
+    return {"files_scanned": scanned, "files_changed": changed, "skipped": skipped}
 
 
 # ---------------------------------------------------------------------------

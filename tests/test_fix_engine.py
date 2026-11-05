@@ -1,13 +1,12 @@
 """Contract tests for the unified fix engine.
 
-Covers the documented contract in scripts/fix_engine.py:
-- the plan reacts to the same stack markers the CI stacks use,
-- tier gating (safe vs lint) and semgrep opt-in via --semgrep-config,
-- the generic normalizer (trailing whitespace, final newline, Markdown
-  hard-break preservation, binary and vendored files untouched),
-- dry-run never mutates anything,
-- the manifest/summary/PR-body reports exist with the documented schema,
-- the engine always exits 0, even when tools fail.
+Covers the documented contract in scripts/fix_engine.py: the plan reacts
+to the same stack markers the CI stacks use; tier gating (safe vs lint)
+and semgrep opt-in via --semgrep-config; the generic normalizer (trailing
+whitespace, final newline, Markdown hard-break preservation, binary and
+vendored files untouched); dry-run never mutates anything; the
+manifest/summary/PR-body reports exist with the documented schema; and
+the engine always exits 0, even when tools fail.
 """
 
 import importlib.util
