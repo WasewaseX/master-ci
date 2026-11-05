@@ -1,18 +1,26 @@
 #!/usr/bin/env python3
 """Heuristic detector for AI slop, AI-generated prose and humanizer patterns.
 
-This is a linter, not an oracle: it scores weighty signals that correlate
-with machine-written filler and with prose that was deliberately "warmed up"
-to look hand-written. Signals include telltale vocabulary in code comments,
-emoji padding, TODO density, boilerplate duplication, em-dash overuse,
-rule-of-three lists and interjection-heavy prose.
+This is a linter, not an oracle. It reports signals that correlate with
+machine-written filler: telltale vocabulary in code comments, emoji padding,
+TODO density, boilerplate duplication, and - advisory only - prose rhythm
+patterns such as em-dash overuse and rule-of-three lists.
 
-Exit code is 1 when the total weighted score exceeds --max-score.
+Contract:
+- Exit code 1 only when the *blocking* score exceeds --max-score.
+- Blocking signals are deterministic code-content checks (comments,
+duplication). Everything derived from documents - prose vocabulary,
+humanizer phrases, prose rhythm - is always advisory: reported and
+annotated, never failing a build.
+- Every finding carries a check id and a remediation hint.
+- Repos can opt out per path or per check via a `.ai-integrity-ignore`
+file: glob patterns, or `check:<id>` lines to disable one rule.
 """
 
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import re
 import sys
@@ -21,6 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 PHRASES_PATH = Path(__file__).resolve().parent / "ai_slop_phrases.json"
+IGNORE_FILE = ".ai-integrity-ignore"
 
 CODE_EXTS = {
     ".py",
@@ -82,6 +91,20 @@ DUP_LINE_MIN_LEN = 40
 DUP_LINE_THRESHOLD = 10
 WORD_PATTERN = re.compile(r"\w+")
 
+REMEDIES = {
+    "ai-vocab": "Rewrite the comment to describe intent in plain words",
+    "emoji-comments": "Remove decorative emoji from code comments",
+    "todo-density": "Resolve, ticket or delete the TODO/FIXME markers",
+    "trivial-comments": "Delete comments that restate the code; explain why instead",
+    "boilerplate-duplication": "Extract the repeated lines into a shared helper",
+    "ai-prose": "Rewrite the passage in your own words",
+    "humanizer": "Remove the filler phrase",
+    "em-dash-density": "Use commas, colons or parentheses instead of em-dashes",
+    "rule-of-three": "Vary list lengths; uniform triples are a machine-prose tell",
+    "rhetorical-questions": "State the answer instead of asking the reader",
+    "exclamations": "Remove exclamation marks from documentation",
+}
+
 
 @dataclass
 class Finding:
@@ -90,6 +113,11 @@ class Finding:
     check: str
     message: str
     weight: int
+    advisory: bool = False
+
+    @property
+    def remedy(self) -> str:
+        return REMEDIES.get(self.check, "Review and fix manually")
 
 
 def load_phrases() -> dict:
@@ -123,12 +151,42 @@ def iter_files(root: Path) -> list[Path]:
     return files
 
 
+def load_ignore_rules(root: Path) -> tuple[list[str], set[str]]:
+    """Read .ai-integrity-ignore: glob lines and `check:<id>` disable lines."""
+    globs: list[str] = []
+    disabled: set[str] = set()
+    ignore_path = root if root.is_dir() else root.parent
+    ignore_path = ignore_path / IGNORE_FILE
+    if ignore_path.is_file():
+        try:
+            lines = ignore_path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            lines = []
+        for raw in lines:
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.lower().startswith("check:"):
+                disabled.add(line.split(":", 1)[1].strip().lower())
+            else:
+                globs.append(line.rstrip("/"))
+    return globs, disabled
+
+
+def is_ignored(rel_path: str, globs: list[str]) -> bool:
+    norm = rel_path.replace("\\", "/")
+    return any(
+        fnmatch.fnmatch(norm, g) or fnmatch.fnmatch(norm, g.rstrip("/*") + "/*") for g in globs
+    )
+
+
 def phrase_findings(
     path: Path,
     text: str,
     phrases: list[str],
     check: str,
     weight: int,
+    advisory: bool = False,
 ) -> list[Finding]:
     findings: list[Finding] = []
     lowered = text.lower()
@@ -145,6 +203,7 @@ def phrase_findings(
                 check=check,
                 message=f"{phrase!r} found ({count}x)",
                 weight=weight,
+                advisory=advisory,
             )
         )
     return findings
@@ -195,15 +254,26 @@ def scan_code_file(path: Path, phrases: dict) -> list[Finding]:
 
 
 def scan_doc_file(path: Path, phrases: dict) -> list[Finding]:
+    """Document findings are advisory: style is never a build breaker."""
     findings: list[Finding] = []
     text = path.read_text(encoding="utf-8", errors="replace")
-    findings.extend(phrase_findings(path, text, phrases["doc_phrases"], "ai-prose", 1))
-    findings.extend(phrase_findings(path, text, phrases["humanizer_phrases"], "humanizer", 1))
+    findings.extend(
+        phrase_findings(path, text, phrases["doc_phrases"], "ai-prose", 1, advisory=True)
+    )
+    findings.extend(
+        phrase_findings(path, text, phrases["humanizer_phrases"], "humanizer", 1, advisory=True)
+    )
     findings.extend(prose_rhythm_findings(path, text))
     return findings
 
 
 def prose_rhythm_findings(path: Path, text: str) -> list[Finding]:
+    """Stylistic prose signals. Always advisory: reported, never blocking.
+
+    Em-dashes, uniform list lengths and rhetorical questions appear in
+    plenty of hand-written documents, so they carry no authorship verdict
+    and must never fail a build.
+    """
     findings: list[Finding] = []
     prose_lines: list[str] = []
     in_fence = False
@@ -224,6 +294,7 @@ def prose_rhythm_findings(path: Path, text: str) -> list[Finding]:
                 check="em-dash-density",
                 message=f"em-dash density {emdashes / words * 1000:.1f}/1k words",
                 weight=3,
+                advisory=True,
             )
         )
     groups = collect_bullet_groups(prose_lines)
@@ -237,6 +308,7 @@ def prose_rhythm_findings(path: Path, text: str) -> list[Finding]:
                     check="rule-of-three",
                     message=(f"{threes}/{len(groups)} bullet lists have exactly 3 items"),
                     weight=2,
+                    advisory=True,
                 )
             )
     questions = prose.count("?")
@@ -248,6 +320,7 @@ def prose_rhythm_findings(path: Path, text: str) -> list[Finding]:
                 check="rhetorical-questions",
                 message=f"{questions} question marks in prose",
                 weight=2,
+                advisory=True,
             )
         )
     bangs = prose.count("!")
@@ -259,6 +332,7 @@ def prose_rhythm_findings(path: Path, text: str) -> list[Finding]:
                 check="exclamations",
                 message=f"{bangs} exclamation marks in prose",
                 weight=1,
+                advisory=True,
             )
         )
     return findings
@@ -307,41 +381,82 @@ def scan_duplicates(files: list[Path]) -> list[Finding]:
     return findings[:3]
 
 
-def scan(root: Path, phrases: dict) -> list[Finding]:
+def scan(
+    root: Path,
+    phrases: dict,
+    extra_globs: list[str] | None = None,
+) -> list[Finding]:
     files = iter_files(root)
+    globs, disabled = load_ignore_rules(root)
+    globs = globs + list(extra_globs or [])
     findings: list[Finding] = []
     for path in files:
+        rel = path.relative_to(root).as_posix() if root.is_dir() else path.name
+        if is_ignored(rel, globs):
+            continue
         suffix = path.suffix.lower()
         if suffix in CODE_EXTS:
             findings.extend(scan_code_file(path, phrases))
         elif suffix in DOC_EXTS:
             findings.extend(scan_doc_file(path, phrases))
     findings.extend(scan_duplicates(files))
+    if disabled:
+        findings = [f for f in findings if f.check.lower() not in disabled]
     return findings
 
 
+def blocking_score(findings: list[Finding]) -> int:
+    return sum(f.weight for f in findings if not f.advisory)
+
+
+def advisory_score(findings: list[Finding]) -> int:
+    return sum(f.weight for f in findings if f.advisory)
+
+
 def total_score(findings: list[Finding]) -> int:
+    """Total weight of all findings, including advisory ones."""
     return sum(f.weight for f in findings)
 
 
 def write_report(path: str, root: Path, findings: list[Finding]) -> None:
-    score = total_score(findings)
+    blocking = [f for f in findings if not f.advisory]
+    advisory = [f for f in findings if f.advisory]
     lines = [
         "",
-        f"Scanned `{root}`: {len(findings)} finding(s), weighted score {score}.",
+        f"Scanned `{root}`: {len(blocking)} blocking / {len(advisory)} advisory finding(s).",
+        f"Blocking score **{blocking_score(findings)}**, advisory score "
+        f"{advisory_score(findings)} (advisory findings never fail a build).",
         "",
     ]
-    if findings:
+    if blocking:
+        lines.append("### Blocking findings")
+        lines.append("")
+        lines.append("| Check | Where | Detail | Weight | Fix |")
+        lines.append("|---|---|---|---|---|")
+        for item in blocking:
+            lines.append(
+                f"| {item.check} | `{item.path}:{item.line}` | {item.message} "
+                f"| {item.weight} | {item.remedy} |"
+            )
+        lines.append("")
+    else:
+        lines.append("No blocking AI-slop signals above threshold.")
+        lines.append("")
+    if advisory:
+        lines.append("### Advisory signals (never fail a build)")
+        lines.append("")
         lines.append("| Check | Where | Detail | Weight |")
-        lines.append("|---|---|---|---|")
-        for item in findings:
+        lines.append("|---|---|---|---|---|")
+        for item in advisory:
             lines.append(
                 f"| {item.check} | `{item.path}:{item.line}` | {item.message} | {item.weight} |"
             )
         lines.append("")
-    else:
-        lines.append("No AI-slop, AI-prose or humanizer signals above threshold.")
-        lines.append("")
+    lines.append(
+        f"Opt out per path or check via `{IGNORE_FILE}` "
+        "(glob lines, or `check:<id>` to disable one rule)."
+    )
+    lines.append("")
     with open(path, "w", encoding="utf-8") as handle:
         handle.write("\n".join(lines))
 
@@ -349,7 +464,8 @@ def write_report(path: str, root: Path, findings: list[Finding]) -> None:
 def annotate(findings: list[Finding]) -> None:
     for item in findings[:MAX_ANNOTATIONS]:
         message = item.message.replace("\n", " ")
-        print(f"::warning file={item.path},line={item.line}::[{item.check}] {message}")
+        prefix = "[advisory] " if item.advisory else ""
+        print(f"::warning file={item.path},line={item.line}::{prefix}[{item.check}] {message}")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -359,7 +475,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--max-score",
         type=float,
         default=8,
-        help="Fail when the weighted score exceeds this value",
+        help="Fail when the blocking score exceeds this value",
+    )
+    parser.add_argument(
+        "--ignore",
+        action="append",
+        default=[],
+        metavar="GLOB",
+        help="Skip files matching this glob (repeatable, also via .ai-integrity-ignore)",
     )
     parser.add_argument(
         "--report-file",
@@ -377,13 +500,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     phrases = load_phrases()
-    findings = scan(args.root, phrases)
-    score = total_score(findings)
+    findings = scan(args.root, phrases, extra_globs=args.ignore)
+    score = blocking_score(findings)
     if args.report_file:
         write_report(args.report_file, args.root, findings)
     if args.annotate:
         annotate(findings)
-    print(f"ai-integrity score={score} max={args.max_score} findings={len(findings)}")
+    print(
+        f"ai-integrity blocking={score} max={args.max_score} "
+        f"advisory={advisory_score(findings)} findings={len(findings)}"
+    )
     return 1 if score > args.max_score else 0
 
 

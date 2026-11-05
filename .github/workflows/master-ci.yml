@@ -6,7 +6,12 @@
 # inline PR annotations and in a dashboard comment on every pull request.
 #
 # Called with a single line from any repository:
-#   uses: WasewaseX/master-ci/.github/workflows/master-ci.yml@main
+#   uses: WasewaseX/master-ci/.github/workflows/master-ci.yml@v1
+#
+# Permissions are least-privilege per job: most jobs only get contents: read.
+# Only the jobs that need more declare more (security, deps-review, dashboard,
+# scorecard). No secrets beyond the automatic GITHUB_TOKEN are used, so
+# callers do NOT need `secrets: inherit`.
 # =============================================================================
 
 name: Master CI
@@ -14,6 +19,16 @@ name: Master CI
 on:
   workflow_call:
     inputs:
+      profile:
+        description: 'quick | standard | strict | custom - preset enforcement table'
+        required: false
+        type: string
+        default: standard
+      runs_on:
+        description: Runner label for every job (e.g. ubuntu-latest, macos-latest)
+        required: false
+        type: string
+        default: ubuntu-latest
       node_version:
         description: Node.js version for the TypeScript/Node stack
         required: false
@@ -45,17 +60,17 @@ on:
         type: string
         default: auto
       semgrep_config:
-        description: Space-separated Semgrep registry packs
+        description: Space-separated Semgrep registry packs (used by standard/strict/custom)
         required: false
         type: string
         default: 'p/default p/security-audit p/secrets'
       fail_on_ai_slop:
-        description: Fail the build when AI-slop heuristics exceed the score cap
+        description: 'Fail the build on AI-integrity blocking score (advisory by default)'
         required: false
         type: boolean
-        default: true
+        default: false
       ai_slop_max_score:
-        description: Score cap tolerated by the AI-integrity detector
+        description: Blocking score cap tolerated by the AI-integrity detector
         required: false
         type: number
         default: 8
@@ -69,6 +84,11 @@ on:
         required: false
         type: number
         default: 5
+      scorecard_publish:
+        description: Publish OSSF Scorecard results (badge/API). Needs id-token.
+        required: false
+        type: boolean
+        default: true
       template_repo:
         description: Repo holding master-ci helpers (auto-detected when empty)
         required: false
@@ -82,9 +102,6 @@ on:
 
 permissions:
   contents: read
-  security-events: write
-  pull-requests: write
-  id-token: write
 
 concurrency:
   group: master-ci-${{ github.workflow }}-${{ github.ref }}
@@ -92,13 +109,20 @@ concurrency:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Resolve which helper repo provides scripts and default configs
+  # Resolve which helper repo provides scripts and default configs, then
+  # translate the enforcement profile into concrete job settings.
   # ---------------------------------------------------------------------------
   meta:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 5
     outputs:
       template_repo: ${{ steps.repo.outputs.template_repo }}
+      semgrep_packs: ${{ steps.profile.outputs.semgrep_packs }}
+      enforce_osv: ${{ steps.profile.outputs.enforce_osv }}
+      enforce_trivy: ${{ steps.profile.outputs.enforce_trivy }}
+      enforce_duplication: ${{ steps.profile.outputs.enforce_duplication }}
+      enforce_complexity: ${{ steps.profile.outputs.enforce_complexity }}
+      deps_fail_severity: ${{ steps.profile.outputs.deps_fail_severity }}
     steps:
       - name: Resolve helper repo
         id: repo
@@ -117,12 +141,55 @@ jobs:
           else
             echo "template_repo=$fallback" >> "$GITHUB_OUTPUT"
           fi
+      - name: Resolve enforcement profile
+        id: profile
+        env:
+          PROFILE: ${{ inputs.profile }}
+          SEMGREP_INPUT: ${{ inputs.semgrep_config }}
+        run: |
+          # Profile presets (see docs/checks.md). `custom` uses the raw inputs:
+          #   quick    - fast signal, everything advisory except secrets +
+          #              critical dependency findings
+          #   standard - recommended: deterministic gates enforced, loud
+          #              scanners advisory
+          #   strict   - production: also enforce Trivy HIGH/CRITICAL
+          #   custom   - raw inputs, all gates enforced
+          case "$PROFILE" in
+            quick)
+              semgrep_packs='p/default'
+              enforce_osv=false; enforce_trivy=false
+              enforce_duplication=false; enforce_complexity=false
+              deps_fail_severity=critical ;;
+            strict)
+              semgrep_packs="$SEMGREP_INPUT"
+              enforce_osv=true; enforce_trivy=true
+              enforce_duplication=true; enforce_complexity=true
+              deps_fail_severity=high ;;
+            custom)
+              semgrep_packs="$SEMGREP_INPUT"
+              enforce_osv=true; enforce_trivy=false
+              enforce_duplication=true; enforce_complexity=true
+              deps_fail_severity=high ;;
+            *)  # standard
+              semgrep_packs="$SEMGREP_INPUT"
+              enforce_osv=true; enforce_trivy=false
+              enforce_duplication=true; enforce_complexity=true
+              deps_fail_severity=high ;;
+          esac
+          {
+            echo "semgrep_packs=$semgrep_packs"
+            echo "enforce_osv=$enforce_osv"
+            echo "enforce_trivy=$enforce_trivy"
+            echo "enforce_duplication=$enforce_duplication"
+            echo "enforce_complexity=$enforce_complexity"
+            echo "deps_fail_severity=$deps_fail_severity"
+          } >> "$GITHUB_OUTPUT"
 
   # ---------------------------------------------------------------------------
   # Change detection: skips every job that has nothing relevant to check
   # ---------------------------------------------------------------------------
   changes:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 5
     outputs:
       code: ${{ steps.filter.outputs.code }}
@@ -204,11 +271,12 @@ jobs:
   hygiene:
     needs: [changes, meta]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 15
     env:
       CODE_CHANGED: ${{ needs.changes.outputs.code }}
       DUP_THRESHOLD: ${{ inputs.duplication_threshold_pct }}
+      DUP_ENFORCE: ${{ needs.meta.outputs.enforce_duplication }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
       - name: Fetch master-ci helpers
@@ -262,10 +330,16 @@ jobs:
       - name: Detect duplicated code
         if: env.CODE_CHANGED == 'true'
         run: |
-          npx --yes jscpd --silent --min-tokens 50 --threshold "$DUP_THRESHOLD" \
+          if npx --yes jscpd --silent --min-tokens 50 --threshold "$DUP_THRESHOLD" \
             --reporters console \
             --formats "typescript,javascript,python,go,java" \
-            --ignore "**/_ci/**,**/node_modules/**,**/.git/**,**/dist/**,**/build/**,**/target/**" .
+            --ignore "**/_ci/**,**/fixtures/**,**/node_modules/**,**/.git/**,**/dist/**,**/build/**,**/target/**" .; then
+            exit 0
+          fi
+          if [ "$DUP_ENFORCE" = "true" ]; then
+            exit 1
+          fi
+          echo "::warning::duplicated code above ${DUP_THRESHOLD}% (advisory in this profile)"
 
   # ---------------------------------------------------------------------------
   # Secrets: full-history leak detection
@@ -273,7 +347,7 @@ jobs:
   secrets:
     needs: [meta]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
@@ -285,12 +359,14 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # ---------------------------------------------------------------------------
-  # AI integrity: slop vocabulary, AI-text tells, humanizer patterns
+  # AI integrity: slop vocabulary, AI-text tells, humanizer patterns.
+  # Advisory by default: prose style never fails a build; blocking signals
+  # are deterministic content checks only.
   # ---------------------------------------------------------------------------
   ai-integrity:
     needs: [meta]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 10
     env:
       AI_MAX: ${{ inputs.ai_slop_max_score }}
@@ -328,7 +404,7 @@ jobs:
   docs:
     needs: [changes, meta]
     if: needs.changes.outputs.docs == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
@@ -344,7 +420,7 @@ jobs:
         run: |
           [ -f .markdownlint-cli2.jsonc ] || cp _ci/configs/.markdownlint-cli2.jsonc .
           npx --yes markdownlint-cli2 "**/*.md" "!**/node_modules/**" \
-            "!**/_ci/**" "!**/dist/**" "!**/build/**"
+            "!**/_ci/**" "!**/fixtures/**" "!**/dist/**" "!**/build/**"
 
   # ---------------------------------------------------------------------------
   # Node / TypeScript stack: lint, format, types, unused deps
@@ -352,7 +428,7 @@ jobs:
   node-lint:
     needs: [changes]
     if: (inputs.run_node == 'auto' && needs.changes.outputs.node == 'true') || inputs.run_node == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
@@ -409,7 +485,7 @@ jobs:
   node-test:
     needs: [changes]
     if: (inputs.run_node == 'auto' && needs.changes.outputs.node == 'true') || inputs.run_node == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
@@ -457,8 +533,11 @@ jobs:
   python:
     needs: [changes, meta]
     if: (inputs.run_python == 'auto' && needs.changes.outputs.python == 'true') || inputs.run_python == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 25
+    env:
+      CX_MAX: ${{ inputs.complexity_max }}
+      CX_ENFORCE: ${{ needs.meta.outputs.enforce_complexity }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
       - name: Fetch master-ci helpers
@@ -498,14 +577,15 @@ jobs:
           vulture . --min-confidence 80 --exclude '_ci,build,dist,vendor' \
             || echo "::warning::vulture flagged possibly dead code (advisory)"
       - name: Lizard complexity gate
-        env:
-          COMPLEXITY_MAX: ${{ inputs.complexity_max }}
         run: |
-          out=$(lizard -l python -C "$COMPLEXITY_MAX" -x '_ci/*' . || true)
+          out=$(lizard -l python -C "$CX_MAX" -x '_ci/*' . || true)
           echo "$out"
           if echo "$out" | grep -q '!!!!'; then
-            echo "::error::functions exceed cyclomatic complexity $COMPLEXITY_MAX"
-            exit 1
+            if [ "$CX_ENFORCE" = "true" ]; then
+              echo "::error file=::functions exceed cyclomatic complexity $CX_MAX"
+              exit 1
+            fi
+            echo "::warning::functions exceed cyclomatic complexity $CX_MAX (advisory in this profile)"
           fi
       - name: Install project
         run: |
@@ -533,7 +613,7 @@ jobs:
   rust:
     needs: [changes, meta]
     if: (inputs.run_rust == 'auto' && needs.changes.outputs.rust == 'true') || inputs.run_rust == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
@@ -569,10 +649,15 @@ jobs:
   security:
     needs: [meta]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
     env:
-      SEMGREP_CONFIG: ${{ inputs.semgrep_config }}
+      SEMGREP_PACKS: ${{ needs.meta.outputs.semgrep_packs }}
+      TRIVY_EXIT: ${{ needs.meta.outputs.enforce_trivy == 'true' && '1' || '0' }}
+      OSV_ENFORCE: ${{ needs.meta.outputs.enforce_osv }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
       - name: Fetch master-ci helpers
@@ -588,7 +673,7 @@ jobs:
       - name: Semgrep static analysis
         run: |
           pip install --quiet semgrep
-          read -ra packs <<< "$SEMGREP_CONFIG"
+          read -ra packs <<< "$SEMGREP_PACKS"
           args=()
           for c in "${packs[@]}"; do
             args+=(--config "$c")
@@ -603,7 +688,7 @@ jobs:
           format: sarif
           output: trivy.sarif
           severity: HIGH,CRITICAL
-          exit-code: '0'
+          exit-code: ${{ env.TRIVY_EXIT }}
           ignore-unfixed: true
       - name: OSV vulnerability scan
         run: |
@@ -614,6 +699,10 @@ jobs:
           ./osv-scanner scan source -r . --format sarif --output-file osv.sarif || rc=$?
           if [ ! -s osv.sarif ]; then
             echo "No package manifests found - skipping OSV gate"
+            exit 0
+          fi
+          if [ "$rc" -ne 0 ] && [ "$OSV_ENFORCE" != "true" ]; then
+            echo "::warning::OSV found vulnerable dependencies (advisory in this profile)"
             exit 0
           fi
           exit "$rc"
@@ -637,25 +726,56 @@ jobs:
           category: osv-scanner
 
   # ---------------------------------------------------------------------------
-  # Dependency review on pull requests (vulns + license changes)
+  # Dependency review on pull requests (vulns + license changes).
+  # Requires the repository dependency graph; when it is disabled this
+  # degrades to an explicit advisory instead of a red infrastructure failure.
   # ---------------------------------------------------------------------------
   deps-review:
+    needs: [meta]
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      DEPS_SEVERITY: ${{ needs.meta.outputs.deps_fail_severity }}
     steps:
-      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.8.1
+      - name: Probe dependency graph support
+        id: dg
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/dependency-graph/compare/$BASE_SHA...$HEAD_SHA")
+          echo "http=$code" >> "$GITHUB_OUTPUT"
+          echo "dependency-graph compare returned HTTP $code"
+      - name: Dependency review
+        if: steps.dg.outputs.http == '200'
+        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.8.1
         with:
-          fail-on-severity: high
+          fail-on-severity: ${{ env.DEPS_SEVERITY }}
           comment-summary-in-pr: true
+      - name: Dependency review unavailable
+        if: steps.dg.outputs.http != '200'
+        run: |
+          echo "::warning::Dependency graph is disabled for this repository - \
+          dependency review was skipped (advisory). Enable it under \
+          Settings > General > Security > Dependency graph to enforce it."
 
   # ---------------------------------------------------------------------------
-  # OSSF Scorecard on pushes to the default branch
+  # OSSF Scorecard on pushes to the default branch. Publishing results
+  # (badge/API data) needs id-token: write on this job only.
   # ---------------------------------------------------------------------------
   scorecard:
     if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+      id-token: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
         with:
@@ -665,7 +785,7 @@ jobs:
         with:
           results_file: scorecard.sarif
           results_format: sarif
-          publish_results: true
+          publish_results: ${{ inputs.scorecard_publish }}
           repo_token: ${{ secrets.GITHUB_TOKEN }}
       - name: Upload Scorecard SARIF
         uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
@@ -679,8 +799,11 @@ jobs:
   dashboard:
     needs: [changes, meta, hygiene, secrets, ai-integrity, docs, node-lint, node-test, python, rust, security, deps-review, scorecard]
     if: always() && github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
     env:
       NEEDS_JSON: ${{ toJson(needs.*.result) }}
     steps:
@@ -755,7 +878,7 @@ jobs:
   ci-success:
     needs: [changes, meta, hygiene, secrets, ai-integrity, docs, node-lint, node-test, python, rust, security, deps-review, scorecard]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 5
     env:
       NEEDS_JSON: ${{ toJson(needs.*.result) }}

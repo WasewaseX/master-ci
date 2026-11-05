@@ -3,6 +3,14 @@
 # Copy this file to .github/workflows/ci.yml in your repository and commit.
 # That is the whole setup: master-ci auto-detects Rust / Node / Python and
 # skips whatever did not change. The `uses:` line below is the one-liner.
+#
+# Supply-chain notes:
+# - `@v1` tracks the latest v1.x release of the template (see the repo's
+#   tags). For immutability pin a commit SHA instead; Dependabot keeps
+#   either reference current automatically.
+# - No `secrets: inherit`: master-ci only uses the automatic GITHUB_TOKEN.
+# - `id-token: write` exists solely for OSSF Scorecard result publishing.
+#   Set `scorecard_publish: false` and drop that line to run without OIDC.
 
 name: CI
 
@@ -13,8 +21,7 @@ on:
 
 jobs:
   master:
-    uses: WasewaseX/master-ci/.github/workflows/master-ci.yml@main
-    secrets: inherit
+    uses: WasewaseX/master-ci/.github/workflows/master-ci.yml@v1
     permissions:
       contents: read
       security-events: write
@@ -22,7 +29,7 @@ jobs:
       id-token: write
 
   codeql:
-    uses: WasewaseX/master-ci/.github/workflows/codeql.yml@main
+    uses: WasewaseX/master-ci/.github/workflows/codeql.yml@v1
     with:
       languages: javascript-typescript,python
     permissions:

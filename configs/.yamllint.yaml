@@ -12,3 +12,5 @@ rules:
     indent-sequences: consistent
   braces:
     max-spaces-inside: 1
+ignore: |
+  **/fixtures/**

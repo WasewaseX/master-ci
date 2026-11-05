@@ -1,0 +1,4 @@
+# ignore-me fixture: suppress the deliberately sloppy file with a glob...
+sloppy.js
+# ...and disable one rule everywhere for this directory
+check:emoji-comments
