@@ -1,0 +1,7 @@
+# Default ruff configuration for repositories that ship none.
+# Commit your own ruff.toml (or [tool.ruff] in pyproject.toml) to override.
+line-length = 100
+
+[lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]

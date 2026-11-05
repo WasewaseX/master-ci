@@ -99,12 +99,21 @@ on:
         required: false
         type: string
         default: main
+      concurrency_key:
+        description: Extra key for the concurrency group (set when calling this workflow several times from one workflow)
+        required: false
+        type: string
+        default: ''
+    outputs:
+      verdict:
+        description: Aggregate verdict of the whole pipeline (passed | failed)
+        value: ${{ jobs.ci-success.outputs.verdict }}
 
 permissions:
   contents: read
 
 concurrency:
-  group: master-ci-${{ github.workflow }}-${{ github.ref }}
+  group: master-ci-${{ github.workflow }}-${{ inputs.concurrency_key }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -124,6 +133,30 @@ jobs:
       enforce_complexity: ${{ steps.profile.outputs.enforce_complexity }}
       deps_fail_severity: ${{ steps.profile.outputs.deps_fail_severity }}
     steps:
+      - name: Validate caller inputs
+        env:
+          TEMPLATE_REPO_INPUT: ${{ inputs.template_repo }}
+          TEMPLATE_REF: ${{ inputs.template_ref }}
+          PROFILE: ${{ inputs.profile }}
+        run: |
+          # Untrusted caller input never reaches a checkout ref unvalidated.
+          die() { echo "::error::$1"; exit 1; }
+          if [ -n "$TEMPLATE_REPO_INPUT" ] && \
+            ! printf '%s' "$TEMPLATE_REPO_INPUT" | grep -Eqx '[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+'; then
+            die "template_repo must look like owner/repo (letters, digits, dot, dash, underscore)"
+          fi
+          for ref in "$TEMPLATE_REF"; do
+            [ -z "$ref" ] && continue
+            case "$ref" in
+              -*|*..*|*[!A-Za-z0-9._/-]*)
+                die "template_ref contains unsafe characters or sequences; use a branch, tag or commit SHA" ;;
+            esac
+          done
+          case "$PROFILE" in
+            quick|standard|strict|custom) ;;
+            *) die "profile must be one of: quick, standard, strict, custom" ;;
+          esac
+          echo "caller inputs validated (profile=$PROFILE)"
       - name: Resolve helper repo
         id: repo
         env:
@@ -227,6 +260,12 @@ jobs:
               - '**/*.cpp'
               - '**/*.h'
               - '**/*.sh'
+              - '!**/dist/**'
+              - '!**/build/**'
+              - '!**/target/**'
+              - '!**/vendor/**'
+              - '!**/coverage/**'
+              - '!**/node_modules/**'
             node:
               - '**/package.json'
               - '**/package-lock.json'
@@ -241,6 +280,12 @@ jobs:
               - '**/biome.json*'
               - '**/tsconfig*.json'
               - '!**/fixtures/**'
+              - '!**/dist/**'
+              - '!**/build/**'
+              - '!**/target/**'
+              - '!**/vendor/**'
+              - '!**/coverage/**'
+              - '!**/node_modules/**'
             python:
               - '**/*.py'
               - '**/pyproject.toml'
@@ -250,16 +295,34 @@ jobs:
               - '**/mypy.ini'
               - '**/ruff.toml'
               - '**/.ruff.toml'
+              - '!**/dist/**'
+              - '!**/build/**'
+              - '!**/target/**'
+              - '!**/vendor/**'
+              - '!**/coverage/**'
+              - '!**/node_modules/**'
             rust:
               - '**/*.rs'
               - '**/Cargo.toml'
               - '**/Cargo.lock'
               - '**/rust-toolchain*'
               - '**/deny.toml'
+              - '!**/dist/**'
+              - '!**/build/**'
+              - '!**/target/**'
+              - '!**/vendor/**'
+              - '!**/coverage/**'
+              - '!**/node_modules/**'
             docs:
               - '**/*.md'
               - '**/*.mdx'
               - '**/*.rst'
+              - '!**/dist/**'
+              - '!**/build/**'
+              - '!**/target/**'
+              - '!**/vendor/**'
+              - '!**/coverage/**'
+              - '!**/node_modules/**'
             workflows:
               - '.github/workflows/**'
               - '.github/labeler.yml'
@@ -274,7 +337,7 @@ jobs:
   # ---------------------------------------------------------------------------
   hygiene:
     needs: [changes, meta]
-    if: always()
+    if: needs.meta.result == 'success'
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 15
     env:
@@ -358,7 +421,7 @@ jobs:
   # ---------------------------------------------------------------------------
   secrets:
     needs: [meta]
-    if: always()
+    if: needs.meta.result == 'success'
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 10
     steps:
@@ -377,9 +440,12 @@ jobs:
   # ---------------------------------------------------------------------------
   ai-integrity:
     needs: [meta]
-    if: always()
+    if: needs.meta.result == 'success'
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write
     env:
       AI_MAX: ${{ inputs.ai_slop_max_score }}
       FAIL_SLOP: ${{ inputs.fail_on_ai_slop }}
@@ -398,6 +464,7 @@ jobs:
           python3 _ci/scripts/ai_slop_detector.py . \
             --max-score "$AI_MAX" \
             --report-file ai_report.md \
+            --sarif ai_integrity.sarif \
             --annotate
           rc=$?
           if [ -f ai_report.md ]; then
@@ -409,13 +476,19 @@ jobs:
             exit 0
           fi
           exit "$rc"
+      - name: Upload AI-integrity SARIF
+        if: always() && hashFiles('ai_integrity.sarif') != ''
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: ai_integrity.sarif
+          category: ai-integrity
 
   # ---------------------------------------------------------------------------
   # Documentation: markdown lint
   # ---------------------------------------------------------------------------
   docs:
     needs: [changes, meta]
-    if: needs.changes.outputs.docs == 'true'
+    if: needs.meta.result == 'success' && needs.changes.outputs.docs == 'true'
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 10
     steps:
@@ -438,8 +511,8 @@ jobs:
   # Node / TypeScript stack: lint, format, types, unused deps
   # ---------------------------------------------------------------------------
   node-lint:
-    needs: [changes]
-    if: (inputs.run_node == 'auto' && needs.changes.outputs.node == 'true') || inputs.run_node == 'true'
+    needs: [changes, meta]
+    if: needs.meta.result == 'success' && ((inputs.run_node == 'auto' && needs.changes.outputs.node == 'true') || inputs.run_node == 'true')
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 25
     steps:
@@ -505,8 +578,8 @@ jobs:
   # Node / TypeScript stack: tests
   # ---------------------------------------------------------------------------
   node-test:
-    needs: [changes]
-    if: (inputs.run_node == 'auto' && needs.changes.outputs.node == 'true') || inputs.run_node == 'true'
+    needs: [changes, meta]
+    if: needs.meta.result == 'success' && ((inputs.run_node == 'auto' && needs.changes.outputs.node == 'true') || inputs.run_node == 'true')
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 25
     steps:
@@ -564,7 +637,7 @@ jobs:
   # ---------------------------------------------------------------------------
   python:
     needs: [changes, meta]
-    if: (inputs.run_python == 'auto' && needs.changes.outputs.python == 'true') || inputs.run_python == 'true'
+    if: needs.meta.result == 'success' && ((inputs.run_python == 'auto' && needs.changes.outputs.python == 'true') || inputs.run_python == 'true')
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 25
     env:
@@ -644,7 +717,7 @@ jobs:
   # ---------------------------------------------------------------------------
   rust:
     needs: [changes, meta]
-    if: (inputs.run_rust == 'auto' && needs.changes.outputs.rust == 'true') || inputs.run_rust == 'true'
+    if: needs.meta.result == 'success' && ((inputs.run_rust == 'auto' && needs.changes.outputs.rust == 'true') || inputs.run_rust == 'true')
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 45
     steps:
@@ -680,7 +753,7 @@ jobs:
   # ---------------------------------------------------------------------------
   security:
     needs: [meta]
-    if: always()
+    if: needs.meta.result == 'success'
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 30
     permissions:
@@ -764,7 +837,7 @@ jobs:
   # ---------------------------------------------------------------------------
   deps-review:
     needs: [meta]
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && needs.meta.result == 'success'
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 10
     permissions:
@@ -912,11 +985,14 @@ jobs:
     if: always()
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 5
+    outputs:
+      verdict: ${{ steps.aggregate.outputs.verdict }}
     env:
       NEEDS_JSON: ${{ toJson(needs.*.result) }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - name: Aggregate results
+        id: aggregate
         run: |
           python3 - <<'PY'
           import json
@@ -966,6 +1042,10 @@ jobs:
                   failed = True
               rows.append(f"| {labels[name]} (`{name}`) | {icon.get(result, ':question:')} `{result}` |")
           verdict = "failed" if failed else "passed"
+          gh_output = os.environ.get("GITHUB_OUTPUT")
+          if gh_output:
+              with open(gh_output, "a", encoding="utf-8") as handle:
+                  handle.write(f"verdict={verdict}\n")
           summary = os.environ.get("GITHUB_STEP_SUMMARY")
           if summary:
               with open(summary, "a", encoding="utf-8") as handle:

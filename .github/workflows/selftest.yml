@@ -1,0 +1,106 @@
+# =============================================================================
+# Master CI Selftest - integration tests for the reusable workflow itself
+# =============================================================================
+# Default mode (push / PR / plain dispatch): calls the reusable workflow once
+# with the quick profile and asserts the pipeline passes and reports
+# verdict=passed. Green by design.
+#
+# Failure-path mode (dispatch with failure_paths=true): additionally calls the
+# reusable workflow with a Semgrep pack that cannot exist, and with an unsafe
+# template_ref. Those two calls are EXPECTED to fail - the run turns red on
+# purpose, and `verify` asserts that both pipelines report verdict=failed,
+# proving the aggregate gate fails when a check fails and that untrusted
+# input is rejected before any checkout.
+# =============================================================================
+
+name: Master CI Selftest
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      failure_paths:
+        description: "'true' also runs the expected-failure calls (run turns red by design)"
+        required: false
+        type: string
+        default: 'false'
+
+permissions:
+  contents: read
+
+jobs:
+  happy-path:
+    uses: ./.github/workflows/master-ci.yml # zizmor: ignore[self-repository]
+    with:
+      profile: quick
+      scorecard_publish: false
+      concurrency_key: selftest-happy
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
+
+  enforced-failure:
+    if: inputs.failure_paths == 'true'
+    uses: ./.github/workflows/master-ci.yml # zizmor: ignore[self-repository]
+    with:
+      profile: standard
+      semgrep_config: 'p/definitely-not-a-real-pack'
+      scorecard_publish: false
+      concurrency_key: selftest-fail
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
+
+  input-validation:
+    if: inputs.failure_paths == 'true'
+    uses: ./.github/workflows/master-ci.yml # zizmor: ignore[self-repository]
+    with:
+      template_ref: '../not-a-ref'
+      scorecard_publish: false
+      concurrency_key: selftest-valid
+    permissions:
+      contents: read
+      pull-requests: write
+
+  verify:
+    needs: [happy-path, enforced-failure, input-validation]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      FAILURE_PATHS: ${{ inputs.failure_paths }}
+      HAPPY_RESULT: ${{ needs.happy-path.result }}
+      HAPPY_VERDICT: ${{ needs.happy-path.outputs.verdict }}
+      FAIL_RESULT: ${{ needs.enforced-failure.result }}
+      FAIL_VERDICT: ${{ needs.enforced-failure.outputs.verdict }}
+      VALID_RESULT: ${{ needs.input-validation.result }}
+      VALID_VERDICT: ${{ needs.input-validation.outputs.verdict }}
+    steps:
+      - name: Assert selftest outcomes
+        run: |
+          fail=0
+          assert_eq() {
+            if [ "$2" != "$3" ]; then
+              echo "::error::$1: '$2' (expected '$3')"
+              fail=1
+            else
+              echo "ok: $1 = $2"
+            fi
+          }
+          assert_eq "happy-path job result" "$HAPPY_RESULT" "success"
+          assert_eq "happy-path verdict" "$HAPPY_VERDICT" "passed"
+          if [ "$FAILURE_PATHS" = "true" ]; then
+            assert_eq "enforced-failure job result" "$FAIL_RESULT" "failure"
+            assert_eq "enforced-failure verdict" "$FAIL_VERDICT" "failed"
+            assert_eq "input-validation job result" "$VALID_RESULT" "failure"
+            assert_eq "input-validation verdict" "$VALID_VERDICT" "failed"
+          else
+            assert_eq "enforced-failure skipped" "$FAIL_RESULT" "skipped"
+            assert_eq "input-validation skipped" "$VALID_RESULT" "skipped"
+          fi
+          echo "selftest summary: happy=$HAPPY_VERDICT fail=$FAIL_VERDICT valid=$VALID_VERDICT"
+          exit $fail

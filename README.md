@@ -1,18 +1,23 @@
 # master-ci
 
 Reusable GitHub Actions CI for **Rust**, **Node/TypeScript** and **Python**
-projects. One file per project gives you 40+ checks, path-aware skipping,
-aggressive caching, pretty reporting and a set of automation loops that keep
-the whole thing updated.
+projects, with structural AI-slop detection for **13+ languages**. One file
+per project gives you 80+ checks, path-aware skipping, aggressive caching,
+pretty reporting and a set of automation loops that keep the whole thing
+updated.
 
 ![CI](https://github.com/WasewaseX/master-ci/actions/workflows/ci.yml/badge.svg)
+![Selftest](https://github.com/WasewaseX/master-ci/actions/workflows/selftest.yml/badge.svg)
 ![Nightly Deep Scan](https://github.com/WasewaseX/master-ci/actions/workflows/nightly.yml/badge.svg)
 
 - Runs entirely on free `ubuntu-latest` runners for public repositories
-- Detects which stacks changed and skips everything else
+- Detects which stacks changed, skips generated trees, skips everything else
 - Pushes findings to the **Security** tab (code scanning) and inline PR annotations
 - Aggregates into a single `ci-success` check you mark as required
 - Least-privilege per job, no `secrets: inherit`, every action pinned by commit SHA
+- Validates untrusted caller inputs before they can reach a checkout
+- The template tests itself: path-filter regression suite, workflow contract
+  tests and a three-path integration selftest
 - Every check has a documented contract: [docs/checks.md](docs/checks.md)
 
 ## Setup: one line, any project
@@ -76,22 +81,22 @@ works for consumers too.
 | Job | Trigger | Purpose |
 |---|---|---|
 | `changes` | always | Path filtering for all downstream jobs |
-| `meta` | always | Resolves helper repo, resolves enforcement profile |
-| `hygiene` | always | Workflow lint, YAML, shell, whitespace, duplication |
-| `secrets` | always | Full-history secret scanning |
-| `ai-integrity` | always | AI slop detection - **advisory by default** |
+| `meta` | always | Validates caller inputs, resolves helper repo and enforcement profile |
+| `hygiene` | meta ok | Workflow lint, YAML, shell, whitespace, duplication |
+| `secrets` | meta ok | Full-history secret scanning |
+| `ai-integrity` | meta ok | AI slop + structural slop detection - **advisory by default** |
 | `docs` | docs changed | Markdown lint |
 | `node-lint` | Node changed | Lint, format, types, unused deps |
 | `node-test` | Node changed | Test suite |
 | `python` | Python changed | Lint, format, types, dead code, complexity, tests |
 | `rust` | Rust changed | Format, clippy, advisories, licenses, tests |
-| `security` | always | Semgrep, Trivy, OSV scanning |
+| `security` | meta ok | Semgrep, Trivy, OSV scanning |
 | `deps-review` | PRs | Dependency and license review |
 | `scorecard` | pushes to default branch | OSSF Scorecard |
 | `dashboard` | PRs | Results table comment on the PR |
-| `ci-success` | always | Aggregate gate |
+| `ci-success` | always | Aggregate gate (exposes a `verdict` output) |
 
-## The check catalog (40 checks)
+## The check catalog (80+ checks)
 
 Repo hygiene:
 
@@ -158,42 +163,72 @@ Rust:
 | 34 | Lint gate | clippy -D warnings |
 | 35 | Tests | cargo test |
 
-AI integrity (heuristic detector in this repo):
+Integrity engine (the detector in this repo, `scripts/ai_slop_detector.py`).
+It checks code, documents and frontend files for machine-written filler and
+for the structural tells AI agents leave behind. It reports a **slop score
+0-100** (grade A-F, verdict CLEAN / SUSPICIOUS / INFLATED / CRITICAL), a
+"fix these first" brief, per-rule totals and SARIF for the Security tab.
+Its model borrows from flamehaven01/ai-slop-detector (deficit scoring,
+conservative aggregation), FixMySlop (rule + remedy + baseline + SARIF
+flow) and slopdetector.org (explainable prose evidence).
 
-| # | Check | Signal | Blocks? |
-|---|---|---|---|
-| 36 | AI vocabulary in code comments | weighted phrase list | yes |
-| 37 | Emoji padding in comments | comment scan | yes |
-| 38 | TODO / FIXME density | density gate | yes |
-| 39 | Comments that restate the code | ratio gate | yes |
-| 40 | Boilerplate duplication | repeated-line scan | yes |
+Blocking-grade rules (deterministic content defects; only fail a build when
+`fail_on_ai_slop: true`):
 
-Prose checks (same detector, applied to docs) - **always advisory**, because
-stylistic signals are not evidence of authorship:
+| Check | Catches | Languages |
+|---|---|---|
+| `ai-vocab` | telltale vocabulary in comments | all |
+| `chatbot-residue` | assistant-voice phrases in comments | all |
+| `emoji-comments` | decorative emoji in comments | all |
+| `todo-density` | TODO/FIXME density above 5% | all |
+| `trivial-comments` | comments that restate the code | all |
+| `boilerplate-duplication` | identical lines repeated 10x+ | all |
+| `elided-code` | `// ... existing code ...` - edits that silently delete half a file | all |
+| `placeholder-impl` | "in a real app...", "to be implemented" | all |
+| `stub-function` | bodies that only pass / raise NotImplementedError | Python (AST) |
+| `empty-test` | tests that assert nothing | Python (AST) |
+| `bare-except` / `swallowed-exception` | `except:` / pass-only handlers | Python (AST) |
+| `empty-catch` | `catch {}` | JS/TS, Java, Kotlin, C#, C/C++, PHP, Swift, Dart |
+| `empty-rescue` | rescue with no handling | Ruby |
+| `go-ignored-error` | `if err != nil { return nil }` | Go |
+| `print-stacktrace-only` | catch blocks that only print | Java/Kotlin |
+| `debugger-left` | `debugger;`, `binding.pry`, `byebug` | JS/TS, Ruby |
+| `rust-stub` | `todo!()` / `unimplemented!()` | Rust |
 
-| # | Check | Signal | Blocks? |
-|---|---|---|---|
-| 41 | AI prose vocabulary | weighted phrase list | no |
-| 42 | Em-dash overuse | density per 1000 words | no |
-| 43 | Rule-of-three lists | bullet-list shape | no |
-| 44 | Rhetorical question load | density per 500 words | no |
-| 45 | Exclamation padding | count gate | no |
-| 46 | Humanizer interjections | phrase list | no |
+Advisory rules (never fail a build; reported, annotated, SARIF `warning`):
 
-Numbered past 40 because the prose family kept growing; the detector is one
-tool with two rule sets. The blocking score cap defaults to 8 and is tunable.
-Every finding names its rule id and carries a remediation hint; `.ai-integrity-ignore`
-lets you exclude paths or disable single rules.
+| Family | Checks |
+|---|---|
+| Dependency hygiene | `phantom-import` (unused), `undeclared-import` (not stdlib/local/manifest - the slopsquatting guard), `star-import`, `mutable-default` |
+| Suppression abuse | `lint-escape`, `blanket-suppression`, `ts-suppression` |
+| Code smells | `god-function` (>100 lines), `deep-nesting` (>5 levels), `placeholder-naming`, `debug-print`, `unwrap-density`, `go-error-assigned-blank` |
+| Credentials | `placeholder-credential` (fake keys gitleaks ignores) |
+| UI slop | `ui-ai-gradient`, `ui-gradient-text`, `ui-marketing-copy`, `ui-placeholder-copy`, `ui-emoji-decor` |
+| Prose | `ai-prose`, `humanizer`, `em-dash-density`, `rule-of-three`, `rhetorical-questions`, `exclamations`, `md-emoji-headings`, `md-residue`, `step-comments`, `placeholder-note` |
+| Provenance | `ai-provenance` (generation banners, AI co-author trailers), `missing-tests` (repo inventory) |
+
+The provenance family is deliberately advisory: style is not evidence of
+authorship, and the goal is traceability and quality, never blame. Every
+finding names its rule id and carries a remediation hint; `.ai-integrity-ignore`
+excludes paths or single rules; `--write-baseline` / `--baseline` accept
+existing findings so only new slop shows up.
+
+Detector language coverage for structural checks: **Python** (AST-backed),
+**JavaScript/TypeScript/JSX/TSX/Vue/Svelte/Astro**, **Go**, **Java/Kotlin/**
+**Scala/Groovy**, **C#**, **C/C++**, **Ruby**, **PHP**, **Rust**, **Swift**,
+**Dart**, **Shell**, plus CSS/SCSS/HTML for UI slop. Comment extraction is
+language-aware (line, block and docstring styles).
 
 ## How results reach you
 
 1. **PR dashboard comment** - a table with every check and its state, updated
    in place as commits land
 2. **Inline annotations** - warnings and errors pinned to file and line
-3. **Security tab** - Semgrep, Trivy, OSV, CodeQL and Scorecard results are
-   uploaded as SARIF into code scanning, with per-tool categories
-4. **Step summary** - a Markdown table on every run page
-5. **`ci-success`** - one gate for branch protection
+3. **Security tab** - Semgrep, Trivy, OSV, CodeQL, Scorecard and AI-integrity
+   results are uploaded as SARIF into code scanning, with per-tool categories
+4. **Step summary** - slop score, grades and fix-first brief on every run page
+5. **`ci-success`** - one gate for branch protection (also exposes a
+   `verdict` output for callers that want to branch on the result)
 
 ## Profiles: quick / standard / strict / custom
 
@@ -241,8 +276,9 @@ how to disable, added time) live in [docs/checks.md](docs/checks.md).
 | `complexity_max` | `15` | Cyclomatic complexity gate |
 | `duplication_threshold_pct` | `5` | jscpd failure threshold |
 | `scorecard_publish` | `true` | Publish Scorecard results (needs `id-token: write`) |
-| `template_repo` | auto | Helper repo override for forks |
-| `template_ref` | `main` | Helper ref override |
+| `template_repo` | auto | Helper repo override for forks (validated: `owner/repo`) |
+| `template_ref` | `main` | Helper ref override (validated: branch, tag or SHA characters only) |
+| `concurrency_key` | `''` | Distinguishes concurrent calls when one workflow calls master-ci several times |
 
 ## Permissions: least privilege, explained
 
@@ -259,6 +295,17 @@ with `contents: read` only. The caller grants the union once:
 No `secrets: inherit` is needed anywhere: the workflows only use the
 automatic `GITHUB_TOKEN`. To drop `id-token` entirely, set
 `scorecard_publish: false` and remove the line from your caller.
+
+Fork pull requests are safe by construction: GitHub forces the token to
+read-only on `pull_request` events from forks, the workflow declares no
+secrets, and nothing in it pushes to your branches.
+
+Untrusted caller inputs (`template_repo`, `template_ref`, `profile`) are
+validated in the `meta` job before any job may fetch helpers; every job
+that consumes helpers is gated on that validation succeeding. Supply-chain
+posture is enforced mechanically by `tests/test_workflow_contracts.py`:
+SHA pins, no `secrets: inherit`, no expression interpolation inside `run:`
+blocks, per-job permissions and timeouts.
 
 ## CodeQL languages vs. full CI stacks
 
@@ -294,21 +341,48 @@ autofix PR ──> safe formatters ──> merge ──┘
 |---|---|---|---|
 | Dogfood | `ci.yml` | every push / PR | The template CI-checks itself with its own workflows |
 | Fixture contracts | `ci.yml` | every push / PR | Detector and tooling run against `fixtures/` edge cases (empty, slop, ignore-file, malformed YAML) |
+| **Selftest** | `selftest.yml` | every push / PR | Calls the reusable workflow three ways: must pass (quick profile), must fail (broken Semgrep pack), must reject an unsafe `template_ref` - the `verify` job asserts all three verdicts |
 | Self-update | `dependabot.yml` | weekly | Bumps every pinned action, grouped PR |
 | Self-heal | `autofix.yml` | weekly + manual | Runs ruff, Biome, rustfmt, markdownlint `--fix`, opens a PR |
 | Deep sweep | `nightly.yml` | nightly + manual | Full-severity Trivy, CodeQL quality suites, verbose AI report |
-| Housekeeping | `stale.yml` | weekly | Marks and closes inactive issues and PRs |
+| Housekeeping | `stale.yml` | weekly | Marks and closes inactive issues and PRs (never security-labeled ones) |
 | Auto-label | `label.yml` | every PR | Labels PRs by touched paths |
 
 Autofix opens **reviewable PRs**; nothing merges or rewrites code without a
-human pressing the button.
+human pressing the button, CI must be green before the PR merges, and
+closing the PR is the rollback.
+
+## Testing the template
+
+The template ships three layers of self-tests, all runnable locally:
+
+```bash
+python -m pytest -q          # 74 tests:
+                             # - detector contracts (43): every rule family,
+                             #   slop pairs, scoring, SARIF, baseline
+                             # - path-filter regression (12): 85+ synthetic
+                             #   repo layouts with exact expected stacks,
+                             #   picomatch-semantics translator, output wiring
+                             # - workflow contracts (19): SHA pins, no
+                             #   secrets:inherit, no template injection in
+                             #   run blocks, timeouts, permissions, helper
+                             #   configs, automation safety, selftest wiring
+.github/workflows/selftest.yml  # in CI: three live calls of the reusable
+                                # workflow (pass / enforced fail / invalid input)
+```
+
+The path-filter suite exists because wrong path detection is the failure
+mode a CI template must never have: it pins the filter table extracted
+directly from `master-ci.yml`, so any filter edit that changes which stacks
+run for a layout fails the suite before it can fail a consumer.
 
 ## Zero-config defaults, fetched for you
 
 When a check needs a config file and your repo does not have one, Master CI
 copies the default from this repo at run time: `.yamllint.yaml`,
 `.markdownlint-cli2.jsonc`, `.editorconfig`, `ruff.toml`, `deny.toml`,
-`.semgrepignore`. Commit any of these to your repo to override.
+`.semgrepignore`. Commit any of these to your repo to override. A contract
+test guarantees every referenced default actually exists in this repo.
 
 ## Cost
 
@@ -323,7 +397,8 @@ pip install ruff mypy vulture lizard pytest
 ruff check . && ruff format --check .
 mypy --ignore-missing-imports .
 python -m pytest -q
-python3 scripts/ai_slop_detector.py . --max-score 8
+python3 scripts/ai_slop_detector.py . --max-score 8 --sarif /tmp/ai.sarif
+python3 scripts/ai_slop_detector.py . --write-baseline .ai-baseline.json   # accept current findings
 ```
 
 ## License

@@ -9,13 +9,18 @@ Job-level inputs below are `workflow_call` inputs on `master-ci.yml`.
 Profile presets (quick / standard / strict / custom) only change the
 *enforcement* of gates listed here; they never add or remove jobs.
 
-## `meta` - profile resolution and helper repo lookup
+## `meta` - input validation, profile resolution and helper repo lookup
 
 - **Inspects:** the `profile` and `template_*` inputs; `GITHUB_WORKFLOW_REF`
   to auto-detect the helper repo on forks.
+- **Validates:** `template_repo` must look like `owner/repo`, `template_ref`
+  must contain only safe ref characters (no leading dash, no `..`), and
+  `profile` must be one of the four presets. Invalid input fails `meta`, and
+  every job that consumes helpers is gated on `meta` succeeding - so an
+  untrusted ref can never reach a checkout.
 - **Does not inspect:** your code.
-- **Fails when:** it cannot resolve a helper repo (never, with the built-in
-  fallback) - effectively always succeeds.
+- **Fails when:** an input fails validation. (The lookup itself can no
+  longer fail: the built-in fallback covers it.)
 - **False positives:** none.
 - **Disable:** not disableable; it produces settings every job reads.
 - **Time:** under 10 seconds.
@@ -23,12 +28,18 @@ Profile presets (quick / standard / strict / custom) only change the
 ## `changes` - path filtering
 
 - **Inspects:** the git diff of the triggering event against a filter table
-  (code, node, python, rust, docs, workflows, docker globs).
-- **Does not inspect:** file contents beyond paths; generated code is not
-  special-cased.
+  (code, node, python, rust, docs, workflows, docker globs). Generated and
+  vendored trees (`dist`, `build`, `target`, `vendor`, `coverage`,
+  `node_modules`) are excluded, so rebuilding an artifact never triggers a
+  stack run; `fixtures/` is excluded from the Node stack only.
+- **Does not inspect:** file contents beyond paths; symlink-heavy trees can
+  over-match globs.
 - **Fails when:** git operations fail (broken repository).
 - **False positives:** rename/delete detection needs full history
-  (`fetch-depth: 0`, already set); symlink-heavy trees can over-match globs.
+  (`fetch-depth: 0`, already set).
+- **Tested:** `tests/test_path_filters.py` extracts the live filter table
+  from the workflow and pins 85+ synthetic layouts with exact expected
+  stacks, plus picomatch-semantics translator checks and output wiring.
 - **Disable:** force every stack on with `run_node/run_python/run_rust:
   'true'`; the `changes` job itself always runs (downstream gating depends
   on it).
@@ -66,26 +77,35 @@ Profile presets (quick / standard / strict / custom) only change the
   leak or allowlist the pattern.
 - **Time:** 10-60 seconds depending on history length.
 
-## `ai-integrity` - AI slop / prose / humanizer heuristics
+## `ai-integrity` - slop score, structural rules, provenance
 
-- **Inspects:** code comments (AI vocabulary, emoji padding, TODO density,
-  comments that restate code, repeated boilerplate lines) and documents
-  (AI prose vocabulary, humanizer phrases, and - advisory only - prose
-  rhythm: em-dash density, rule-of-three lists, rhetorical questions,
-  exclamation padding).
+- **Inspects:** code (language-aware comment extraction plus structural
+  checks per family), documents (prose rhythm, residue) and frontend files
+  (UI slop). Blocking-grade rules catch deterministic content defects:
+  elided code, placeholder implementations, stub functions, empty tests,
+  bare/pass-only exception handlers, empty catches and rescues, ignored Go
+  errors, committed debuggers, Rust `todo!()`, chatbot residue in comments.
+  Advisory rules cover dependency hygiene (phantom and undeclared imports -
+  the slopsquatting guard), suppression abuse, code smells, placeholder
+  credentials, UI slop, prose style and provenance.
 - **Does not inspect:** authorship, commit metadata, or anything outside
   tracked text files; it never claims code *is* machine-written.
+- **Reports:** a slop score 0-100 per run (0.6x worst file + 0.4x mean file
+  deficit, grades A-F, verdicts CLEAN / SUSPICIOUS / INFLATED / CRITICAL),
+  a "fix these first" brief, per-rule totals, and SARIF uploaded to the
+  Security tab (category `ai-integrity`).
 - **Fails when:** only the **blocking** score exceeds `ai_slop_max_score`
   AND `fail_on_ai_slop: true`. Blocking signals are the deterministic
-  content checks; prose rhythm findings are always advisory.
-- **False positives:** domain vocabulary that overlaps the phrase list;
-  intentional emoji in comments. Opt out per path or per check with a
-  committed `.ai-integrity-ignore` (glob lines, `check:<id>` lines) or
-  `--ignore` globs; the report names the exact rule that triggered.
-- **Disable:** `fail_on_ai_slop` defaults to `false` - the job reports and
-  annotates but never gates. To silence entirely, add `check:` lines for
-  every rule to `.ai-integrity-ignore`.
-- **Time:** 10-40 seconds.
+  content checks; everything stylistic is advisory.
+- **False positives:** domain vocabulary overlapping the phrase list;
+  abstract methods that raise NotImplementedError; intentional emoji.
+  Opt out per path or per check with a committed `.ai-integrity-ignore`
+  (glob lines, `check:<id>` lines), or record existing findings with
+  `--write-baseline` and run with `--baseline` so only new slop appears.
+- **Disable:** `fail_on_ai_slop` defaults to `false` - the job reports,
+  annotates and uploads SARIF but never gates. Provenance and test
+  inventory can be turned off with `--no-provenance`.
+- **Time:** 10-60 seconds.
 
 ## `docs` - markdown lint
 
@@ -207,3 +227,18 @@ Profile presets (quick / standard / strict / custom) only change the
 the same knobs, not duplicated workflows. AI-integrity is advisory in every
 profile: set `fail_on_ai_slop: true` explicitly if you accept the false
 positive rate documented above.
+
+## `selftest` - the template tests itself
+
+`selftest.yml` calls the reusable workflow three ways on every push and PR:
+
+1. **happy-path** - quick profile, Python stack only; the `verify` job
+   asserts job success and `verdict=passed`.
+2. **enforced-failure** - a Semgrep pack that cannot exist; continue-on-error
+   keeps the run green while `verify` asserts `verdict=failed`, proving the
+   aggregate gate really fails when a check fails.
+3. **input-validation** - an unsafe `template_ref`; `verify` asserts
+   `verdict=failed`, proving untrusted input is rejected before any checkout.
+
+A regression that makes the pipeline pass when it should fail - or fail for
+the wrong reason - turns the selftest red.

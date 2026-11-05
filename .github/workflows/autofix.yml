@@ -40,7 +40,10 @@ jobs:
           npx --yes @biomejs/biome check --write --no-errors-on-unmatched .
       - name: Apply Markdown fixes
         run: |
-          [ -f .markdownlint-cli2.jsonc ] || cp configs/.markdownlint-cli2.jsonc .
+          # copy the default config only when it ships with the repo
+          if [ ! -f .markdownlint-cli2.jsonc ] && [ -f configs/.markdownlint-cli2.jsonc ]; then
+            cp configs/.markdownlint-cli2.jsonc .
+          fi
           npx --yes markdownlint-cli2 --fix "**/*.md"
       - name: Open autofix PR
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
@@ -50,8 +53,12 @@ jobs:
           title: 'ci: weekly autofix'
           body: |
             Automated formatting and safe lint fixes from the master-ci
-            autofix loop. Merge to keep the tree clean; CI re-runs on this
-            branch automatically.
+            autofix loop.
+
+            Safety rails:
+            - Nothing is pushed directly: this PR is the whole change.
+            - Master CI re-runs on this branch; only merge with green CI.
+            - Close this PR to roll back, or reopen it any time.
           labels: |
             automation
             autofix

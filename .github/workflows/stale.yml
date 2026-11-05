@@ -27,5 +27,5 @@ jobs:
           close-issue-message: >-
             Closed after 14 more days of inactivity. Reopen if still relevant.
           stale-pr-message: 'Marking stale: no activity for 30 days.'
-          exempt-issue-labels: pinned,keep
+          exempt-issue-labels: pinned,keep,security
           exempt-pr-labels: pinned,keep,security

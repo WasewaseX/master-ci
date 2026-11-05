@@ -1,59 +1,65 @@
 #!/usr/bin/env python3
-"""Heuristic detector for AI slop, AI-generated prose and humanizer patterns.
+"""Master CI integrity engine: AI slop, structural slop and provenance.
 
-This is a linter, not an oracle. It reports signals that correlate with
-machine-written filler: telltale vocabulary in code comments, emoji padding,
-TODO density, boilerplate duplication, and - advisory only - prose rhythm
-patterns such as em-dash overuse and rule-of-three lists.
+A linter, not an oracle. It reports deterministic signals that correlate
+with machine-written filler and with agent-introduced defects: telltale
+vocabulary in comments, emoji padding, elided code, stub functions, empty
+tests, swallowed exceptions, phantom and undeclared imports, debug residue,
+placeholder credentials, plus - advisory only - prose rhythm patterns in
+documents and UI-gradient slop in frontend files.
+
+Design borrowed in spirit from three public slop detectors: flamehaven01's
+structural deficit model (purity = exp(-0.5 * blocking weight), per-file
+deficit, 0.6*worst + 0.4*mean aggregation, CLEAN/SUSPICIOUS/INFLATED/
+CRITICAL verdicts), FixMySlop's rule-with-remedy + baseline + SARIF flow,
+and slopdetector.org's explainable, evidence-first prose checks.
 
 Contract:
 - Exit code 1 only when the *blocking* score exceeds --max-score.
-- Blocking signals are deterministic code-content checks (comments,
-duplication). Everything derived from documents - prose vocabulary,
-humanizer phrases, prose rhythm - is always advisory: reported and
-annotated, never failing a build.
+- Blocking-grade signals are deterministic content defects (elided code,
+  stubs, empty tests, swallowed exceptions, chatbot residue in comments).
+  Everything stylistic or speculative is advisory: reported and annotated,
+  never failing a build.
+- Provenance signals (`ai-provenance`) and the test inventory
+  (`missing-tests`) are traceability signals, never authorship verdicts;
+  advisory. Disable with `--no-provenance`.
 - Every finding carries a check id and a remediation hint.
-- Repos can opt out per path or per check via a `.ai-integrity-ignore`
-file: glob patterns, or `check:<id>` lines to disable one rule.
+- Repos opt out per path or per check via `.ai-integrity-ignore` (glob
+  lines, or `check:<id>` lines), and can accept existing findings via
+  `--baseline` / record them with `--write-baseline`.
+- `--sarif out.sarif` emits SARIF 2.1.0 for the GitHub Security tab.
 """
 
 from __future__ import annotations
 
 import argparse
+import ast
 import fnmatch
+import hashlib
 import json
+import math
 import re
 import sys
 from collections import Counter
-from dataclasses import dataclass
-from pathlib import Path
+from dataclasses import dataclass, field
+from pathlib import Path, PurePosixPath
+
+
+def _line_of(text: str, pos: int) -> int:
+    """1-based line number for a character offset."""
+    return text.count("\n", 0, pos) + 1
+
+
+def _strip_strings(text: str) -> str:
+    """Remove quoted string literals so regex literals do not self-match."""
+    text = re.sub(r'"[^"\n]*"', " ", text)
+    text = re.sub(r"'[^'\n]*'", " ", text)
+    return re.sub(r"`[^`\n]*`", " ", text)
+
 
 PHRASES_PATH = Path(__file__).resolve().parent / "ai_slop_phrases.json"
 IGNORE_FILE = ".ai-integrity-ignore"
-
-CODE_EXTS = {
-    ".py",
-    ".ts",
-    ".tsx",
-    ".js",
-    ".jsx",
-    ".mjs",
-    ".cjs",
-    ".rs",
-    ".go",
-    ".java",
-    ".rb",
-    ".php",
-    ".c",
-    ".cc",
-    ".cpp",
-    ".h",
-    ".hpp",
-    ".sh",
-    ".swift",
-    ".kt",
-}
-DOC_EXTS = {".md", ".mdx", ".rst", ".txt"}
+TOOL_NAME = "master-ci-ai-integrity"
 
 SKIP_DIRS = {
     ".git",
@@ -78,7 +84,80 @@ SKIP_PATTERN = re.compile(
 MAX_FILE_BYTES = 1_000_000
 MAX_ANNOTATIONS = 10
 
-COMMENT_PREFIXES = ("#", "//")
+CODE_EXTS = {
+    ".py",
+    ".ts",
+    ".tsx",
+    ".mts",
+    ".cts",
+    ".js",
+    ".jsx",
+    ".mjs",
+    ".cjs",
+    ".rs",
+    ".go",
+    ".java",
+    ".kt",
+    ".kts",
+    ".scala",
+    ".groovy",
+    ".rb",
+    ".php",
+    ".cs",
+    ".c",
+    ".cc",
+    ".cpp",
+    ".h",
+    ".hpp",
+    ".hh",
+    ".sh",
+    ".swift",
+    ".kt",
+    ".dart",
+    ".vue",
+    ".svelte",
+    ".astro",
+}
+UI_EXTS = {".css", ".scss", ".less", ".html", ".htm"}
+DOC_EXTS = {".md", ".mdx", ".rst", ".txt"}
+
+FAMILY_OF_EXT = {
+    ".py": "py",
+    ".ts": "js",
+    ".tsx": "js",
+    ".mts": "js",
+    ".cts": "js",
+    ".js": "js",
+    ".jsx": "js",
+    ".mjs": "js",
+    ".cjs": "js",
+    ".vue": "js",
+    ".svelte": "js",
+    ".astro": "js",
+    ".go": "go",
+    ".java": "jvm",
+    ".kt": "jvm",
+    ".kts": "jvm",
+    ".scala": "jvm",
+    ".groovy": "jvm",
+    ".cs": "csharp",
+    ".c": "cpp",
+    ".cc": "cpp",
+    ".cpp": "cpp",
+    ".h": "cpp",
+    ".hpp": "cpp",
+    ".hh": "cpp",
+    ".rb": "ruby",
+    ".php": "php",
+    ".rs": "rust",
+    ".sh": "sh",
+    ".swift": "swift",
+    ".dart": "dart",
+}
+
+BLOCK_OPEN = "/*"
+BLOCK_CLOSE = "*/"
+
 TRIVIAL_COMMENT = re.compile(
     r"^(#|//)\s*(this (function|method|class|module)|returns? |increment|"
     r"loop (over|through|until)|define[sd]? |initialize[sd]? |declare[sd]? |"
@@ -91,19 +170,237 @@ DUP_LINE_MIN_LEN = 40
 DUP_LINE_THRESHOLD = 10
 WORD_PATTERN = re.compile(r"\w+")
 
+CHATBOT_COMMENT_PHRASES = (
+    "certainly!",
+    "here's the revised",
+    "here's the updated",
+    "here's the complete",
+    "here is the revised",
+    "hope this helps",
+    "let me know if you",
+    "as an ai",
+    "i cannot fulfill",
+    "i've fixed the issue",
+    "i've updated the code",
+)
+CREDIT_VALUE_PATTERN = re.compile(
+    r"(?i)\b(api[_-]?key|secret|password|passwd|token|access[_-]?key)\b[\"']?"
+    r"\s*[:=]\s*[\"']([^\"']{6,})[\"']"
+)
+CREDIT_PLACEHOLDER_VALUE = re.compile(
+    r"(?i)your[-_ ]|xxx|changeme|change[-_ ]me|placeholder|dummy|example|"
+    r"lorem|insert |todo|test[-_ ]?key|123456|<[^>]*>"
+)
+PLACEHOLDER_NAME_PATTERN = re.compile(
+    r"(?<![\w$])("
+    + "|".join(("f" + "oo", "b" + "ar", "b" + "az", "q" + "ux", "foobar"))
+    + r")(?![\w$])"
+)
+STEP_COMMENT_PATTERN = re.compile(
+    r"(?i)^//\s*(?:step\s*\d+[:.)]|first,|second,|third,|next,|then,|finally,)\s"
+)
+ELIDED_PATTERNS = (
+    re.compile(r"\.\.\.\s*existing\s+code", re.IGNORECASE),
+    re.compile(r"\.\.\.\s*rest\s+of\s+(?:the\s+)?(?:file|code)", re.IGNORECASE),
+    re.compile(
+        r"\b(?:rest|remainder)\s+of\s+(?:the\s+)?(?:file|code|implementation)", re.IGNORECASE
+    ),
+    re.compile(r"omitted\s+for\s+(?:brevity|clarity|length)", re.IGNORECASE),
+    re.compile(
+        r"insert\s+(?:the\s+)?(?:previous|original|remaining)\s+(?:code|implementation)",
+        re.IGNORECASE,
+    ),
+)
+PLACEHOLDER_IMPL_PATTERNS = (
+    re.compile(r"in (?:a |the )?real (?:app|application|world|production|project)", re.IGNORECASE),
+    re.compile(r"left as an? exercise", re.IGNORECASE),
+    re.compile(r"for demonstration " r"purposes", re.IGNORECASE),
+    re.compile(r"to be " r"implemented", re.IGNORECASE),
+    re.compile(r"not yet implemented;? (?:this|the) (?:is|are)", re.IGNORECASE),
+)
+PLACEHOLDER_NOTE_PATTERNS = (
+    re.compile(r"replace (?:this|it) with", re.IGNORECASE),
+    re.compile(r"fill (?:this|in) (?:in )?with", re.IGNORECASE),
+    re.compile(r"swap (?:this|out) for", re.IGNORECASE),
+)
+GO_IGNORED_ERROR = re.compile(r"if\s+(?:[^;{;]*;\s*)?err\s*!=\s*nil\s*\{\s*\n?\s*return\s+nil\b")
+GO_BLANK_ERR = re.compile(r"^\s*_\s*(?:,\s*_\s*)?=\s*err\b", re.MULTILINE)
+GO_DEBUG_PRINT = re.compile(r"\bfmt\.Print(?:ln|f)?\s*\(")
+EMPTY_CATCH = re.compile(r"catch\s*(?:\([^)]*\))?\s*\{\s*\}")
+PRINT_STACKTRACE_ONLY = re.compile(
+    r"catch\s*\([^)]*\)\s*\{\s*(?:[\w$.]+\.printStackTrace\(\);?)\s*\}"
+)
+EMPTY_RESCUE = re.compile(r"^\s*rescue(?:\s+[A-Z]\w+)?(?:\s*=>\s*\w+)?\s*(?:#.*)?$")
+RUST_STUB = re.compile(r"\b(?:todo|unimplemented)!\s*\(")
+RUST_UNWRAP = re.compile(r"\.unwrap\(\)")
+DEBUGGER_LEFT = re.compile(r"^\s*(?:debugger;\s*$|binding\.pry\b|byebug\b)", re.MULTILINE)
+JS_CONSOLE_LOG = re.compile(r"\bconsole\.log\s*\(")
+TS_SUPPRESSION = re.compile(r"@(?:ts-ignore|ts-nocheck|ts-expect-error)|:\s*any\b")
+BLANKET_SUPPRESS = re.compile(
+    r"(?://|/\*)\s*eslint-disable(?:\s|$)|#\s*noqa(?!\s*:)|#\s*type:\s*ignore\b"
+    r"|#\s*type: ignore\s*#|nolint\b",
+    re.IGNORECASE,
+)
+UI_GRADIENT = re.compile(
+    r"from-(?:purple|pink|blue|indigo|violet|fuchsia)-\d00\s+to-(?:pink|purple|rose|fuchsia|violet)-\d00"
+    r"|linear-gradient\([^)]*(?:667eea|764ba2|a855f7|ec4899|8b5cf6)",
+    re.IGNORECASE,
+)
+UI_GRADIENT_TEXT = re.compile(r"bg-clip-text|text-transparent\s+bg-gradient")
+UI_MARKETING = re.compile(
+    r"revolutioniz\w*|game-?chang\w*|next-gen(?:eration)?\b|seamless(?:ly)?\b|"
+    r"cutting-edge|10,000\+|99\.9% uptime|happy users|trusted by thousands",
+    re.IGNORECASE,
+)
+UI_PLACEHOLDER = re.compile(
+    r"lorem ipsum|your (?:company|name|logo) here|yourusername|yourbrand|example\.com",
+    re.IGNORECASE,
+)
+MD_EMOJI_HEADING = re.compile(r"^#{1,6}\s+[^\n]*" + EMOJI_PATTERN.pattern, re.MULTILINE)
+MD_RESIDUE = re.compile(
+    r"certainly!|here's (?:a|the) (?:comprehensive|revised|detailed|complete)|"
+    r"\[insert [^\]]+ here\]|tbd:?\s|to be written|chatgpt|as an ai",
+    re.IGNORECASE,
+)
+NODE_BUILTINS = {
+    "assert",
+    "buffer",
+    "child_process",
+    "cluster",
+    "console",
+    "constants",
+    "crypto",
+    "dgram",
+    "dns",
+    "domain",
+    "events",
+    "fs",
+    "http",
+    "http2",
+    "https",
+    "inspector",
+    "module",
+    "net",
+    "os",
+    "path",
+    "perf_hooks",
+    "process",
+    "punycode",
+    "querystring",
+    "readline",
+    "repl",
+    "stream",
+    "string_decoder",
+    "timers",
+    "tls",
+    "tty",
+    "url",
+    "util",
+    "v8",
+    "vm",
+    "worker_threads",
+    "zlib",
+}
+PY_IMPORT_ALIASES = {
+    "cv2": "opencv-python",
+    "PIL": "pillow",
+    "sklearn": "scikit-learn",
+    "bs4": "beautifulsoup4",
+    "yaml": "pyyaml",
+    "dateutil": "python-dateutil",
+    "dotenv": "python-dotenv",
+    "jwt": "pyjwt",
+    "attr": "attrs",
+    "git": "gitpython",
+    "Crypto": "pycryptodome",
+    "fitz": "pymupdf",
+    "psycopg2": "psycopg2",
+    "google": "protobuf",
+}
+STD_LIB_NAMES = frozenset(getattr(sys, "stdlib_module_names", ()))
+
 REMEDIES = {
     "ai-vocab": "Rewrite the comment to describe intent in plain words",
     "emoji-comments": "Remove decorative emoji from code comments",
     "todo-density": "Resolve, ticket or delete the TODO/FIXME markers",
     "trivial-comments": "Delete comments that restate the code; explain why instead",
     "boilerplate-duplication": "Extract the repeated lines into a shared helper",
+    "elided-code": "Restore the omitted code; elided edits silently delete working code",
+    "placeholder-impl": "Implement the body or delete the function; stubs look done but are not",
+    "placeholder-note": "Replace the template note with the real value or implementation",
+    "stub-function": "Implement the stub or remove it; list it in a TODO ticket instead",
+    "empty-test": "Add assertions; a test that cannot fail proves nothing",
+    "bare-except": "Catch the specific exception and handle or re-raise it",
+    "swallowed-exception": "Log, wrap or re-raise; a pass-only handler hides failures",
+    "empty-catch": "Handle the error or propagate it; an empty catch hides bugs",
+    "empty-rescue": "Handle the specific error class or re-raise",
+    "go-ignored-error": "Return or wrap the error; returning nil hides the failure",
+    "go-error-assigned-blank": "Handle or comment why the error is deliberately discarded",
+    "print-stacktrace-only": "Log with context via your logger instead of printStackTrace",
+    "debugger-left": "Remove the debugger statement or breakpoint before committing",
+    "debug-print": "Remove the debug print or use structured logging",
+    "phantom-import": "Delete the import or use it; unused imports are dead weight",
+    "undeclared-import": (
+        "Verify the package exists and declare it in the manifest; "
+        "hallucinated names get squatted by attackers (slopsquatting)"
+    ),
+    "lint-escape": "Fix the underlying issue or scope the suppression to one rule and line",
+    "ts-suppression": "Fix the type instead of suppressing; avoid any",
+    "blanket-suppression": "Scope the suppression to a single rule with a reason",
+    "step-comments": "Let the code read like code; move narration to the PR description",
+    "placeholder-naming": "Rename placeholder identifiers to names that describe the data",
+    "placeholder-credential": "Load credentials from the environment or a secret store",
+    "god-function": "Split the function along its responsibilities",
+    "deep-nesting": "Guard-clause and extract helpers to flatten the nesting",
+    "unwrap-density": "Handle the Result/Option; unwrap panics in production",
+    "rust-stub": "Implement the function; todo!() panics at runtime",
+    "mutable-default": "Default to None and build the container inside the function",
+    "star-import": "Import the names you use; star imports hide origins",
+    "ui-ai-gradient": "Use the project's design tokens; the purple-pink gradient is the AI default",
+    "ui-gradient-text": "Gradient headlines are the template aesthetic; use solid brand color",
+    "ui-marketing-copy": "Replace buzzwords with what the product actually does",
+    "ui-placeholder-copy": "Replace lorem/company placeholders with real copy",
+    "ui-emoji-decor": "Use the icon set, not emoji, for feature decoration",
+    "md-emoji-headings": "Keep headings text-only; emoji headings are a generated-doc tell",
+    "md-residue": "Delete chatbot residue and placeholders from the document",
+    "chatbot-residue": "Remove assistant-voice phrases from comments",
     "ai-prose": "Rewrite the passage in your own words",
     "humanizer": "Remove the filler phrase",
     "em-dash-density": "Use commas, colons or parentheses instead of em-dashes",
     "rule-of-three": "Vary list lengths; uniform triples are a machine-prose tell",
     "rhetorical-questions": "State the answer instead of asking the reader",
     "exclamations": "Remove exclamation marks from documentation",
+    "ai-provenance": (
+        "Declare the generating tool in the commit message or PR description, "
+        "or remove the stale marker"
+    ),
+    "missing-tests": (
+        "Add tests for the source files, or move generated vendored code "
+        "behind an interface and ignore the directory"
+    ),
 }
+BLOCKING_CHECKS = frozenset(
+    {
+        "ai-vocab",
+        "emoji-comments",
+        "todo-density",
+        "trivial-comments",
+        "boilerplate-duplication",
+        "elided-code",
+        "placeholder-impl",
+        "stub-function",
+        "empty-test",
+        "bare-except",
+        "swallowed-exception",
+        "empty-catch",
+        "empty-rescue",
+        "go-ignored-error",
+        "print-stacktrace-only",
+        "debugger-left",
+        "rust-stub",
+        "chatbot-residue",
+    }
+)
 
 
 @dataclass
@@ -113,7 +410,11 @@ class Finding:
     check: str
     message: str
     weight: int
-    advisory: bool = False
+    advisory: bool = field(default=False)
+
+    def __post_init__(self) -> None:
+        if self.check in BLOCKING_CHECKS:
+            self.advisory = False
 
     @property
     def remedy(self) -> str:
@@ -139,7 +440,8 @@ def iter_files(root: Path) -> list[Path]:
             continue
         if SKIP_PATTERN.search(path.name):
             continue
-        if path.suffix.lower() not in CODE_EXTS and path.suffix.lower() not in DOC_EXTS:
+        suffix = path.suffix.lower()
+        if suffix not in CODE_EXTS and suffix not in DOC_EXTS and suffix not in UI_EXTS:
             continue
         try:
             if path.stat().st_size > MAX_FILE_BYTES:
@@ -180,6 +482,71 @@ def is_ignored(rel_path: str, globs: list[str]) -> bool:
     )
 
 
+# ---------------------------------------------------------------------------
+# Language-aware comment extraction
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Comment:
+    line: int
+    text: str
+    kind: str  # 'line' | 'block' | 'docstring'
+
+
+def extract_comments(text: str, family: str) -> list[Comment]:
+    """Extract comments with a small state machine per language family."""
+    line_prefixes = {
+        "py": ("#",),
+        "sh": ("#",),
+        "ruby": ("#",),
+        "php": ("//", "#"),
+    }.get(family, ("//",))
+    comments: list[Comment] = []
+    in_block = False
+    in_doc = False
+    doc_delim = ""
+    for idx, raw in enumerate(text.splitlines(), start=1):
+        stripped = raw.strip()
+        if in_block:
+            comments.append(Comment(idx, stripped, "block"))
+            if BLOCK_CLOSE in stripped:
+                in_block = False
+            continue
+        if family == "py":
+            if in_doc:
+                comments.append(Comment(idx, stripped, "docstring"))
+                if doc_delim in stripped:
+                    in_doc = False
+                continue
+            if stripped.startswith(('"""', "'''")):
+                delim = stripped[:3]
+                if stripped.count(delim) >= 2 and len(stripped) > 3:
+                    comments.append(Comment(idx, stripped, "docstring"))
+                else:
+                    in_doc = True
+                    doc_delim = delim
+                    comments.append(Comment(idx, stripped, "docstring"))
+                continue
+        if family == "ruby" and stripped.startswith("=begin"):
+            in_block = True
+            comments.append(Comment(idx, stripped, "block"))
+            continue
+        if any(stripped.startswith(prefix) for prefix in line_prefixes):
+            comments.append(Comment(idx, stripped, "line"))
+            continue
+        if stripped.startswith(BLOCK_OPEN):
+            comments.append(Comment(idx, stripped, "block"))
+            if BLOCK_CLOSE not in stripped[len(BLOCK_OPEN) :]:
+                in_block = True
+    return comments
+
+
+# ---------------------------------------------------------------------------
+# Phrase-based checks
+# ---------------------------------------------------------------------------
+
+
 def phrase_findings(
     path: Path,
     text: str,
@@ -194,7 +561,7 @@ def phrase_findings(
         first = lowered.find(phrase.lower())
         if first == -1:
             continue
-        line = text.count("\n", 0, first) + 1
+        line = _line_of(text, first)
         count = lowered.count(phrase.lower())
         findings.append(
             Finding(
@@ -209,71 +576,859 @@ def phrase_findings(
     return findings
 
 
-def scan_code_file(path: Path, phrases: dict) -> list[Finding]:
+def _phrase_in_any(comment_texts: list[str], phrase: str) -> int:
+    return sum(1 for text in comment_texts if phrase.lower() in text.lower())
+
+
+def scan_comment_vocabulary(path: Path, comments: list[Comment], phrases: dict) -> list[Finding]:
     findings: list[Finding] = []
-    text = path.read_text(encoding="utf-8", errors="replace")
-    findings.extend(phrase_findings(path, text, phrases["code_phrases"], "ai-vocab", 2))
-    lines = text.splitlines()
-    comments = [line for line in lines if line.lstrip().startswith(COMMENT_PREFIXES)]
-    emoji_hits = sum(bool(EMOJI_PATTERN.search(c)) for c in comments)
+    texts = [c.text for c in comments]
+    for phrase in phrases["code_phrases"]:
+        count = _phrase_in_any(texts, phrase)
+        if count:
+            line = next(c.line for c in comments if phrase.lower() in c.text.lower())
+            findings.append(
+                Finding(
+                    path=str(path),
+                    line=line,
+                    check="ai-vocab",
+                    message=f"{phrase!r} in comment ({count}x)",
+                    weight=2,
+                )
+            )
+    for phrase in CHATBOT_COMMENT_PHRASES:
+        count = _phrase_in_any(texts, phrase)
+        if count:
+            line = next(c.line for c in comments if phrase.lower() in c.text.lower())
+            findings.append(
+                Finding(
+                    path=str(path),
+                    line=line,
+                    check="chatbot-residue",
+                    message=f"assistant-voice {phrase!r} in comment ({count}x)",
+                    weight=2,
+                )
+            )
+    emoji_hits = sum(bool(EMOJI_PATTERN.search(c.text)) for c in comments)
     if emoji_hits:
         findings.append(
             Finding(
                 path=str(path),
-                line=1,
+                line=comments[0].line,
                 check="emoji-comments",
                 message=f"emoji in code comments ({emoji_hits}x)",
                 weight=min(emoji_hits, 5),
             )
         )
-    code_lines = max(len([line for line in lines if line.strip()]), 1)
-    todos = len(TODO_PATTERN.findall(text))
-    if code_lines >= 20 and todos / code_lines > 0.05:
+    line_comments = [c.text for c in comments if c.kind == "line"]
+    if len(line_comments) >= 5:
+        trivial = sum(bool(TRIVIAL_COMMENT.match(c.strip())) for c in line_comments)
+        if trivial / len(line_comments) > 0.4:
+            findings.append(
+                Finding(
+                    path=str(path),
+                    line=comments[0].line,
+                    check="trivial-comments",
+                    message=(f"{trivial}/{len(line_comments)} comments merely restate the code"),
+                    weight=3,
+                )
+            )
+    step_lines = [c for c in comments if STEP_COMMENT_PATTERN.match(c.text)]
+    if len(step_lines) >= 3:
         findings.append(
             Finding(
                 path=str(path),
-                line=1,
-                check="todo-density",
-                message=f"TODO/FIXME density {todos / code_lines:.1%} exceeds 5%",
-                weight=3,
+                line=step_lines[0].line,
+                check="step-comments",
+                message=f"{len(step_lines)} step-by-step narration comments",
+                weight=1,
+                advisory=True,
             )
         )
-    if len(comments) >= 5:
-        trivial = sum(bool(TRIVIAL_COMMENT.match(c.strip())) for c in comments)
-        if trivial / len(comments) > 0.4:
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# Structural checks (per language family)
+# ---------------------------------------------------------------------------
+
+
+def check_elided_code(path: Path, text: str) -> list[Finding]:
+    for pattern in ELIDED_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            return [
+                _finding(
+                    path,
+                    text,
+                    match.start(),
+                    "elided-code",
+                    f"elided code marker {pattern.pattern!r}",
+                    3,
+                )
+            ]
+    return []
+
+
+def check_placeholder_impl(path: Path, text: str) -> list[Finding]:
+    for pattern in PLACEHOLDER_IMPL_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            return [
+                _finding(
+                    path,
+                    text,
+                    match.start(),
+                    "placeholder-impl",
+                    f"placeholder implementation: {pattern.pattern!r}",
+                    2,
+                )
+            ]
+    for pattern in PLACEHOLDER_NOTE_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            return [
+                _finding(
+                    path,
+                    text,
+                    match.start(),
+                    "placeholder-note",
+                    "template note left in code",
+                    1,
+                    advisory=True,
+                )
+            ]
+    return []
+
+
+GOD_FUNCTION_LINES = 100
+MAX_NESTING = 5
+
+
+def _finding(
+    path: Path,
+    text: str,
+    pos: int,
+    check: str,
+    message: str,
+    weight: int,
+    advisory: bool = False,
+) -> Finding:
+    return Finding(
+        path=str(path),
+        line=_line_of(text, pos),
+        check=check,
+        message=message,
+        weight=weight,
+        advisory=advisory,
+    )
+
+
+def _nesting_depth(node: ast.AST, depth: int = 0) -> int:
+    best = depth
+    for child in ast.iter_child_nodes(node):
+        step = (
+            depth + 1
+            if isinstance(child, (ast.If, ast.For, ast.While, ast.With, ast.Try))
+            else depth
+        )
+        best = max(best, _nesting_depth(child, step))
+    return best
+
+
+def _py_func_findings(path: Path, node) -> list[Finding]:
+    """Size, nesting and mutable-default checks for one Python function."""
+    findings: list[Finding] = []
+    length = (node.end_lineno or node.lineno) - node.lineno + 1
+    if length > GOD_FUNCTION_LINES:
+        findings.append(
+            Finding(
+                path=str(path),
+                line=node.lineno,
+                check="god-function",
+                message=f"function {node.name!r} spans {length} lines",
+                weight=1,
+                advisory=True,
+            )
+        )
+    if _nesting_depth(node) > MAX_NESTING:
+        findings.append(
+            Finding(
+                path=str(path),
+                line=node.lineno,
+                check="deep-nesting",
+                message=f"function {node.name!r} nests more than {MAX_NESTING} levels",
+                weight=1,
+                advisory=True,
+            )
+        )
+    defaults = list(node.args.defaults) + [d for d in node.args.kw_defaults if d is not None]
+    if any(
+        isinstance(d, (ast.List, ast.Dict, ast.Set))
+        or (
+            isinstance(d, ast.Call)
+            and isinstance(d.func, ast.Name)
+            and d.func.id in ("list", "dict", "set")
+        )
+        for d in defaults
+    ):
+        findings.append(
+            Finding(
+                path=str(path),
+                line=node.lineno,
+                check="mutable-default",
+                message=f"function {node.name!r} has a mutable default argument",
+                weight=1,
+                advisory=True,
+            )
+        )
+    return findings
+
+
+def check_py_ast(path: Path, text: str, family: str) -> list[Finding]:
+    """AST-backed Python checks: stubs, empty tests, exceptions, smells."""
+    if family != "py":
+        return []
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return []
+    findings: list[Finding] = []
+
+    def body_is_stub(body: list[ast.stmt]) -> bool:
+        stmts = [
+            s for s in body if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))
+        ]
+        if len(stmts) != 1:
+            return False
+        only = stmts[0]
+        if isinstance(only, ast.Pass):
+            return True
+        if isinstance(only, ast.Raise):
+            exc = only.exc
+            if isinstance(exc, ast.Call) and isinstance(exc.func, ast.Name):
+                return exc.func.id in ("NotImplementedError", "NotImplemented")
+            if isinstance(exc, ast.Name):
+                return exc.id == "NotImplementedError"
+        return False
+
+    def has_assert(node: ast.AST) -> bool:
+        return any(isinstance(child, (ast.Assert, ast.Raise)) for child in ast.walk(node))
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if body_is_stub(node.body):
+                findings.append(
+                    Finding(
+                        path=str(path),
+                        line=node.lineno,
+                        check="stub-function",
+                        message=f"function {node.name!r} has a stub-only body",
+                        weight=2,
+                    )
+                )
+            if node.name.startswith("test_") and not has_assert(node):
+                findings.append(
+                    Finding(
+                        path=str(path),
+                        line=node.lineno,
+                        check="empty-test",
+                        message=f"test {node.name!r} contains no assert or raise",
+                        weight=2,
+                    )
+                )
+            findings.extend(_py_func_findings(path, node))
+        elif isinstance(node, ast.ExceptHandler):
+            if node.type is None:
+                findings.append(
+                    Finding(
+                        path=str(path),
+                        line=node.lineno,
+                        check="bare-except",
+                        message="bare `except:` catches everything including SystemExit",
+                        weight=2,
+                    )
+                )
+            elif all(isinstance(s, ast.Pass) for s in node.body):
+                findings.append(
+                    Finding(
+                        path=str(path),
+                        line=node.lineno,
+                        check="swallowed-exception",
+                        message="exception swallowed (pass-only handler)",
+                        weight=2,
+                    )
+                )
+        elif isinstance(node, ast.ImportFrom) and node.module and node.names:
+            if any(a.name == "*" for a in node.names):
+                findings.append(
+                    Finding(
+                        path=str(path),
+                        line=node.lineno,
+                        check="star-import",
+                        message=f"star import from {node.module!r}",
+                        weight=1,
+                        advisory=True,
+                    )
+                )
+    return findings
+
+
+def check_exceptions_js_family(path: Path, text: str, family: str) -> list[Finding]:
+    findings: list[Finding] = []
+    if family in ("js", "jvm", "csharp", "cpp", "php", "swift", "dart"):
+        for match in EMPTY_CATCH.finditer(text):
+            findings.append(
+                _finding(
+                    path,
+                    text,
+                    match.start(),
+                    "empty-catch",
+                    "empty catch block hides every error",
+                    2,
+                )
+            )
+    if family == "jvm":
+        for match in PRINT_STACKTRACE_ONLY.finditer(text):
+            findings.append(
+                _finding(
+                    path,
+                    text,
+                    match.start(),
+                    "print-stacktrace-only",
+                    "catch block only prints a stack trace",
+                    1,
+                )
+            )
+    if family == "ruby":
+        lines = text.splitlines()
+        for idx, raw in enumerate(lines):
+            if EMPTY_RESCUE.match(raw):
+                nxt = lines[idx + 1].strip() if idx + 1 < len(lines) else ""
+                if nxt == "end":
+                    findings.append(
+                        Finding(
+                            path=str(path),
+                            line=idx + 1,
+                            check="empty-rescue",
+                            message="rescue with no handling before end",
+                            weight=2,
+                        )
+                    )
+    return findings
+
+
+def check_go(path: Path, text: str, family: str, rel: str) -> list[Finding]:
+    if family != "go":
+        return []
+    findings: list[Finding] = []
+    for match in GO_IGNORED_ERROR.finditer(text):
+        findings.append(
+            _finding(
+                path,
+                text,
+                match.start(),
+                "go-ignored-error",
+                "err checked but nil returned - failure hidden",
+                2,
+            )
+        )
+    for match in GO_BLANK_ERR.finditer(text):
+        findings.append(
+            _finding(
+                path,
+                text,
+                match.start(),
+                "go-error-assigned-blank",
+                "error assigned to blank identifier",
+                1,
+                advisory=True,
+            )
+        )
+    is_test = rel.endswith("_test.go")
+    if not is_test:
+        debugs = len(GO_DEBUG_PRINT.findall(text))
+        if debugs:
             findings.append(
                 Finding(
                     path=str(path),
                     line=1,
-                    check="trivial-comments",
-                    message=(f"{trivial}/{len(comments)} comments merely restate the code"),
-                    weight=3,
+                    check="debug-print",
+                    message=f"fmt.Print* debug output ({debugs}x)",
+                    weight=1,
+                    advisory=True,
                 )
             )
     return findings
 
 
-def scan_doc_file(path: Path, phrases: dict) -> list[Finding]:
-    """Document findings are advisory: style is never a build breaker."""
+def check_rust(path: Path, text: str, family: str) -> list[Finding]:
+    if family != "rust":
+        return []
     findings: list[Finding] = []
-    text = path.read_text(encoding="utf-8", errors="replace")
-    findings.extend(
-        phrase_findings(path, text, phrases["doc_phrases"], "ai-prose", 1, advisory=True)
-    )
-    findings.extend(
-        phrase_findings(path, text, phrases["humanizer_phrases"], "humanizer", 1, advisory=True)
-    )
-    findings.extend(prose_rhythm_findings(path, text))
+    for match in RUST_STUB.finditer(text):
+        findings.append(
+            _finding(
+                path,
+                text,
+                match.start(),
+                "rust-stub",
+                f"{match.group(0)}!() panics at runtime",
+                1,
+            )
+        )
+    unwraps = len(RUST_UNWRAP.findall(text))
+    if unwraps >= 10:
+        findings.append(
+            Finding(
+                path=str(path),
+                line=1,
+                check="unwrap-density",
+                message=f"{unwraps} unwrap() calls; panics on None/Err",
+                weight=1,
+                advisory=True,
+            )
+        )
     return findings
 
 
-def prose_rhythm_findings(path: Path, text: str) -> list[Finding]:
-    """Stylistic prose signals. Always advisory: reported, never blocking.
+def check_debug_left(path: Path, text: str, family: str, rel: str) -> list[Finding]:
+    lowered_rel = rel.lower()
+    if ".test." in lowered_rel or ".spec." in lowered_rel or "/test" in lowered_rel:
+        return []
+    findings: list[Finding] = []
+    if family == "js" and "debugger;" in text:
+        findings.append(
+            _finding(
+                path,
+                text,
+                text.find("debugger;"),
+                "debugger-left",
+                "debugger; statement committed",
+                2,
+            )
+        )
+    if family in ("ruby",) and re.search(r"binding\.pry|byebug\b", text):
+        findings.append(
+            Finding(
+                path=str(path),
+                line=1,
+                check="debugger-left",
+                message="pry/byebug breakpoint committed",
+                weight=2,
+            )
+        )
+    return findings
 
-    Em-dashes, uniform list lengths and rhetorical questions appear in
-    plenty of hand-written documents, so they carry no authorship verdict
-    and must never fail a build.
-    """
+
+def check_js_slop(path: Path, text: str, family: str, rel: str) -> list[Finding]:
+    if family != "js":
+        return []
+    findings: list[Finding] = []
+    is_test = bool(re.search(r"(?:\.test\.|\.spec\.|/tests?/|/__tests__/)", rel.lower()))
+    if not is_test:
+        logs = len(JS_CONSOLE_LOG.findall(text))
+        if logs:
+            findings.append(
+                Finding(
+                    path=str(path),
+                    line=1,
+                    check="debug-print",
+                    message=f"console.log debug output ({logs}x)",
+                    weight=1,
+                    advisory=True,
+                )
+            )
+    for match in TS_SUPPRESSION.finditer(text):
+        findings.append(
+            _finding(
+                path,
+                text,
+                match.start(),
+                "ts-suppression",
+                f"type-system bypass {match.group(0)!r}",
+                1,
+                advisory=True,
+            )
+        )
+    return findings
+
+
+def check_blanket_suppression(path: Path, text: str) -> list[Finding]:
+    count = len(BLANKET_SUPPRESS.findall(text))
+    if count >= 2:
+        return [
+            Finding(
+                path=str(path),
+                line=1,
+                check="blanket-suppression",
+                message=f"{count} blanket lint/type suppressions",
+                weight=1,
+                advisory=True,
+            )
+        ]
+    return []
+
+
+def check_placeholder_names(path: Path, text: str) -> list[Finding]:
+    hits = len(PLACEHOLDER_NAME_PATTERN.findall(_strip_strings(text)))
+    if hits >= 5:
+        return [
+            Finding(
+                path=str(path),
+                line=1,
+                check="placeholder-naming",
+                message=f"{hits} foo/bar/baz-style identifiers",
+                weight=1,
+                advisory=True,
+            )
+        ]
+    return []
+
+
+def check_placeholder_credential(path: Path, text: str) -> list[Finding]:
+    for match in CREDIT_VALUE_PATTERN.finditer(text):
+        value = match.group(2)
+        if CREDIT_PLACEHOLDER_VALUE.search(value):
+            return [
+                _finding(
+                    path,
+                    text,
+                    match.start(),
+                    "placeholder-credential",
+                    f"placeholder credential assigned to {match.group(1)!r}",
+                    2,
+                    advisory=True,
+                )
+            ]
+    return []
+
+
+def check_phantom_imports(path: Path, text: str, family: str) -> list[Finding]:
+    """Imports that are never used in the file (advisory)."""
+    if family == "py":
+        return _py_phantom_imports(path, text)
+    if family == "js":
+        return _js_phantom_imports(path, text)
+    return []
+
+
+def _py_phantom_imports(path: Path, text: str) -> list[Finding]:
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return []
+    imported: list[tuple[str, int]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                name = alias.asname or alias.name.split(".")[0]
+                imported.append((name, node.lineno))
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            for alias in node.names:
+                if alias.name != "*":
+                    name = alias.asname or alias.name
+                    imported.append((name, node.lineno))
+    body = "\n".join(
+        line for line in text.splitlines() if not line.lstrip().startswith(("import ", "from "))
+    )
+    findings: list[Finding] = []
+    for name, lineno in imported[:40]:
+        if name in ("__future__", "annotations"):
+            continue
+        if not re.search(rf"\b{re.escape(name)}\b", body):
+            findings.append(
+                Finding(
+                    path=str(path),
+                    line=lineno,
+                    check="phantom-import",
+                    message=f"import {name!r} is never used",
+                    weight=1,
+                    advisory=True,
+                )
+            )
+    return findings[:5]
+
+
+def _js_phantom_imports(path: Path, text: str) -> list[Finding]:
+    import_pattern = r"(?:import\s+[^'\"]*?from\s+|import\s+|require\s*\(\s*)[\"']([^\"']+)[\"']"
+    findings: list[Finding] = []
+    seen_specs: set[str] = set()
+    for match in re.finditer(import_pattern, text):
+        spec = match.group(1)
+        if spec.startswith((".", "/", "node:")) or spec in seen_specs:
+            continue
+        seen_specs.add(spec)
+        cleaned = re.sub(
+            r"(?:import\s+[^'\"]*?from\s+|import\s+|require\s*\(\s*)[\"']"
+            + re.escape(spec)
+            + r"[\"']",
+            "",
+            text,
+        )
+        if not re.search(rf"[\"']{re.escape(spec)}[\"']", cleaned) and spec not in cleaned:
+            findings.append(
+                _finding(
+                    path,
+                    text,
+                    match.start(),
+                    "phantom-import",
+                    f"import {spec!r} is never referenced",
+                    1,
+                    advisory=True,
+                )
+            )
+    return findings[:5]
+
+
+def _parse_py_manifest(manifest: Path, declared: set[str]) -> None:
+    try:
+        content = manifest.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return
+    if manifest.suffix == ".txt":
+        for raw in content.splitlines():
+            line = raw.strip()
+            if not line or line.startswith(("-", "#")):
+                continue
+            name = re.split(r"[<>=!~\[; ]", line, maxsplit=1)[0]
+            if name:
+                declared.add(name.lower().replace("_", "-"))
+        return
+    block = re.search(r"dependencies\s*=\s*\[(.*?)\]", content, re.DOTALL)
+    if block:
+        for match in re.finditer(r"[\"']([A-Za-z0-9_.\-]+)", block.group(1)):
+            declared.add(match.group(1).lower().replace("_", "-"))
+
+
+def _local_modules(root: Path) -> set[str]:
+    """Top-level importable module names in the project tree."""
+    local: set[str] = set()
+    for entry in sorted(root.iterdir()):
+        if entry.is_dir() and entry.name.startswith("."):
+            continue
+        if entry.is_dir() and (entry / "__init__.py").exists():
+            local.add(entry.name)
+        elif entry.is_dir() and (entry / "src").is_dir():
+            for sub in sorted((entry / "src").iterdir()):
+                if sub.is_dir() and (sub / "__init__.py").exists():
+                    local.add(sub.name)
+        elif entry.suffix == ".py":
+            local.add(entry.stem)
+    return local
+
+
+def collect_py_dependencies(root: Path) -> tuple[set[str], set[str]]:
+    """Declared PyPI distributions and local importable module names."""
+    declared: set[str] = set()
+    local: set[str] = set()
+    if root.is_dir():
+        for pattern in ("requirements*.txt", "pyproject.toml"):
+            for manifest in root.glob(pattern):
+                _parse_py_manifest(manifest, declared)
+        local = _local_modules(root)
+    return declared, local
+
+
+def collect_js_dependencies(root: Path) -> set[str]:
+    manifest = root / "package.json" if root.is_dir() else None
+    if not manifest or not manifest.is_file():
+        return set()
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, json.JSONDecodeError):
+        return set()
+    deps: set[str] = set()
+    for key in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
+        value = data.get(key)
+        if isinstance(value, dict):
+            deps.update(value.keys())
+    return deps
+
+
+def check_undeclared_imports(
+    path: Path,
+    text: str,
+    family: str,
+    rel: str,
+    root: Path,
+    py_manifests: tuple[set[str], set[str]],
+    js_deps: set[str],
+) -> list[Finding]:
+    """Imports that no manifest declares (slopsquatting guard, advisory)."""
+    findings: list[Finding] = []
+    if family == "py":
+        declared, local = py_manifests
+        if not declared and not local:
+            return []
+        seen: set[str] = set()
+        for match in re.finditer(r"^\s*(?:import|from)\s+([A-Za-z_][\w.]*)", text, re.MULTILINE):
+            top = match.group(1).split(".")[0]
+            if top in seen:
+                continue
+            seen.add(top)
+            norm = top.lower().replace("_", "-")
+            if top in STD_LIB_NAMES or top in local:
+                continue
+            aliased = PY_IMPORT_ALIASES.get(top, "").lower()
+            if norm in declared or (aliased and aliased in declared):
+                continue
+            if norm.replace("-", "") in {d.replace("-", "") for d in declared}:
+                continue
+            findings.append(
+                _finding(
+                    path,
+                    text,
+                    match.start(),
+                    "undeclared-import",
+                    (
+                        f"import {top!r} is neither stdlib, local nor declared in a "
+                        "manifest - verify it exists (slopsquatting)"
+                    ),
+                    2,
+                    advisory=True,
+                )
+            )
+        return findings[:5]
+    if family == "js" and js_deps:
+        seen_pkgs: set[str] = set()
+        for match in re.finditer(
+            r"(?:import\s+[^'\"]*?from\s+|import\s+|require\s*\(\s*)[\"']([^\"']+)[\"']", text
+        ):
+            spec = match.group(1)
+            if spec.startswith((".", "/", "node:")):
+                continue
+            pkg = spec if spec.startswith("@") else spec.split("/")[0]
+            if pkg in seen_pkgs or pkg in NODE_BUILTINS or pkg in js_deps:
+                continue
+            seen_pkgs.add(pkg)
+            findings.append(
+                _finding(
+                    path,
+                    text,
+                    match.start(),
+                    "undeclared-import",
+                    (
+                        f"package {pkg!r} is not declared in package.json - verify it "
+                        "exists (slopsquatting)"
+                    ),
+                    2,
+                    advisory=True,
+                )
+            )
+        return findings[:5]
+    return findings
+
+
+def check_ui_slop(path: Path, text: str, ext: str) -> list[Finding]:
+    if ext not in UI_EXTS and ext not in {
+        ".jsx",
+        ".tsx",
+        ".vue",
+        ".svelte",
+        ".astro",
+        ".html",
+        ".htm",
+    }:
+        return []
+    findings: list[Finding] = []
+    if UI_GRADIENT.search(text):
+        findings.append(
+            Finding(
+                path=str(path),
+                line=1,
+                check="ui-ai-gradient",
+                message="AI-default purple/pink gradient",
+                weight=2,
+                advisory=True,
+            )
+        )
+    if UI_GRADIENT_TEXT.search(text):
+        findings.append(
+            Finding(
+                path=str(path),
+                line=1,
+                check="ui-gradient-text",
+                message="gradient clip-text headline",
+                weight=1,
+                advisory=True,
+            )
+        )
+    if UI_MARKETING.search(text):
+        findings.append(
+            Finding(
+                path=str(path),
+                line=1,
+                check="ui-marketing-copy",
+                message="marketing buzzwords in UI copy",
+                weight=1,
+                advisory=True,
+            )
+        )
+    if UI_PLACEHOLDER.search(text):
+        findings.append(
+            Finding(
+                path=str(path),
+                line=1,
+                check="ui-placeholder-copy",
+                message="placeholder copy (lorem / your-name-here)",
+                weight=1,
+                advisory=True,
+            )
+        )
+    if ext in UI_EXTS:
+        emojis = len(EMOJI_PATTERN.findall(text))
+        if emojis >= 3:
+            findings.append(
+                Finding(
+                    path=str(path),
+                    line=1,
+                    check="ui-emoji-decor",
+                    message=f"{emojis} emoji used as decoration",
+                    weight=1,
+                    advisory=True,
+                )
+            )
+    return findings
+
+
+def check_doc_extras(path: Path, text: str, ext: str) -> list[Finding]:
+    if ext not in DOC_EXTS:
+        return []
+    findings: list[Finding] = []
+    if ext in (".md", ".mdx") and MD_EMOJI_HEADING.search(text):
+        findings.append(
+            Finding(
+                path=str(path),
+                line=1,
+                check="md-emoji-headings",
+                message="emoji in markdown headings",
+                weight=1,
+                advisory=True,
+            )
+        )
+    residue = MD_RESIDUE.search(text)
+    if residue:
+        findings.append(
+            _finding(
+                path,
+                text,
+                residue.start(),
+                "md-residue",
+                "chatbot residue or placeholder in document",
+                2,
+                advisory=True,
+            )
+        )
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# Prose rhythm (docs) - always advisory
+# ---------------------------------------------------------------------------
+
+
+def prose_rhythm_findings(path: Path, text: str) -> list[Finding]:
     findings: list[Finding] = []
     prose_lines: list[str] = []
     in_fence = False
@@ -323,7 +1478,7 @@ def prose_rhythm_findings(path: Path, text: str) -> list[Finding]:
                 advisory=True,
             )
         )
-    bangs = prose.count("!")
+    bangs = len(re.findall(r"!(?![\[(=])", prose))  # skip ![img], != operators
     if bangs > 5:
         findings.append(
             Finding(
@@ -352,6 +1507,74 @@ def collect_bullet_groups(lines: list[str]) -> list[list[str]]:
     return groups
 
 
+def scan_doc_file(path: Path, ext: str, phrases: dict) -> list[Finding]:
+    findings: list[Finding] = []
+    text = path.read_text(encoding="utf-8", errors="replace")
+    findings.extend(
+        phrase_findings(path, text, phrases["doc_phrases"], "ai-prose", 1, advisory=True)
+    )
+    findings.extend(
+        phrase_findings(path, text, phrases["humanizer_phrases"], "humanizer", 1, advisory=True)
+    )
+    findings.extend(prose_rhythm_findings(path, text))
+    findings.extend(check_doc_extras(path, text, ext))
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# Code file scan
+# ---------------------------------------------------------------------------
+
+
+def scan_code_file(
+    path: Path,
+    ext: str,
+    rel: str,
+    phrases: dict,
+    py_manifests: tuple[set[str], set[str]],
+    js_deps: set[str],
+) -> list[Finding]:
+    text = path.read_text(encoding="utf-8", errors="replace")
+    family = FAMILY_OF_EXT.get(ext, "")
+    findings: list[Finding] = []
+    comments = extract_comments(text, family)
+    findings.extend(scan_comment_vocabulary(path, comments, phrases))
+    findings.extend(check_elided_code(path, text))
+    findings.extend(check_placeholder_impl(path, text))
+    findings.extend(check_py_ast(path, text, family))
+    findings.extend(check_exceptions_js_family(path, text, family))
+    findings.extend(check_go(path, text, family, rel))
+    findings.extend(check_rust(path, text, family))
+    findings.extend(check_debug_left(path, text, family, rel))
+    findings.extend(check_js_slop(path, text, family, rel))
+    findings.extend(check_ui_slop(path, text, ext))
+    findings.extend(check_blanket_suppression(path, text))
+    findings.extend(check_placeholder_names(path, text))
+    findings.extend(check_placeholder_credential(path, text))
+    findings.extend(check_phantom_imports(path, text, family))
+    findings.extend(
+        check_undeclared_imports(path, text, family, rel, path.parent, py_manifests, js_deps)
+    )
+    todos = len(TODO_PATTERN.findall(text))
+    code_lines = max(len([line for line in text.splitlines() if line.strip()]), 1)
+    if code_lines >= 20 and todos / code_lines > 0.05:
+        findings.append(
+            Finding(
+                path=str(path),
+                line=1,
+                check="todo-density",
+                message=f"TODO/FIXME density {todos / code_lines:.1%} exceeds 5%",
+                weight=3,
+            )
+        )
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# Duplication, provenance, test inventory
+# ---------------------------------------------------------------------------
+
+
 def scan_duplicates(files: list[Path]) -> list[Finding]:
     counter: Counter[str] = Counter()
     first_seen: dict[str, tuple[str, int]] = {}
@@ -361,6 +1584,8 @@ def scan_duplicates(files: list[Path]) -> list[Finding]:
         text = path.read_text(encoding="utf-8", errors="replace")
         for lineno, raw in enumerate(text.splitlines(), start=1):
             line = raw.strip()
+            if not line or line.startswith(("#", "//", "*", "<!--")):
+                continue
             if len(line) >= DUP_LINE_MIN_LEN:
                 counter[line] += 1
                 first_seen.setdefault(line, (str(path), lineno))
@@ -381,25 +1606,205 @@ def scan_duplicates(files: list[Path]) -> list[Finding]:
     return findings[:3]
 
 
+# Provenance markers: traceability hints, not authorship verdicts.
+PROVENANCE_MARKERS = (
+    (
+        re.compile(r"generated\s+(?:by|with|using)\s+(?:github\s+)?copilot", re.IGNORECASE),
+        "Copilot generation banner",
+    ),
+    (
+        re.compile(
+            r"generated\s+(?:by|with|using)\s+"
+            r"(?:claude|anthropic|gpt|openai|chatgpt|cursor|aider|gemini|deepseek)",
+            re.IGNORECASE,
+        ),
+        "LLM generation banner",
+    ),
+    (
+        re.compile(
+            r"co-?authored-?by:.*(?:copilot|claude|gpt|openai|anthropic|"
+            r"cursor|aider|gemini|deepseek)",
+            re.IGNORECASE,
+        ),
+        "AI co-author trailer",
+    ),
+    (re.compile(r"\bai[- ]generated\b", re.IGNORECASE), "AI label"),
+    (re.compile(r"@\s?generated\b", re.IGNORECASE), "@" + "generated tag"),
+    (
+        re.compile(
+            r"this (?:file|code|module) (?:was |is )?(?:auto[- ])?generated (?:by|with)",
+            re.IGNORECASE,
+        ),
+        "generated banner",
+    ),
+)
+TEST_DIRS = {"test", "tests", "spec", "specs", "__tests__"}
+MIN_SOURCES_FOR_INVENTORY = 8
+
+
+def provenance_findings(path: Path, text: str) -> list[Finding]:
+    for pattern, label in PROVENANCE_MARKERS:
+        match = pattern.search(text)
+        if match:
+            return [
+                _finding(
+                    path,
+                    text,
+                    match.start(),
+                    "ai-provenance",
+                    f"machine-generation marker: {label}",
+                    1,
+                    advisory=True,
+                )
+            ]
+    return []
+
+
+def is_test_path(rel_path: str) -> bool:
+    norm = PurePosixPath(rel_path.replace("\\", "/"))
+    parts = norm.parts
+    if any(part.lower() in TEST_DIRS for part in parts[:-1]):
+        return True
+    name = norm.name.lower()
+    return (
+        name.startswith("test_")
+        or name.endswith("_test.py")
+        or ".test." in name
+        or ".spec." in name
+        or name.endswith("_test.go")
+        or name.endswith("test.js")
+        or name.endswith("test.ts")
+    )
+
+
+def inventory_findings(
+    root: Path,
+    files: list[Path],
+    globs: list[str],
+) -> list[Finding]:
+    sources: list[str] = []
+    tests = 0
+    base = root if root.is_dir() else root.parent
+    for path in files:
+        if path.suffix.lower() not in CODE_EXTS:
+            continue
+        try:
+            rel = path.relative_to(base).as_posix()
+        except ValueError:
+            rel = path.as_posix()
+        if is_ignored(rel, globs):
+            continue
+        parts = PurePosixPath(rel).parts
+        if any("fixture" in part.lower() for part in parts):
+            continue
+        if is_test_path(rel):
+            tests += 1
+        else:
+            sources.append(rel)
+    if len(sources) >= MIN_SOURCES_FOR_INVENTORY and tests == 0:
+        return [
+            Finding(
+                path=sources[0],
+                line=1,
+                check="missing-tests",
+                message=(
+                    f"{len(sources)} source files and no test files in the "
+                    "repository (test inventory, advisory)"
+                ),
+                weight=2,
+                advisory=True,
+            )
+        ]
+    return []
+
+
+# ---------------------------------------------------------------------------
+# Scoring: purity -> per-file deficit -> conservative project score
+# ---------------------------------------------------------------------------
+
+
+def file_deficit(findings: list[Finding]) -> int:
+    blocking_weight = sum(f.weight for f in findings if not f.advisory)
+    advisory_weight = sum(f.weight for f in findings if f.advisory)
+    purity = math.exp(-0.5 * blocking_weight)
+    deficit = 100 * (1 - purity) + 8 * math.log1p(advisory_weight)
+    return min(100, round(deficit))
+
+
+def project_score(deficits: list[int]) -> tuple[int, str, str]:
+    """0.6*worst + 0.4*mean aggregation with grade and verdict labels."""
+    if not deficits:
+        return 0, "A", "CLEAN"
+    worst = max(deficits)
+    mean = sum(deficits) / len(deficits)
+    score = round(min(100.0, 0.6 * worst + 0.4 * mean))
+    if score < 10:
+        grade = "A"
+    elif score < 25:
+        grade = "B"
+    elif score < 45:
+        grade = "C"
+    elif score < 65:
+        grade = "D"
+    else:
+        grade = "F"
+    if score >= 70:
+        verdict = "CRITICAL"
+    elif score >= 50:
+        verdict = "INFLATED"
+    elif score >= 30:
+        verdict = "SUSPICIOUS"
+    else:
+        verdict = "CLEAN"
+    return score, grade, verdict
+
+
+def fingerprint(item: Finding) -> str:
+    normalized = re.sub(r"\d+", "#", item.message)
+    raw = f"{item.path}|{item.check}|{normalized}"
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Orchestration
+# ---------------------------------------------------------------------------
+
+
 def scan(
     root: Path,
     phrases: dict,
     extra_globs: list[str] | None = None,
+    provenance: bool = True,
 ) -> list[Finding]:
     files = iter_files(root)
     globs, disabled = load_ignore_rules(root)
     globs = globs + list(extra_globs or [])
+    py_manifests = collect_py_dependencies(root if root.is_dir() else root.parent)
+    js_deps = collect_js_dependencies(root if root.is_dir() else root.parent)
     findings: list[Finding] = []
     for path in files:
-        rel = path.relative_to(root).as_posix() if root.is_dir() else path.name
+        try:
+            rel = path.relative_to(root).as_posix() if root.is_dir() else path.name
+        except ValueError:
+            rel = path.as_posix()
         if is_ignored(rel, globs):
             continue
         suffix = path.suffix.lower()
-        if suffix in CODE_EXTS:
-            findings.extend(scan_code_file(path, phrases))
-        elif suffix in DOC_EXTS:
-            findings.extend(scan_doc_file(path, phrases))
+        if suffix in DOC_EXTS:
+            findings.extend(scan_doc_file(path, suffix, phrases))
+            if provenance:
+                findings.extend(
+                    provenance_findings(path, path.read_text(encoding="utf-8", errors="replace"))
+                )
+        elif suffix in CODE_EXTS or suffix in UI_EXTS:
+            findings.extend(scan_code_file(path, suffix, rel, phrases, py_manifests, js_deps))
+            if provenance:
+                findings.extend(
+                    provenance_findings(path, path.read_text(encoding="utf-8", errors="replace"))
+                )
     findings.extend(scan_duplicates(files))
+    if provenance:
+        findings.extend(inventory_findings(root, files, globs))
     if disabled:
         findings = [f for f in findings if f.check.lower() not in disabled]
     return findings
@@ -413,21 +1818,54 @@ def advisory_score(findings: list[Finding]) -> int:
     return sum(f.weight for f in findings if f.advisory)
 
 
-def total_score(findings: list[Finding]) -> int:
-    """Total weight of all findings, including advisory ones."""
-    return sum(f.weight for f in findings)
+# ---------------------------------------------------------------------------
+# Reporting: summary, per-rule table, fix-first brief, SARIF
+# ---------------------------------------------------------------------------
 
 
-def write_report(path: str, root: Path, findings: list[Finding]) -> None:
+def write_report(
+    path: str,
+    root: Path,
+    findings: list[Finding],
+    suppressed: int = 0,
+) -> None:
     blocking = [f for f in findings if not f.advisory]
     advisory = [f for f in findings if f.advisory]
+    per_file: dict[str, list[Finding]] = {}
+    for item in findings:
+        per_file.setdefault(item.path, []).append(item)
+    deficits = {name: file_deficit(items) for name, items in per_file.items()}
+    score, grade, verdict = project_score(list(deficits.values()))
+    rule_counts = Counter(f.check for f in findings)
     lines = [
         "",
         f"Scanned `{root}`: {len(blocking)} blocking / {len(advisory)} advisory finding(s).",
         f"Blocking score **{blocking_score(findings)}**, advisory score "
         f"{advisory_score(findings)} (advisory findings never fail a build).",
-        "",
     ]
+    if suppressed:
+        lines.append(f"Baseline applied: {suppressed} known finding(s) suppressed.")
+    lines += [
+        "",
+        f"**Slop score {score}/100 - grade {grade} - {verdict}** "
+        "(0.6x worst file + 0.4x mean file deficit).",
+        "",
+        "| Rule | Findings | Severity |",
+        "|---|---|---|",
+    ]
+    for check, count in rule_counts.most_common():
+        severity = "blocking" if check in BLOCKING_CHECKS else "advisory"
+        lines.append(f"| {check} | {count} | {severity} |")
+    lines += ["", "### Fix these first", ""]
+    priority = sorted(blocking, key=lambda f: -f.weight)[:5]
+    if priority:
+        for idx, item in enumerate(priority, start=1):
+            lines.append(
+                f"{idx}. `{item.path}:{item.line}` [{item.check}] {item.message} -> {item.remedy}"
+            )
+    else:
+        lines.append("No blocking findings - nothing to fix first.")
+    lines += [""]
     if blocking:
         lines.append("### Blocking findings")
         lines.append("")
@@ -452,13 +1890,79 @@ def write_report(path: str, root: Path, findings: list[Finding]) -> None:
                 f"| {item.check} | `{item.path}:{item.line}` | {item.message} | {item.weight} |"
             )
         lines.append("")
+    top_files = sorted(deficits.items(), key=lambda kv: -kv[1])[:5]
+    if top_files and top_files[0][1] > 0:
+        lines.append("### Highest-deficit files")
+        lines.append("")
+        lines.append("| File | Deficit |")
+        lines.append("|---|---|")
+        for name, value in top_files:
+            lines.append(f"| `{name}` | {value} |")
+        lines.append("")
     lines.append(
         f"Opt out per path or check via `{IGNORE_FILE}` "
-        "(glob lines, or `check:<id>` to disable one rule)."
+        "(glob lines, or `check:<id>` to disable one rule); "
+        "accept existing findings with `--write-baseline` + `--baseline`."
     )
     lines.append("")
     with open(path, "w", encoding="utf-8") as handle:
         handle.write("\n".join(lines))
+
+
+SARIF_SCHEMA = (
+    "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json"
+)
+
+
+def write_sarif(path: str, findings: list[Finding]) -> None:
+    rules = sorted({f.check for f in findings})
+    rule_meta = [
+        {
+            "id": check,
+            "shortDescription": {"text": REMEDIES.get(check, check)},
+            "defaultConfiguration": {"level": "error" if check in BLOCKING_CHECKS else "warning"},
+            "properties": {"security-severity": "8.0" if check in BLOCKING_CHECKS else "3.0"},
+        }
+        for check in rules
+    ]
+    results = [
+        {
+            "ruleId": item.check,
+            "level": "error" if not item.advisory else "warning",
+            "message": {"text": f"{item.message}. Fix: {item.remedy}"},
+            "locations": [
+                {
+                    "physicalLocation": {
+                        "artifactLocation": {
+                            "uri": item.path.replace("\\", "/"),
+                        },
+                        "region": {"startLine": max(1, item.line)},
+                    }
+                }
+            ],
+            "partialFingerprints": {"masterCIContextHash/v1": fingerprint(item)},
+        }
+        for item in findings
+    ]
+    sarif = {
+        "$schema": SARIF_SCHEMA,
+        "version": "2.1.0",
+        "runs": [
+            {
+                "tool": {
+                    "driver": {
+                        "name": TOOL_NAME,
+                        "informationUri": "https://github.com/WasewaseX/master-ci",
+                        "rules": rule_meta,
+                    }
+                },
+                "originalUriBaseIds": {},
+                "results": results,
+            }
+        ],
+    }
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(sarif, handle, indent=1)
 
 
 def annotate(findings: list[Finding]) -> None:
@@ -466,6 +1970,24 @@ def annotate(findings: list[Finding]) -> None:
         message = item.message.replace("\n", " ")
         prefix = "[advisory] " if item.advisory else ""
         print(f"::warning file={item.path},line={item.line}::{prefix}[{item.check}] {message}")
+
+
+def apply_baseline(findings: list[Finding], baseline_path: str) -> tuple[list[Finding], int]:
+    try:
+        data = json.loads(Path(baseline_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return findings, 0
+    known = set(data.get("fingerprints", []))
+    if not known:
+        return findings, 0
+    kept = [f for f in findings if fingerprint(f) not in known]
+    return kept, len(findings) - len(kept)
+
+
+def write_baseline(path: str, findings: list[Finding]) -> None:
+    data = {"version": 1, "fingerprints": sorted(fingerprint(f) for f in findings)}
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=1)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -490,9 +2012,33 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Write a markdown report to this path",
     )
     parser.add_argument(
+        "--sarif",
+        default="",
+        help="Write SARIF 2.1.0 results to this path (for the Security tab)",
+    )
+    parser.add_argument(
+        "--baseline",
+        default="",
+        help="Suppress findings recorded in this baseline file",
+    )
+    parser.add_argument(
+        "--write-baseline",
+        default="",
+        help="Record current findings as the new baseline and exit 0",
+    )
+    parser.add_argument(
         "--annotate",
         action="store_true",
         help="Emit GitHub ::warning annotations on stdout",
+    )
+    parser.add_argument(
+        "--provenance",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Report advisory provenance markers (ai-provenance) and the "
+            "repository test inventory (missing-tests); default on"
+        ),
     )
     return parser.parse_args(argv)
 
@@ -500,17 +2046,32 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     phrases = load_phrases()
-    findings = scan(args.root, phrases, extra_globs=args.ignore)
-    score = blocking_score(findings)
+    findings = scan(args.root, phrases, extra_globs=args.ignore, provenance=args.provenance)
+    suppressed = 0
+    if args.baseline:
+        findings, suppressed = apply_baseline(findings, args.baseline)
+    if args.write_baseline:
+        write_baseline(args.write_baseline, findings)
+        print(
+            f"ai-integrity baseline written: {len(findings)} fingerprint(s) "
+            f"-> {args.write_baseline}"
+        )
+        return 0
+    score, grade, verdict = project_score(
+        [file_deficit([f for f in findings if f.path == p]) for p in {f.path for f in findings}]
+    )
     if args.report_file:
-        write_report(args.report_file, args.root, findings)
+        write_report(args.report_file, args.root, findings, suppressed=suppressed)
+    if args.sarif:
+        write_sarif(args.sarif, findings)
     if args.annotate:
         annotate(findings)
     print(
-        f"ai-integrity blocking={score} max={args.max_score} "
-        f"advisory={advisory_score(findings)} findings={len(findings)}"
+        f"ai-integrity blocking={blocking_score(findings)} max={args.max_score} "
+        f"advisory={advisory_score(findings)} findings={len(findings)} "
+        f"score={score}/100 grade={grade} verdict={verdict}"
     )
-    return 1 if score > args.max_score else 0
+    return 1 if blocking_score(findings) > args.max_score else 0
 
 
 if __name__ == "__main__":

@@ -31,7 +31,6 @@ on:
 
 permissions:
   contents: read
-  security-events: write
 
 jobs:
   prepare:
@@ -40,19 +39,30 @@ jobs:
     outputs:
       languages: ${{ steps.split.outputs.languages }}
     steps:
-      - name: Split languages
+      - name: Split and validate languages
         id: split
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         env:
           LANGUAGES: ${{ inputs.languages }}
         with:
           script: |
+            const allowed = new Set([
+              'c-cpp', 'csharp', 'go', 'java-kotlin', 'javascript-typescript',
+              'python', 'ruby', 'rust', 'swift',
+            ]);
             const langs = (process.env.LANGUAGES || '')
               .split(',')
               .map((s) => s.trim())
               .filter(Boolean);
             if (!langs.length) {
               throw new Error('No CodeQL languages configured');
+            }
+            const unknown = langs.filter((l) => !allowed.has(l));
+            if (unknown.length) {
+              throw new Error(
+                `Unknown CodeQL language(s): ${unknown.join(', ')}. ` +
+                `Supported: ${[...allowed].join(', ')}`,
+              );
             }
             core.setOutput('languages', JSON.stringify(langs));
 
