@@ -317,7 +317,8 @@ jobs:
           curl -fsSL --retry 3 --retry-all-errors -o /tmp/ec.tar.gz \
             https://github.com/editorconfig-checker/editorconfig-checker/releases/download/v4.0.2/editorconfig-checker-linux-amd64.tar.gz
           tar -xzf /tmp/ec.tar.gz -C /tmp
-          /tmp/editorconfig-checker-linux-amd64/editorconfig-checker
+          chmod +x /tmp/editorconfig-checker
+          /tmp/editorconfig-checker
       - name: Lint shell scripts
         run: |
           mapfile -t files < <(git ls-files '*.sh')
