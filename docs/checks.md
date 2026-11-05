@@ -45,7 +45,9 @@ Profile presets (quick / standard / strict / custom) only change the
 - **Fails when:** actionlint errors, yamllint errors, editorconfig
   violations, shellcheck errors, jscpd above
   `duplication_threshold_pct` (enforced in standard/strict/custom;
-  advisory in quick). zizmor findings are reported as annotations.
+  advisory in quick). zizmor findings are reported as step annotations
+  (not the Security tab - that would need `security-events: write` on
+  this job).
 - **False positives:** YAML anchors flagged by yamllint's default rules;
   jscpd counting idiomatic boilerplate (raise `duplication_threshold_pct`
   or ignore paths via a committed `.jscpd.json`).
@@ -98,12 +100,14 @@ Profile presets (quick / standard / strict / custom) only change the
 
 ## `node-lint` / `node-test` - Node & TypeScript stack
 
-- **Inspects:** `package.json` scripts, TS/JS sources. Lint runs your
-  `lint` script if present, else Biome; `tsc --noEmit` when `tsconfig.json`
+- **Inspects:** `package.json` at the repository root, TS/JS sources. Lint runs
+  your `lint` script if present, else Biome; `tsc --noEmit` when `tsconfig.json`
   exists; depcheck flags unused deps (advisory). Tests run your `test`
   script via npm/pnpm/yarn.
-- **Does not inspect:** lockfile-only changes that don't match the filters,
-  browsers, native builds.
+- **Does not inspect:** repositories without a root `package.json` (the Node
+  stack covers root-manifest projects; subdirectory-only manifests are on the
+  roadmap), lockfile-only changes that don't match the filters, browsers,
+  native builds.
 - **Fails when:** lint/type errors, test failures. depcheck never fails.
 - **False positives:** Biome's defaults differing from your house style
   (commit a `biome.json`); depcheck's dynamic-require blindness.

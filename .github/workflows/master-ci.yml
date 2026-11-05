@@ -206,6 +206,9 @@ jobs:
       - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3.0.4
         id: filter
         with:
+          # 'some-with-excludes' makes '!**/fixtures/**' a real exclusion;
+          # the default 'some' quantifier treats negations as matchers.
+          predicate-quantifier: some-with-excludes
           filters: |
             code:
               - '**/*.py'
@@ -299,6 +302,9 @@ jobs:
           persona: regular
           min-severity: low
           min-confidence: medium
+          # findings surface as step annotations; uploading SARIF would
+          # require security-events: write on this job
+          advanced-security: false
       - name: Lint YAML
         run: |
           pip install --quiet yamllint
@@ -465,6 +471,10 @@ jobs:
           esac
       - name: Lint (project script or biome)
         run: |
+          if [ ! -f package.json ]; then
+            echo "No package.json at repository root - Node stack supports root manifests only"
+            exit 0
+          fi
           if node -e "process.exit(require('./package.json').scripts && require('./package.json').scripts.lint ? 0 : 1)"; then
             npm run lint --silent
           else
@@ -530,6 +540,10 @@ jobs:
         env:
           PM: ${{ steps.pm.outputs.pm }}
         run: |
+          if [ ! -f package.json ]; then
+            echo "No package.json at repository root - skipping Node tests"
+            exit 0
+          fi
           if node -e "process.exit(require('./package.json').scripts && require('./package.json').scripts.test ? 0 : 1)"; then
             case "$PM" in
               pnpm) pnpm test ;;
