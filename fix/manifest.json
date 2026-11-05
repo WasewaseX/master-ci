@@ -1,0 +1,47 @@
+{
+  "generated_at": "2026-11-05T22:14:23.772743+00:00",
+  "mode": "applied fixes",
+  "root": "/home/runner/work/master-ci/master-ci",
+  "tiers": [
+    "lint",
+    "safe"
+  ],
+  "semgrep_config": "p/default p/security-audit p/secrets",
+  "tools": [
+    {
+      "name": "ruff-format",
+      "tier": "safe",
+      "status": "fixed",
+      "detail": "9 files left unchanged"
+    },
+    {
+      "name": "markdownlint",
+      "tier": "safe",
+      "status": "fixed",
+      "detail": "Summary: 0 issues in 0 files"
+    },
+    {
+      "name": "ruff-fix",
+      "tier": "lint",
+      "status": "fixed",
+      "detail": "All checks passed!"
+    },
+    {
+      "name": "semgrep",
+      "tier": "lint",
+      "status": "fixed",
+      "detail": "          305\u2506 urllib.request.urlretrieve(SHFMT_URL, binary)"
+    },
+    {
+      "name": "generic",
+      "tier": "safe",
+      "status": "fixed",
+      "detail": "0 of 41 files normalized"
+    }
+  ],
+  "generic": {
+    "files_scanned": 41,
+    "files_changed": 0,
+    "skipped": {}
+  }
+}
