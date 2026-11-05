@@ -200,10 +200,10 @@ jobs:
       docker: ${{ steps.filter.outputs.docker }}
       workflows: ${{ steps.filter.outputs.workflows }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
-      - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3.0.2
+      - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3.0.4
         id: filter
         with:
           filters: |
@@ -237,6 +237,7 @@ jobs:
               - '**/*.cjs'
               - '**/biome.json*'
               - '**/tsconfig*.json'
+              - '!**/fixtures/**'
             python:
               - '**/*.py'
               - '**/pyproject.toml'
@@ -278,9 +279,9 @@ jobs:
       DUP_THRESHOLD: ${{ inputs.duplication_threshold_pct }}
       DUP_ENFORCE: ${{ needs.meta.outputs.enforce_duplication }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Fetch master-ci helpers
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           repository: ${{ needs.meta.outputs.template_repo }}
           ref: ${{ inputs.template_ref }}
@@ -350,11 +351,11 @@ jobs:
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
       - name: Scan git history for secrets (gitleaks)
-        uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc # v2.3.9
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -372,9 +373,9 @@ jobs:
       AI_MAX: ${{ inputs.ai_slop_max_score }}
       FAIL_SLOP: ${{ inputs.fail_on_ai_slop }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Fetch master-ci helpers
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           repository: ${{ needs.meta.outputs.template_repo }}
           ref: ${{ inputs.template_ref }}
@@ -407,9 +408,9 @@ jobs:
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Fetch master-ci helpers
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           repository: ${{ needs.meta.outputs.template_repo }}
           ref: ${{ inputs.template_ref }}
@@ -431,7 +432,7 @@ jobs:
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Detect package manager
         id: pm
         run: |
@@ -442,7 +443,9 @@ jobs:
           echo "pm=$pm" >> "$GITHUB_OUTPUT"
       - name: Install pnpm
         if: steps.pm.outputs.pm == 'pnpm'
-        run: npm install --global pnpm
+        # pnpm is a build tool, not project code; version comes from the
+        # consumer's lockfile compatibility, so this stays unversioned here.
+        run: npm install --global pnpm # zizmor: ignore[adhoc-packages]
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: ${{ inputs.node_version }}
@@ -451,6 +454,10 @@ jobs:
         env:
           PM: ${{ steps.pm.outputs.pm }}
         run: |
+          if [ ! -f package.json ]; then
+            echo "No package.json at repository root - skipping Node install"
+            exit 0
+          fi
           case "$PM" in
             pnpm) pnpm install --frozen-lockfile || pnpm install ;;
             yarn) yarn install --immutable || yarn install --frozen-lockfile || yarn install ;;
@@ -488,7 +495,7 @@ jobs:
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Detect package manager
         id: pm
         run: |
@@ -499,7 +506,9 @@ jobs:
           echo "pm=$pm" >> "$GITHUB_OUTPUT"
       - name: Install pnpm
         if: steps.pm.outputs.pm == 'pnpm'
-        run: npm install --global pnpm
+        # pnpm is a build tool, not project code; version comes from the
+        # consumer's lockfile compatibility, so this stays unversioned here.
+        run: npm install --global pnpm # zizmor: ignore[adhoc-packages]
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: ${{ inputs.node_version }}
@@ -508,6 +517,10 @@ jobs:
         env:
           PM: ${{ steps.pm.outputs.pm }}
         run: |
+          if [ ! -f package.json ]; then
+            echo "No package.json at repository root - skipping Node install"
+            exit 0
+          fi
           case "$PM" in
             pnpm) pnpm install --frozen-lockfile || pnpm install ;;
             yarn) yarn install --immutable || yarn install --frozen-lockfile || yarn install ;;
@@ -539,23 +552,23 @@ jobs:
       CX_MAX: ${{ inputs.complexity_max }}
       CX_ENFORCE: ${{ needs.meta.outputs.enforce_complexity }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Fetch master-ci helpers
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           repository: ${{ needs.meta.outputs.template_repo }}
           ref: ${{ inputs.template_ref }}
           path: _ci
           fetch-depth: 1
           persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.0.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: ${{ inputs.python_version }}
           cache: ${{ (hashFiles('**/requirements*.txt') != '' || hashFiles('**/pyproject.toml') != '') && 'pip' || '' }}
       - name: Install tooling
         run: |
           python -m pip install --upgrade pip
-          python -m pip install --quiet ruff mypy vulture lizard
+          python -m pip install --quiet ruff mypy vulture lizard pytest
       - name: Ruff lint
         run: |
           { [ -f ruff.toml ] || [ -f .ruff.toml ]; } || \
@@ -616,26 +629,26 @@ jobs:
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Fetch master-ci helpers
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           repository: ${{ needs.meta.outputs.template_repo }}
           ref: ${{ inputs.template_ref }}
           path: _ci
           fetch-depth: 1
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable (branch pin; no version tags published) # zizmor: ignore[ref-version-mismatch]
         with:
           toolchain: ${{ inputs.rust_toolchain }}
           components: clippy,rustfmt
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.8.1
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Check formatting (rustfmt)
         run: cargo fmt --all -- --check
       - name: Lint (clippy)
         run: cargo clippy --all-targets -- -D warnings
       - name: Advisories, licenses, sources (cargo-deny)
-        uses: EmbarkStudios/cargo-deny-action@b66acf5e9fe20f8aba065be86778a8a4c846f902 # v2.1.1
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           command: check
           arguments: ''
@@ -659,9 +672,9 @@ jobs:
       TRIVY_EXIT: ${{ needs.meta.outputs.enforce_trivy == 'true' && '1' || '0' }}
       OSV_ENFORCE: ${{ needs.meta.outputs.enforce_osv }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Fetch master-ci helpers
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           repository: ${{ needs.meta.outputs.template_repo }}
           ref: ${{ inputs.template_ref }}
@@ -681,7 +694,7 @@ jobs:
           semgrep scan "${args[@]}" --sarif --output semgrep.sarif \
             --metrics=off --quiet .
       - name: Trivy filesystem scan
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           scanners: vuln,secret
@@ -753,7 +766,7 @@ jobs:
           echo "dependency-graph compare returned HTTP $code"
       - name: Dependency review
         if: steps.dg.outputs.http == '200'
-        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.8.1
+        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
         with:
           fail-on-severity: ${{ env.DEPS_SEVERITY }}
           comment-summary-in-pr: true
@@ -777,11 +790,11 @@ jobs:
       security-events: write
       id-token: write
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
       - name: OSSF Scorecard
-        uses: ossf/scorecard-action@46dc3187a971a9febf3aeb7f94ccde489f7bb46a # v2.5.0
+        uses: ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e # v2.5.0
         with:
           results_file: scorecard.sarif
           results_format: sarif
