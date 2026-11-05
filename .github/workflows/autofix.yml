@@ -1,0 +1,58 @@
+# =============================================================================
+# Autofix - the self-healing loop
+# =============================================================================
+# Weekly (and on demand) this workflow applies safe fixes with the same tools
+# Master CI enforces, then opens a PR. Merge it and the tree is clean again:
+#   format drift -> autofix PR -> merge -> green CI
+# =============================================================================
+
+name: Autofix
+
+on:
+  schedule:
+    - cron: '0 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  autofix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+      - name: Apply Rust fixes
+        if: hashFiles('Cargo.toml') != ''
+        run: |
+          rustup component add rustfmt
+          cargo fmt --all
+      - name: Apply Python fixes
+        if: hashFiles('**/*.py') != ''
+        run: |
+          python -m pip install --quiet ruff
+          ruff check --fix .
+          ruff format .
+      - name: Apply Node fixes
+        if: hashFiles('**/package.json') != ''
+        run: |
+          npx --yes @biomejs/biome check --write --no-errors-on-unmatched .
+      - name: Apply Markdown fixes
+        run: |
+          [ -f .markdownlint-cli2.jsonc ] || cp configs/.markdownlint-cli2.jsonc .
+          npx --yes markdownlint-cli2 --fix "**/*.md"
+      - name: Open autofix PR
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ github.token }}
+          branch: ci/autofix
+          title: 'ci: weekly autofix'
+          body: |
+            Automated formatting and safe lint fixes from the master-ci
+            autofix loop. Merge to keep the tree clean; CI re-runs on this
+            branch automatically.
+          labels: |
+            automation
+            autofix
+          commit-message: 'ci: apply automated formatting and safe lint fixes'

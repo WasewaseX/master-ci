@@ -1,0 +1,10 @@
+name: 'master-ci CodeQL config'
+
+paths-ignore:
+  - node_modules
+  - dist
+  - build
+  - target
+  - vendor
+  - coverage
+  - '**/*_test.py'

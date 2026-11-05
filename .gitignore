@@ -1,0 +1,12 @@
+_ci/
+node_modules/
+__pycache__/
+*.pyc
+*.sarif
+.venv/
+dist/
+build/
+target/
+osv-scanner
+ai_report.md
+dashboard.md

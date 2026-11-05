@@ -1,0 +1,827 @@
+# =============================================================================
+# Master CI - the one-stop reusable pipeline for Rust / Node / Python projects
+# =============================================================================
+# Zero-config by default: every check auto-detects your stack and skips itself
+# when nothing relevant changed. All findings land in the Security tab, as
+# inline PR annotations and in a dashboard comment on every pull request.
+#
+# Called with a single line from any repository:
+#   uses: WasewaseX/master-ci/.github/workflows/master-ci.yml@main
+# =============================================================================
+
+name: Master CI
+
+on:
+  workflow_call:
+    inputs:
+      node_version:
+        description: Node.js version for the TypeScript/Node stack
+        required: false
+        type: string
+        default: '22'
+      python_version:
+        description: Python version for the Python stack
+        required: false
+        type: string
+        default: '3.13'
+      rust_toolchain:
+        description: Rust toolchain for the Rust stack
+        required: false
+        type: string
+        default: 'stable'
+      run_node:
+        description: 'auto | true | false - run the Node/TS stack'
+        required: false
+        type: string
+        default: auto
+      run_python:
+        description: 'auto | true | false - run the Python stack'
+        required: false
+        type: string
+        default: auto
+      run_rust:
+        description: 'auto | true | false - run the Rust stack'
+        required: false
+        type: string
+        default: auto
+      semgrep_config:
+        description: Space-separated Semgrep registry packs
+        required: false
+        type: string
+        default: 'p/default p/security-audit p/secrets'
+      fail_on_ai_slop:
+        description: Fail the build when AI-slop heuristics exceed the score cap
+        required: false
+        type: boolean
+        default: true
+      ai_slop_max_score:
+        description: Score cap tolerated by the AI-integrity detector
+        required: false
+        type: number
+        default: 8
+      complexity_max:
+        description: Max cyclomatic complexity per function
+        required: false
+        type: number
+        default: 15
+      duplication_threshold_pct:
+        description: Max allowed duplicated code percentage
+        required: false
+        type: number
+        default: 5
+      template_repo:
+        description: Repo holding master-ci helpers (auto-detected when empty)
+        required: false
+        type: string
+        default: ''
+      template_ref:
+        description: Ref of the master-ci repo to fetch helpers from
+        required: false
+        type: string
+        default: main
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: write
+  id-token: write
+
+concurrency:
+  group: master-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Resolve which helper repo provides scripts and default configs
+  # ---------------------------------------------------------------------------
+  meta:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      template_repo: ${{ steps.repo.outputs.template_repo }}
+    steps:
+      - name: Resolve helper repo
+        id: repo
+        env:
+          TEMPLATE_REPO_INPUT: ${{ inputs.template_repo }}
+        run: |
+          fallback='WasewaseX/master-ci'
+          if [ -n "$TEMPLATE_REPO_INPUT" ]; then
+            echo "template_repo=$TEMPLATE_REPO_INPUT" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          ref="${GITHUB_WORKFLOW_REF:-}"
+          parsed="${ref%%/.github/*}"
+          if [ -n "$parsed" ] && [ "$parsed" != "$ref" ]; then
+            echo "template_repo=$parsed" >> "$GITHUB_OUTPUT"
+          else
+            echo "template_repo=$fallback" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Change detection: skips every job that has nothing relevant to check
+  # ---------------------------------------------------------------------------
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+      node: ${{ steps.filter.outputs.node }}
+      python: ${{ steps.filter.outputs.python }}
+      rust: ${{ steps.filter.outputs.rust }}
+      docs: ${{ steps.filter.outputs.docs }}
+      docker: ${{ steps.filter.outputs.docker }}
+      workflows: ${{ steps.filter.outputs.workflows }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3.0.2
+        id: filter
+        with:
+          filters: |
+            code:
+              - '**/*.py'
+              - '**/*.ts'
+              - '**/*.tsx'
+              - '**/*.js'
+              - '**/*.jsx'
+              - '**/*.mjs'
+              - '**/*.cjs'
+              - '**/*.rs'
+              - '**/*.go'
+              - '**/*.java'
+              - '**/*.rb'
+              - '**/*.php'
+              - '**/*.c'
+              - '**/*.cpp'
+              - '**/*.h'
+              - '**/*.sh'
+            node:
+              - '**/package.json'
+              - '**/package-lock.json'
+              - '**/pnpm-lock.yaml'
+              - '**/yarn.lock'
+              - '**/*.ts'
+              - '**/*.tsx'
+              - '**/*.js'
+              - '**/*.jsx'
+              - '**/*.mjs'
+              - '**/*.cjs'
+              - '**/biome.json*'
+              - '**/tsconfig*.json'
+            python:
+              - '**/*.py'
+              - '**/pyproject.toml'
+              - '**/requirements*.txt'
+              - '**/setup.py'
+              - '**/setup.cfg'
+              - '**/mypy.ini'
+              - '**/ruff.toml'
+              - '**/.ruff.toml'
+            rust:
+              - '**/*.rs'
+              - '**/Cargo.toml'
+              - '**/Cargo.lock'
+              - '**/rust-toolchain*'
+              - '**/deny.toml'
+            docs:
+              - '**/*.md'
+              - '**/*.mdx'
+              - '**/*.rst'
+            workflows:
+              - '.github/workflows/**'
+              - '.github/labeler.yml'
+              - '.github/dependabot.yml'
+              - '.github/codeql/**'
+            docker:
+              - '**/Dockerfile*'
+              - '**/*.dockerfile'
+
+  # ---------------------------------------------------------------------------
+  # Repo hygiene: workflows, YAML, shell, whitespace, duplication
+  # ---------------------------------------------------------------------------
+  hygiene:
+    needs: [changes, meta]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CODE_CHANGED: ${{ needs.changes.outputs.code }}
+      DUP_THRESHOLD: ${{ inputs.duplication_threshold_pct }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+      - name: Fetch master-ci helpers
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        with:
+          repository: ${{ needs.meta.outputs.template_repo }}
+          ref: ${{ inputs.template_ref }}
+          path: _ci
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Lint workflow files (actionlint)
+        uses: reviewdog/action-actionlint@619a81ec64ff8c0211cd6146eb2b21e8f1d7f440 # v1.81.1
+        with:
+          level: error
+          fail_level: error
+      - name: Audit workflow security (zizmor)
+        uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd # v0.8.1
+        with:
+          persona: regular
+          min-severity: low
+          min-confidence: medium
+      - name: Lint YAML
+        run: |
+          pip install --quiet yamllint
+          yamllint -s -c _ci/configs/.yamllint.yaml .
+      - name: Check editorconfig compliance
+        run: |
+          [ -f .editorconfig ] || cp _ci/configs/.editorconfig .
+          pip install --quiet editorconfig-checker
+          ec
+      - name: Lint shell scripts
+        run: |
+          mapfile -t files < <(git ls-files '*.sh')
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No shell scripts - skipping"
+            exit 0
+          fi
+          command -v shellcheck >/dev/null 2>&1 || sudo apt-get install -y -qq shellcheck
+          shellcheck "${files[@]}"
+      - name: Flag oversized files
+        run: |
+          big=$(find . -type f -size +2M \
+            -not -path './.git/*' -not -path './node_modules/*' \
+            -not -path './_ci/*' -not -path './vendor/*' \
+            -not -name '*.lock' -not -name '*-lock.json' | cut -c3- || true)
+          if [ -n "$big" ]; then
+            while IFS= read -r f; do
+              echo "::warning file=$f::File larger than 2MB - commit smaller assets or use LFS"
+            done <<< "$big"
+          fi
+      - name: Detect duplicated code
+        if: env.CODE_CHANGED == 'true'
+        run: |
+          npx --yes jscpd --silent --min-tokens 50 --threshold "$DUP_THRESHOLD" \
+            --reporters console \
+            --formats "typescript,javascript,python,go,java" \
+            --ignore "**/_ci/**,**/node_modules/**,**/.git/**,**/dist/**,**/build/**,**/target/**" .
+
+  # ---------------------------------------------------------------------------
+  # Secrets: full-history leak detection
+  # ---------------------------------------------------------------------------
+  secrets:
+    needs: [meta]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        with:
+          fetch-depth: 0
+      - name: Scan git history for secrets (gitleaks)
+        uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ---------------------------------------------------------------------------
+  # AI integrity: slop vocabulary, AI-text tells, humanizer patterns
+  # ---------------------------------------------------------------------------
+  ai-integrity:
+    needs: [meta]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      AI_MAX: ${{ inputs.ai_slop_max_score }}
+      FAIL_SLOP: ${{ inputs.fail_on_ai_slop }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+      - name: Fetch master-ci helpers
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        with:
+          repository: ${{ needs.meta.outputs.template_repo }}
+          ref: ${{ inputs.template_ref }}
+          path: _ci
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Run AI-integrity heuristics
+        run: |
+          python3 _ci/scripts/ai_slop_detector.py . \
+            --max-score "$AI_MAX" \
+            --report-file ai_report.md \
+            --annotate
+          rc=$?
+          if [ -f ai_report.md ]; then
+            echo "### AI integrity heuristics" >> "$GITHUB_STEP_SUMMARY"
+            cat ai_report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ "$FAIL_SLOP" != "true" ] && [ "$rc" -ne 0 ]; then
+            echo "fail_on_ai_slop=false - reporting without failing"
+            exit 0
+          fi
+          exit "$rc"
+
+  # ---------------------------------------------------------------------------
+  # Documentation: markdown lint
+  # ---------------------------------------------------------------------------
+  docs:
+    needs: [changes, meta]
+    if: needs.changes.outputs.docs == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+      - name: Fetch master-ci helpers
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        with:
+          repository: ${{ needs.meta.outputs.template_repo }}
+          ref: ${{ inputs.template_ref }}
+          path: _ci
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Lint markdown
+        run: |
+          [ -f .markdownlint-cli2.jsonc ] || cp _ci/configs/.markdownlint-cli2.jsonc .
+          npx --yes markdownlint-cli2 "**/*.md" "!**/node_modules/**" \
+            "!**/_ci/**" "!**/dist/**" "!**/build/**"
+
+  # ---------------------------------------------------------------------------
+  # Node / TypeScript stack: lint, format, types, unused deps
+  # ---------------------------------------------------------------------------
+  node-lint:
+    needs: [changes]
+    if: (inputs.run_node == 'auto' && needs.changes.outputs.node == 'true') || inputs.run_node == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+      - name: Detect package manager
+        id: pm
+        run: |
+          if [ -f pnpm-lock.yaml ]; then pm=pnpm
+          elif [ -f yarn.lock ]; then pm=yarn
+          else pm=npm
+          fi
+          echo "pm=$pm" >> "$GITHUB_OUTPUT"
+      - name: Install pnpm
+        if: steps.pm.outputs.pm == 'pnpm'
+        run: npm install --global pnpm
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: ${{ steps.pm.outputs.pm == 'pnpm' && 'pnpm' || (steps.pm.outputs.pm == 'yarn' && 'yarn' || 'npm') }}
+      - name: Install dependencies
+        env:
+          PM: ${{ steps.pm.outputs.pm }}
+        run: |
+          case "$PM" in
+            pnpm) pnpm install --frozen-lockfile || pnpm install ;;
+            yarn) yarn install --immutable || yarn install --frozen-lockfile || yarn install ;;
+            *) npm ci || npm install ;;
+          esac
+      - name: Lint (project script or biome)
+        run: |
+          if node -e "process.exit(require('./package.json').scripts && require('./package.json').scripts.lint ? 0 : 1)"; then
+            npm run lint --silent
+          else
+            npx --yes @biomejs/biome ci --no-errors-on-unmatched .
+          fi
+      - name: Type-check (tsc)
+        run: |
+          if [ -f tsconfig.json ]; then
+            if [ -x node_modules/.bin/tsc ]; then
+              node_modules/.bin/tsc --noEmit
+            else
+              npx --yes -p typescript tsc --noEmit
+            fi
+          else
+            echo "No tsconfig.json - skipping tsc"
+          fi
+      - name: Flag unused dependencies (depcheck, advisory)
+        run: |
+          npx --yes depcheck --ignores "@types/*,eslint*,prettier,biome*" \
+            || echo "::warning::depcheck flagged unused or missing dependencies (advisory)"
+
+  # ---------------------------------------------------------------------------
+  # Node / TypeScript stack: tests
+  # ---------------------------------------------------------------------------
+  node-test:
+    needs: [changes]
+    if: (inputs.run_node == 'auto' && needs.changes.outputs.node == 'true') || inputs.run_node == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+      - name: Detect package manager
+        id: pm
+        run: |
+          if [ -f pnpm-lock.yaml ]; then pm=pnpm
+          elif [ -f yarn.lock ]; then pm=yarn
+          else pm=npm
+          fi
+          echo "pm=$pm" >> "$GITHUB_OUTPUT"
+      - name: Install pnpm
+        if: steps.pm.outputs.pm == 'pnpm'
+        run: npm install --global pnpm
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: ${{ steps.pm.outputs.pm == 'pnpm' && 'pnpm' || (steps.pm.outputs.pm == 'yarn' && 'yarn' || 'npm') }}
+      - name: Install dependencies
+        env:
+          PM: ${{ steps.pm.outputs.pm }}
+        run: |
+          case "$PM" in
+            pnpm) pnpm install --frozen-lockfile || pnpm install ;;
+            yarn) yarn install --immutable || yarn install --frozen-lockfile || yarn install ;;
+            *) npm ci || npm install ;;
+          esac
+      - name: Run tests
+        env:
+          PM: ${{ steps.pm.outputs.pm }}
+        run: |
+          if node -e "process.exit(require('./package.json').scripts && require('./package.json').scripts.test ? 0 : 1)"; then
+            case "$PM" in
+              pnpm) pnpm test ;;
+              yarn) yarn test ;;
+              *) npm test --silent ;;
+            esac
+          else
+            echo "No test script defined - skipping"
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Python stack: lint, format, types, dead code, complexity, tests
+  # ---------------------------------------------------------------------------
+  python:
+    needs: [changes, meta]
+    if: (inputs.run_python == 'auto' && needs.changes.outputs.python == 'true') || inputs.run_python == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+      - name: Fetch master-ci helpers
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        with:
+          repository: ${{ needs.meta.outputs.template_repo }}
+          ref: ${{ inputs.template_ref }}
+          path: _ci
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.0.0
+        with:
+          python-version: ${{ inputs.python_version }}
+          cache: pip
+      - name: Install tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --quiet ruff mypy vulture lizard
+      - name: Ruff lint
+        run: |
+          { [ -f ruff.toml ] || [ -f .ruff.toml ]; } || \
+            { grep -q 'tool.ruff' pyproject.toml 2>/dev/null; } || \
+            cp _ci/configs/ruff.toml .
+          ruff check .
+      - name: Ruff format check
+        run: ruff format --check .
+      - name: Mypy type check
+        run: |
+          pyfile=$(git ls-files '*.py' | grep -v '^_ci/' | head -n1)
+          if [ -z "$pyfile" ]; then
+            echo "No python files - skipping mypy"
+            exit 0
+          fi
+          mypy --ignore-missing-imports .
+      - name: Vulture dead-code scan (advisory)
+        run: |
+          vulture . --min-confidence 80 --exclude '_ci,build,dist,vendor' \
+            || echo "::warning::vulture flagged possibly dead code (advisory)"
+      - name: Lizard complexity gate
+        env:
+          COMPLEXITY_MAX: ${{ inputs.complexity_max }}
+        run: |
+          out=$(lizard -l python -C "$COMPLEXITY_MAX" -x '_ci/*' . || true)
+          echo "$out"
+          if echo "$out" | grep -q '!!!!'; then
+            echo "::error::functions exceed cyclomatic complexity $COMPLEXITY_MAX"
+            exit 1
+          fi
+      - name: Install project
+        run: |
+          if [ -f pyproject.toml ] && grep -q '^\[project\]' pyproject.toml; then
+            pip install -e . || pip install . || true
+          elif [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            echo "No installable python project - skipping dependency install"
+          fi
+      - name: Run pytest
+        run: |
+          if [ -d tests ]; then
+            python -m pytest -q
+          elif find . -maxdepth 3 \( -name 'test_*.py' -o -name '*_test.py' \) \
+            -not -path './_ci/*' -not -path './node_modules/*' | grep -q .; then
+            python -m pytest -q
+          else
+            echo "No tests found - skipping pytest"
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Rust stack: format, clippy, advisories, licenses, tests (shared cache)
+  # ---------------------------------------------------------------------------
+  rust:
+    needs: [changes, meta]
+    if: (inputs.run_rust == 'auto' && needs.changes.outputs.rust == 'true') || inputs.run_rust == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+      - name: Fetch master-ci helpers
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        with:
+          repository: ${{ needs.meta.outputs.template_repo }}
+          ref: ${{ inputs.template_ref }}
+          path: _ci
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: ${{ inputs.rust_toolchain }}
+          components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.8.1
+      - name: Check formatting (rustfmt)
+        run: cargo fmt --all -- --check
+      - name: Lint (clippy)
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Advisories, licenses, sources (cargo-deny)
+        uses: EmbarkStudios/cargo-deny-action@b66acf5e9fe20f8aba065be86778a8a4c846f902 # v2.1.1
+        with:
+          command: check
+          arguments: ''
+          command-arguments: advisories licenses sources
+      - name: Test
+        run: cargo test --workspace --all-features
+
+  # ---------------------------------------------------------------------------
+  # Security: semgrep + trivy + osv-scanner, results pushed to the Security tab
+  # ---------------------------------------------------------------------------
+  security:
+    needs: [meta]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SEMGREP_CONFIG: ${{ inputs.semgrep_config }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+      - name: Fetch master-ci helpers
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        with:
+          repository: ${{ needs.meta.outputs.template_repo }}
+          ref: ${{ inputs.template_ref }}
+          path: _ci
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Copy default semgrepignore
+        run: '[ -f .semgrepignore ] || cp _ci/configs/.semgrepignore .'
+      - name: Semgrep static analysis
+        run: |
+          pip install --quiet semgrep
+          read -ra packs <<< "$SEMGREP_CONFIG"
+          args=()
+          for c in "${packs[@]}"; do
+            args+=(--config "$c")
+          done
+          semgrep scan "${args[@]}" --sarif --output semgrep.sarif \
+            --metrics=off --quiet .
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          scan-type: fs
+          scanners: vuln,secret
+          format: sarif
+          output: trivy.sarif
+          severity: HIGH,CRITICAL
+          exit-code: '0'
+          ignore-unfixed: true
+      - name: OSV vulnerability scan
+        run: |
+          curl -fsSL -o osv-scanner \
+            https://github.com/google/osv-scanner/releases/download/v2.7.0/osv-scanner_linux_amd64
+          chmod +x osv-scanner
+          rc=0
+          ./osv-scanner scan source -r . --format sarif --output-file osv.sarif || rc=$?
+          if [ ! -s osv.sarif ]; then
+            echo "No package manifests found - skipping OSV gate"
+            exit 0
+          fi
+          exit "$rc"
+      - name: Upload Semgrep SARIF
+        if: always() && hashFiles('semgrep.sarif') != ''
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.31.2
+        with:
+          sarif-file: semgrep.sarif
+          category: semgrep
+      - name: Upload Trivy SARIF
+        if: always() && hashFiles('trivy.sarif') != ''
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.31.2
+        with:
+          sarif-file: trivy.sarif
+          category: trivy
+      - name: Upload OSV SARIF
+        if: always() && hashFiles('osv.sarif') != ''
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.31.2
+        with:
+          sarif-file: osv.sarif
+          category: osv-scanner
+
+  # ---------------------------------------------------------------------------
+  # Dependency review on pull requests (vulns + license changes)
+  # ---------------------------------------------------------------------------
+  deps-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.8.1
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: true
+
+  # ---------------------------------------------------------------------------
+  # OSSF Scorecard on pushes to the default branch
+  # ---------------------------------------------------------------------------
+  scorecard:
+    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        with:
+          persist-credentials: false
+      - name: OSSF Scorecard
+        uses: ossf/scorecard-action@46dc3187a971a9febf3aeb7f94ccde489f7bb46a # v2.5.0
+        with:
+          results_file: scorecard.sarif
+          results_format: sarif
+          publish_results: true
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload Scorecard SARIF
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.31.2
+        with:
+          sarif-file: scorecard.sarif
+          category: scorecard
+
+  # ---------------------------------------------------------------------------
+  # Dashboard comment on pull requests
+  # ---------------------------------------------------------------------------
+  dashboard:
+    needs: [changes, meta, hygiene, secrets, ai-integrity, docs, node-lint, node-test, python, rust, security, deps-review, scorecard]
+    if: always() && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      NEEDS_JSON: ${{ toJson(needs.*.result) }}
+    steps:
+      - name: Build dashboard
+        run: |
+          python3 - >> dashboard.md <<'PY'
+          import json
+          import os
+
+          results = json.loads(os.environ["NEEDS_JSON"])
+          labels = [
+              ("changes", "Change detection"),
+              ("meta", "Helper resolution"),
+              ("hygiene", "Repo hygiene"),
+              ("secrets", "Secrets"),
+              ("ai-integrity", "AI integrity"),
+              ("docs", "Docs"),
+              ("node-lint", "Node lint"),
+              ("node-test", "Node tests"),
+              ("python", "Python"),
+              ("rust", "Rust"),
+              ("security", "Security"),
+              ("deps-review", "Dependency review"),
+              ("scorecard", "Scorecard"),
+          ]
+          icon = {
+              "success": "white_check_mark",
+              "failure": "x",
+              "cancelled": "no_entry_sign",
+              "skipped": "fast_forward",
+          }
+          print("| Check | Result |")
+          print("|---|---|")
+          for (name, label), result in zip(labels, results):
+              state = icon.get(result, "question")
+              print(f"| {label} (`{name}`) | :{state}: `{result}` |")
+          print()
+          print("Findings: Security tab, inline annotations, step summaries.")
+          PY
+      - name: Post dashboard comment
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          script: |
+            const fs = require('fs');
+            const body = '<!-- master-ci-dashboard -->\n' +
+              fs.readFileSync('dashboard.md', 'utf8');
+            const opts = { owner: context.repo.owner, repo: context.repo.repo };
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              ...opts,
+              issue_number: context.issue.number,
+            });
+            const mine = comments.find(
+              (c) =>
+                c.user &&
+                c.user.login === 'github-actions[bot]' &&
+                c.body &&
+                c.body.includes('<!-- master-ci-dashboard -->'),
+            );
+            if (mine) {
+              await github.rest.issues.updateComment({ ...opts, comment_id: mine.id, body });
+            } else {
+              await github.rest.issues.createComment({
+                ...opts,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+  # ---------------------------------------------------------------------------
+  # Single required check: fails when any non-skipped job failed
+  # ---------------------------------------------------------------------------
+  ci-success:
+    needs: [changes, meta, hygiene, secrets, ai-integrity, docs, node-lint, node-test, python, rust, security, deps-review, scorecard]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      NEEDS_JSON: ${{ toJson(needs.*.result) }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Aggregate results
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+
+          results = json.loads(os.environ["NEEDS_JSON"])
+          names = [
+              "changes",
+              "meta",
+              "hygiene",
+              "secrets",
+              "ai-integrity",
+              "docs",
+              "node-lint",
+              "node-test",
+              "python",
+              "rust",
+              "security",
+              "deps-review",
+              "scorecard",
+          ]
+          labels = {
+              "changes": "Change detection",
+              "meta": "Helper resolution",
+              "hygiene": "Repo hygiene",
+              "secrets": "Secrets",
+              "ai-integrity": "AI integrity",
+              "docs": "Docs",
+              "node-lint": "Node lint",
+              "node-test": "Node tests",
+              "python": "Python",
+              "rust": "Rust",
+              "security": "Security",
+              "deps-review": "Dependency review",
+              "scorecard": "Scorecard",
+          }
+          icon = {
+              "success": ":white_check_mark:",
+              "failure": ":x:",
+              "cancelled": ":no_entry_sign:",
+              "skipped": ":fast_forward:",
+          }
+          failed = False
+          rows = []
+          for name, result in zip(names, results):
+              if result in ("failure", "cancelled"):
+                  failed = True
+              rows.append(f"| {labels[name]} (`{name}`) | {icon.get(result, ':question:')} `{result}` |")
+          verdict = "failed" if failed else "passed"
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary:
+              with open(summary, "a", encoding="utf-8") as handle:
+                  handle.write("## Master CI summary\n\n")
+                  handle.write(f"**Result: {verdict}** - [view run]({os.environ['RUN_URL']})\n\n")
+                  handle.write("| Check | Result |\n")
+                  handle.write("|---|---|\n")
+                  handle.write("\n".join(rows) + "\n\n")
+                  handle.write(
+                      "Security findings live in the **Security** tab (code scanning) "
+                      "and as inline annotations on pull requests.\n"
+                  )
+          raise SystemExit(1 if failed else 0)
+          PY

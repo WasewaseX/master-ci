@@ -1,0 +1,25 @@
+# One-line CI for any project.
+#
+# Copy this file to .github/workflows/ci.yml in your repository and commit.
+# That is the whole setup: master-ci auto-detects Rust / Node / Python and
+# skips whatever did not change. The `uses:` line below is the one-liner.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  master:
+    uses: WasewaseX/master-ci/.github/workflows/master-ci.yml@main
+    secrets: inherit
+
+  codeql:
+    uses: WasewaseX/master-ci/.github/workflows/codeql.yml@main
+    with:
+      languages: javascript-typescript,python
+    permissions:
+      contents: read
+      security-events: write

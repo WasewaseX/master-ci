@@ -1,0 +1,92 @@
+# =============================================================================
+# CodeQL Advanced - reusable security + quality analysis workflow
+# =============================================================================
+# Standalone from Master CI so it can run on its own schedule or matrix.
+# Free on public repositories. Call it with one line:
+#   uses: WasewaseX/master-ci/.github/workflows/codeql.yml@main
+# =============================================================================
+
+name: CodeQL Advanced
+
+on:
+  workflow_call:
+    inputs:
+      languages:
+        description: >-
+          Comma-separated CodeQL languages: javascript-typescript, python,
+          go, java-kotlin, c-cpp, ruby, rust, swift
+        required: false
+        type: string
+        default: 'javascript-typescript,python'
+      queries:
+        description: CodeQL query suites (security-extended, security-and-quality)
+        required: false
+        type: string
+        default: security-and-quality
+      config_file:
+        description: Optional path to a CodeQL config file inside the calling repo
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      languages: ${{ steps.split.outputs.languages }}
+    steps:
+      - name: Split languages
+        id: split
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          LANGUAGES: ${{ inputs.languages }}
+        with:
+          script: |
+            const langs = (process.env.LANGUAGES || '')
+              .split(',')
+              .map((s) => s.trim())
+              .filter(Boolean);
+            if (!langs.length) {
+              throw new Error('No CodeQL languages configured');
+            }
+            core.setOutput('languages', JSON.stringify(langs));
+
+  analyze:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ${{ fromJSON(needs.prepare.outputs.languages) }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+      - name: Ensure CodeQL config exists
+        if: inputs.config_file == ''
+        run: |
+          cfg=".github/codeql/codeql-config.yml"
+          if [ ! -f "$cfg" ]; then
+            mkdir -p .github/codeql
+            printf 'name: "master-ci default CodeQL config"\n\npaths-ignore:\n  - node_modules\n  - dist\n  - build\n  - target\n  - vendor\n  - coverage\n' > "$cfg"
+          fi
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.31.2
+        with:
+          languages: ${{ matrix.language }}
+          queries: ${{ inputs.queries }}
+          config-file: ${{ inputs.config_file != '' && inputs.config_file || '.github/codeql/codeql-config.yml' }}
+      - name: Build compiled languages
+        if: contains(fromJSON('["c-cpp", "go", "java-kotlin", "rust", "swift"]'), matrix.language)
+        uses: github/codeql-action/autobuild@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.31.2
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.31.2
+        with:
+          category: '/language:${{ matrix.language }}'

@@ -1,0 +1,31 @@
+# =============================================================================
+# Stale - housekeeping loop for issues and pull requests
+# =============================================================================
+
+name: Stale
+
+on:
+  schedule:
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/stale@5bef64f19d7facfb25b37b414482c7164d639639 # v9.1.0
+        with:
+          days-before-stale: 30
+          days-before-close: 14
+          stale-issue-message: >-
+            Marking stale: no activity for 30 days. Comment to keep it open.
+          close-issue-message: >-
+            Closed after 14 more days of inactivity. Reopen if still relevant.
+          stale-pr-message: 'Marking stale: no activity for 30 days.'
+          exempt-issue-labels: pinned,keep
+          exempt-pr-labels: pinned,keep,security

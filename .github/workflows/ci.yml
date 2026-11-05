@@ -1,0 +1,27 @@
+# =============================================================================
+# CI - this repository eats its own cooking ("self loop")
+# =============================================================================
+# The template runs the exact same reusable workflows it ships to consumers,
+# on every push and pull request. If master-ci is broken, this repo goes red
+# before any downstream project notices.
+# =============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  master:
+    uses: ./.github/workflows/master-ci.yml
+    secrets: inherit
+
+  codeql:
+    uses: ./.github/workflows/codeql.yml
+    with:
+      languages: python
+    permissions:
+      contents: read
+      security-events: write

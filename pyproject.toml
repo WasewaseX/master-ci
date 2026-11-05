@@ -1,0 +1,13 @@
+[tool.ruff]
+line-length = 100
+extend-exclude = ["_ci"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
+
+[tool.mypy]
+exclude = "^_ci/"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
