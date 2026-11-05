@@ -17,16 +17,16 @@ and slopdetector.org's explainable, evidence-first prose checks.
 Contract:
 - Exit code 1 only when the *blocking* score exceeds --max-score.
 - Blocking-grade signals are deterministic content defects (elided code,
-  stubs, empty tests, swallowed exceptions, chatbot residue in comments).
-  Everything stylistic or speculative is advisory: reported and annotated,
-  never failing a build.
+    stubs, empty tests, swallowed exceptions, chatbot residue in comments).
+    Everything stylistic or speculative is advisory: reported and annotated,
+    never failing a build.
 - Provenance signals (`ai-provenance`) and the test inventory
-  (`missing-tests`) are traceability signals, never authorship verdicts;
-  advisory. Disable with `--no-provenance`.
+    (`missing-tests`) are traceability signals, never authorship verdicts;
+    advisory. Disable with `--no-provenance`.
 - Every finding carries a check id and a remediation hint.
 - Repos opt out per path or per check via `.ai-integrity-ignore` (glob
-  lines, or `check:<id>` lines), and can accept existing findings via
-  `--baseline` / record them with `--write-baseline`.
+    lines, or `check:<id>` lines), and can accept existing findings via
+    `--baseline` / record them with `--write-baseline`.
 - `--sarif out.sarif` emits SARIF 2.1.0 for the GitHub Security tab.
 """
 
@@ -825,9 +825,7 @@ def _py_func_findings(path: Path, node) -> list[Finding]:
 
 
 def _py_stub_body(body: list[ast.stmt]) -> bool:
-    stmts = [
-        s for s in body if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))
-    ]
+    stmts = [s for s in body if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))]
     if len(stmts) != 1:
         return False
     only = stmts[0]

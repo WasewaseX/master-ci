@@ -15,8 +15,8 @@ Semantics implemented per dorny + picomatch:
 - `a/**` matches everything below `a`, not `a` itself
 - `*` and `?` never match `/`
 - negated patterns are exclusions under some-with-excludes: a filter
-  matches only when at least one positive pattern matches and no
-  negated pattern does
+    matches only when at least one positive pattern matches and no
+    negated pattern does
 """
 
 from __future__ import annotations

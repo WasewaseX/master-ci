@@ -4,20 +4,20 @@ Mechanically enforces the supply-chain and reliability posture the
 project documents, so a regression cannot land silently:
 
 - every external action pinned to a full 40-hex commit SHA with a version
-  comment (and reusable-workflow refs only via version tags)
+    comment (and reusable-workflow refs only via version tags)
 - no `secrets: inherit`, anywhere
 - no `${{ }}` expression interpolation inside `run:` blocks (template
-  injection); inputs reach scripts only through env vars
+    injection); inputs reach scripts only through env vars
 - every job declares `timeout-minutes`
 - reusable workflows keep top-level `permissions: contents: read` only,
-  elevated scopes appear on the jobs that need them, `id-token: write`
-  only on the scorecard job
+    elevated scopes appear on the jobs that need them, `id-token: write`
+    only on the scorecard job
 - the AI detector stays advisory by default (`fail_on_ai_slop: false`)
 - helper configs referenced by workflows exist in this repository
 - automation safety: autofix only opens PRs, stale never closes
-  security-labeled issues, meta validates untrusted inputs
+    security-labeled issues, meta validates untrusted inputs
 - the selftest workflow really exercises pass, enforced-failure and
-  input-validation paths of the reusable workflow
+    input-validation paths of the reusable workflow
 """
 
 from __future__ import annotations
