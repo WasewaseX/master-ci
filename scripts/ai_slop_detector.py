@@ -43,6 +43,7 @@ import sys
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
+from typing import Sequence
 
 
 def _line_of(text: str, pos: int) -> int:
@@ -597,7 +598,7 @@ def _phrase_rule_findings(
     path: Path,
     comments: list[Comment],
     texts: list[str],
-    phrases: list[str],
+    phrases: Sequence[str],
     check: str,
     message_fmt: str,
     weight: int,

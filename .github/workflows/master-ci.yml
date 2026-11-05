@@ -429,9 +429,9 @@ jobs:
       - name: Detect duplicated code
         if: env.CODE_CHANGED == 'true'
         run: |
-          if npx --yes jscpd --silent --min-tokens 50 --threshold "$DUP_THRESHOLD" \
+          # jscpd@5: --formats was removed; extension detection is automatic
+          if npx --yes jscpd@5 --silent --min-tokens 50 --threshold "$DUP_THRESHOLD" \
             --reporters console \
-            --formats "typescript,javascript,python,go,java" \
             --ignore "**/_ci/**,**/fixtures/**,**/node_modules/**,**/.git/**,**/dist/**,**/build/**,**/target/**" .; then
             exit 0
           fi
