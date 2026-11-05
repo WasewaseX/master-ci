@@ -15,6 +15,11 @@ jobs:
   master:
     uses: WasewaseX/master-ci/.github/workflows/master-ci.yml@main
     secrets: inherit
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
+      id-token: write
 
   codeql:
     uses: WasewaseX/master-ci/.github/workflows/codeql.yml@main

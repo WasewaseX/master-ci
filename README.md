@@ -28,6 +28,11 @@ jobs:
   master:
     uses: WasewaseX/master-ci/.github/workflows/master-ci.yml@main
     secrets: inherit
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
+      id-token: write
 
   codeql:
     uses: WasewaseX/master-ci/.github/workflows/codeql.yml@main
@@ -37,6 +42,10 @@ jobs:
       contents: read
       security-events: write
 ```
+
+The caller-side `permissions` block matters: repositories created after
+February 2023 default the workflow token to read-only, and the reusable
+workflow needs the write scopes above for code scanning and PR reporting.
 
 The single line that matters is:
 

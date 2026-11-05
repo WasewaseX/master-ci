@@ -17,6 +17,11 @@ jobs:
   master:
     uses: ./.github/workflows/master-ci.yml
     secrets: inherit
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
+      id-token: write
 
   codeql:
     uses: ./.github/workflows/codeql.yml
