@@ -337,16 +337,13 @@ workflow.
 The template maintains itself. Loops included out of the box:
 
 ```text
-push/PR ──> CI (dogfood) ──> red? fix ──> push
-   ^                                        |
-   |                                        v
-Dependabot PR ──> weekly action bumps <── green
-   ^                                        |
-   |                                        v
-stale sweep ──> weekly housekeeping <── labels
-   ^                                        |
-   |                                        v
-autofix PR ──> safe formatters ──> merge ──┘
+push/PR ──> CI (dogfood) ──> red? ──> Self-Heal ──> autofix PR
+   ^                                        |          |
+   |                                        v          v
+Deep Audit ──> findings ──> Autofix responds <── merge ──> green
+   ^            |
+   |            v
+Nightly ──> audit tracking issue (secrets, vulns, prose: humans)
 ```
 
 | Loop | File | Cadence | Effect |
@@ -355,12 +352,21 @@ autofix PR ──> safe formatters ──> merge ──┘
 | Fixture contracts | `ci.yml` | every push / PR | Detector and tooling run against `fixtures/` edge cases (empty, slop, ignore-file, malformed YAML) |
 | **Selftest** | `selftest.yml` | every push / PR | Calls the reusable workflow three ways: must pass (quick profile), must fail (broken Semgrep pack), must reject an unsafe `template_ref` - the `verify` job asserts all three verdicts |
 | Self-update | `dependabot.yml` | weekly | Bumps every pinned action, grouped PR |
-| Autofix | `autofix.yml` | weekly + manual | Runs ruff, Biome, rustfmt, gofmt, markdownlint `--fix`, opens a PR |
-| **Self-Heal** | `heal.yml` | after CI failures on the default branch | Applies the same safe fixers reactively, opens/updates the `ci/autofix` PR; circuit breakers: default-branch failures only, one heal at a time, stops while a fix PR is open |
+| **Autofix** | `autofix.yml` | weekly + right after every Deep Audit + manual | Runs the shared fix engine (`scripts/fix_engine.py`) - safe tier (rustfmt, gofmt, `ruff format`, Biome, shfmt, markdownlint, whitespace/EOF normalizer) plus lint tier (`ruff check --fix`, `go mod tidy`, `sqlfluff fix`, `semgrep --autofix`) - and opens one PR |
+| **Self-Heal** | `heal.yml` | after CI failures on the default branch | Applies the **same fix engine** reactively, opens/updates the `ci/autofix` PR; circuit breakers: default-branch failures only, one heal at a time, stops while a fix PR is open |
 | Deep sweep | `nightly.yml` | nightly + manual | Full-severity Trivy, CodeQL quality suites, verbose AI report |
-| **Deep Audit** | `audit.yml` | weekly (Saturdays) + manual | Whole-repository sweep - full git history (gitleaks), every file (integrity engine), every dependency manifest (osv-scanner), Go modules (govulncheck), SQL (sqlfluff) - one tracking issue labeled `audit`; never gates CI |
+| **Deep Audit** | `audit.yml` | weekly (Saturdays) + manual | Whole-repository sweep - full git history (gitleaks), every file (integrity engine), every dependency manifest (osv-scanner), Go modules (govulncheck), SQL (sqlfluff) - one tracking issue labeled `audit`; never gates CI. Its completion is the trigger for the Autofix response above |
 | Housekeeping | `stale.yml` | weekly | Marks and closes inactive issues and PRs (never security-labeled ones) |
 | Auto-label | `label.yml` | every PR | Labels PRs by touched paths |
+
+**How "find problems" becomes "fix problems":** one fix policy lives in
+`scripts/fix_engine.py` and every loop delegates to it, so the fixer set
+always matches what CI checks (no fix/check oscillation). Fixes are tiered:
+`safe` cannot change behavior (formatting, whitespace), `lint` applies only
+tool-verified transforms (`ruff --fix`, `semgrep --autofix` for rules that
+ship machine fixes). Everything that has no deterministic fix - secrets
+(rotate), vulnerability upgrades (decision), AI-integrity prose (meaning) -
+is never auto-fixed and stays in the audit tracking issue.
 
 Autofix and Self-Heal open **reviewable PRs**; nothing merges or rewrites
 code without a human pressing the button, CI must be green before the PR

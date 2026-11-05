@@ -258,15 +258,7 @@ positive rate documented above.
 A regression that makes the pipeline pass when it should fail - or fail for
 the wrong reason - turns the selftest red.
 
-## `heal` and `audit` - the reactive loop and the whole-repo sweep
-
-`heal.yml` is the reactive self-heal loop. When CI, Master CI or the
-selftest reports a failure on the default branch, it applies the same safe
-fixers as the weekly autofix (rustfmt, ruff, Biome, gofmt, markdownlint)
-and opens or updates the `ci/autofix` PR. Circuit breakers: it reacts to
-default-branch failures only, one heal runs at a time, and it stops while
-a fix PR is already open - a failing fix PR needs a human, not another
-iteration. It never pushes to a branch; the PR is the whole change.
+## `heal` and `audit` - the reactive loop, the fix engine and the whole-repo sweep
 
 `audit.yml` is the whole-repository deep audit: scheduled (Saturdays 06:00
 UTC) and on demand, never on push or PR. It re-examines what the
@@ -275,3 +267,33 @@ the tree (integrity engine), every dependency manifest (osv-scanner), Go
 modules (govulncheck), SQL sources (sqlfluff) - and appends the result to
 one tracking issue labeled `audit`. Every scan is `continue-on-error` by
 design: findings inform, they never gate.
+
+What happens to the findings: everything with a deterministic fix is
+handled by the **fix engine** (`scripts/fix_engine.py`), the single fix
+policy shared by `autofix.yml` (weekly drift sweep plus an automatic
+response that runs right after every Deep Audit) and `heal.yml` (reactive:
+when CI fails on the default branch it applies the same engine and opens
+or updates the `ci/autofix` PR). The engine applies two tiers:
+
+- **safe** - cannot change program behavior: rustfmt, gofmt,
+  `ruff format`, Biome safe fixes, shfmt, markdownlint `--fix`, and a
+  generic normalizer (trailing whitespace, final newline; Markdown
+  hard line breaks are preserved, binaries and vendored trees untouched).
+- **lint** - tool-verified transforms: `ruff check --fix`, `go mod tidy`,
+  `sqlfluff fix`, and `semgrep --autofix` (only rules that ship a
+  machine-applicable fix).
+
+The engine emits a manifest, a step-summary table and the PR body from one
+run, so every fix PR documents exactly which tool changed what. Missing
+tools are recorded as `skipped:tool-missing`, never fatal.
+
+Never auto-fixed, by design: secrets (rotate them), dependency
+vulnerabilities (upgrade decisions), AI-integrity prose findings (rewriting
+meaning is not mechanical), and any finding whose tool ships no machine
+fix. Those stay in the audit tracking issue where a human owns them.
+
+Circuit breakers: heal reacts to default-branch failures only, one loop
+runs at a time (fixed concurrency groups), and it stops while a fix PR is
+already open - a failing fix PR needs a human, not another iteration.
+Nothing is ever pushed to a branch; the PR is the whole change, and
+closing it is the rollback.

@@ -1,71 +1,101 @@
 # =============================================================================
-# Autofix - the self-healing loop
+# Autofix - the "find it, fix it" loop
 # =============================================================================
-# Weekly (and on demand) this workflow applies safe fixes with the same tools
-# Master CI enforces, then opens a PR. Merge it and the tree is clean again:
-#   format drift -> autofix PR -> merge -> green CI
+# Problems are found by CI (every push), the Deep Audit (whole-repo sweep)
+# and the Nightly Deep Scan. This workflow is their common response: it
+# applies the repo's own fix policy via scripts/fix_engine.py - the same
+# engine the reactive Self-Heal loop uses - and opens one reviewable PR.
+#
+#   found by CI      -> Self-Heal (heal.yml) -> fix engine
+#   found by audit   -> this workflow, right after the audit completes
+#   found by drift   -> this workflow, every Monday morning
+#
+# Fix policy lives in scripts/fix_engine.py (tiers: safe = formatting,
+# lint = tool-verified transforms). Secrets, vulnerability upgrades and
+# AI-integrity prose findings are never auto-fixed: they need humans and
+# are tracked in the audit issue instead.
+#
+# Circuit breakers:
+#   - one concurrency group, never parallel
+#   - all changes land as a PR; closing it is the rollback
+#   - Master CI re-runs on the PR branch; merge only with green CI
+#
+# PRs created with GITHUB_TOKEN intentionally do not re-trigger workflows.
+# To have Master CI run on the autofix PR automatically, store a PAT with
+# `repo` + `workflow` scopes as the AUTOFIX_TOKEN repository secret.
 # =============================================================================
 
 name: Autofix
 
 on:
   schedule:
-    - cron: '0 5 * * 1'
+    - cron: '0 5 * * 1' # Mondays 05:00 UTC - the weekly drift sweep
+  # zizmor: ignore[dangerous-triggers] - reacts to the Deep Audit sweep on
+  # the default branch only; no untrusted checkout, no push, PR-only changes
+  workflow_run:
+    workflows: ["Deep Audit"]
+    types: [completed]
   workflow_dispatch:
+    inputs:
+      semgrep_config:
+        description: 'Semgrep packs for --autofix (empty skips semgrep)'
+        required: false
+        type: string
+        default: 'p/default p/security-audit p/secrets'
 
 permissions:
   contents: write
   pull-requests: write
 
+concurrency:
+  group: autofix
+  cancel-in-progress: false
+
 jobs:
   autofix:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
+    env:
+      SEMGREP_INPUT: ${{ inputs.semgrep_config }}
+      AUDIT_RUN_URL: ${{ github.event.workflow_run.html_url }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-      - name: Apply Rust fixes
-        if: hashFiles('Cargo.toml') != ''
+        with:
+          persist-credentials: false
+
+      - name: Install fix tools
         run: |
-          rustup component add rustfmt
-          cargo fmt --all
-      - name: Apply Python fixes
-        if: hashFiles('**/*.py') != ''
+          python -m pip install --quiet ruff sqlfluff semgrep
+
+      - name: Apply the fix policy
         run: |
-          python -m pip install --quiet ruff
-          ruff check --fix .
-          ruff format .
-      - name: Apply Node fixes
-        if: hashFiles('**/package.json') != ''
+          cfg="${SEMGREP_INPUT:-p/default p/security-audit p/secrets}"
+          python3 scripts/fix_engine.py \
+            --tier safe --tier lint \
+            --semgrep-config "$cfg" \
+            --manifest-dir fix
+
+      - name: Assemble the PR body
         run: |
-          npx --yes @biomejs/biome check --write --no-errors-on-unmatched .
-      - name: Apply Go fixes
-        if: hashFiles('go.mod') != ''
-        run: |
-          find . -name '*.go' -type f \
-            -not -path './vendor/*' -not -path './node_modules/*' -print0 \
-            | xargs -0 gofmt -w
-      - name: Apply Markdown fixes
-        run: |
-          # copy the default config only when it ships with the repo
-          if [ ! -f .markdownlint-cli2.jsonc ] && [ -f configs/.markdownlint-cli2.jsonc ]; then
-            cp configs/.markdownlint-cli2.jsonc .
-          fi
-          npx --yes markdownlint-cli2 --fix "**/*.md"
-      - name: Open autofix PR
+          {
+            if [ -n "$AUDIT_RUN_URL" ]; then
+              echo "Response to the Deep Audit run: $AUDIT_RUN_URL."
+              echo "Mechanically fixable findings are applied below;"
+              echo "the rest stays in the audit tracking issue."
+              echo
+            fi
+            cat fix/pr-body.md
+          } > fix/final-body.md
+          cat fix/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open or update the autofix PR
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
-          token: ${{ github.token }}
+          token: ${{ secrets.AUTOFIX_TOKEN || github.token }}
           branch: ci/autofix
-          title: 'ci: weekly autofix'
-          body: |
-            Automated formatting and safe lint fixes from the master-ci
-            autofix loop.
-
-            Safety rails:
-            - Nothing is pushed directly: this PR is the whole change.
-            - Master CI re-runs on this branch; only merge with green CI.
-            - Close this PR to roll back, or reopen it any time.
+          title: 'ci: automated fixes from the audit and drift sweeps'
+          body-file: fix/final-body.md
           labels: |
             automation
             autofix
-          commit-message: 'ci: apply automated formatting and safe lint fixes'
+          commit-message: 'ci: apply the master-ci fix policy'

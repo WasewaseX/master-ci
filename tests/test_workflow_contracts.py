@@ -334,13 +334,19 @@ def test_heal_loop_is_pr_only_and_gated_on_default_branch_failures():
     assert (data.get("concurrency") or {}).get("group") == "self-heal"
 
 
-def test_heal_fixers_match_autofix():
-    """The reactive loop and the weekly loop apply the same tools."""
-    fixers = ("rustfmt", "ruff", "biome", "gofmt", "markdownlint")
+def test_heal_and_autofix_share_the_fix_engine():
+    """Both loops delegate to the same fix policy: scripts/fix_engine.py.
+
+    Parity is structural now - one engine, one tool registry - instead of
+    duplicated inline fixer steps that could drift apart.
+    """
     for wf_name in ("autofix.yml", "heal.yml"):
         text = (WF_DIR / wf_name).read_text(encoding="utf-8")
-        for tool in fixers:
-            assert tool in text, f"{wf_name}: missing fixer {tool}"
+        assert "scripts/fix_engine.py" in text, f"{wf_name}: missing fix engine call"
+        assert "--tier safe --tier lint" in text, f"{wf_name}: must apply both tiers"
+        assert "peter-evans/create-pull-request@" in text, (
+            f"{wf_name}: fixes must land through a PR"
+        )
 
 
 # ---------------------------------------------------------------------------
