@@ -58,7 +58,7 @@ from typing import Any, Callable
 
 SCRIPTS = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPTS.parent
-SERVER_VERSION = "1.8.3"
+SERVER_VERSION = "1.8.4"
 DEFAULT_REPO_SLUG = "WasewaseX/master-ci"
 DEFAULT_GH_API = "https://api.github.com"
 UPDATE_TIMEOUT_SECONDS = 10.0
