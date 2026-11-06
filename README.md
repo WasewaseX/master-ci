@@ -253,11 +253,19 @@ jobs:
     uses: WasewaseX/master-ci/.github/workflows/master-ci.yml@v1
     with:
       profile: quick    # fast PR feedback - deterministic gates stay on
+      template_ref: v1  # fetch helpers from the same release as the workflow
     permissions:
       contents: read
       security-events: write
       pull-requests: write
 ```
+
+**Helper pinning**: the workflow ref (`@v1`) and `template_ref` are two
+separate versions. The workflow file can come from a release tag while
+`template_ref: main` would fetch helper scripts from a moving branch - so
+helpers and checks could silently diverge from the version you pinned.
+`meta` prints a warning for mutable refs; pin `template_ref` to the same
+tag as the workflow for reproducible CI.
 
 | Setting | quick | standard (default) | strict | custom |
 |---|---|---|---|---|
@@ -268,6 +276,24 @@ jobs:
 | Complexity gate | advisory | **fail** | **fail** | **fail** |
 | deps-review severity | critical | high | high | high |
 | AI-integrity | advisory | advisory | advisory | advisory |
+
+## Run only what you want (`select`)
+
+Every check job can be selected individually - real modularity without
+duplicating workflows. Pass a comma-separated list of job names (no
+spaces); an empty value runs everything:
+
+```yaml
+with:
+  select: secrets,python    # only these two jobs run; the rest skip cleanly
+```
+
+Unknown names fail the run in `meta` with the valid list - a typo can
+never silently skip a check. Valid names: `hygiene`, `secrets`,
+`ai-integrity`, `docs`, `node-lint`, `node-test`, `python`, `rust`,
+`go-lint`, `go-test`, `security`, `deps-review`, `scorecard`. The
+aggregate gate still passes when jobs are skipped by design, so branch
+protection keeps a single required check.
 
 Full semantics per check (what is inspected, what fails, false positives,
 how to disable, added time) live in [docs/checks.md](docs/checks.md).
@@ -280,8 +306,10 @@ how to disable, added time) live in [docs/checks.md](docs/checks.md).
 | `node_version` | `22` | Node.js for the Node stack |
 | `python_version` | `3.13` | Python for the Python stack |
 | `rust_toolchain` | `stable` | Rust toolchain |
+| `go_version` | `stable` | Go toolchain |
 | `runs_on` | `ubuntu-latest` | Runner label for every job (e.g. `macos-latest`) |
-| `run_node` / `run_python` / `run_rust` | `auto` | Force a stack `true` / `false`, or auto-detect |
+| `run_node` / `run_python` / `run_rust` / `run_go` | `auto` | Force a stack `true` / `false`, or auto-detect |
+| `select` | `''` | Comma-separated job names to run (empty = all). Unknown names fail in `meta` |
 | `semgrep_config` | `p/default p/security-audit p/secrets` | Semgrep packs (standard/strict/custom) |
 | `fail_on_ai_slop` | `false` | Fail on AI-integrity **blocking** score (advisory by default) |
 | `ai_slop_max_score` | `8` | Blocking score cap |
@@ -289,7 +317,7 @@ how to disable, added time) live in [docs/checks.md](docs/checks.md).
 | `duplication_threshold_pct` | `5` | jscpd failure threshold |
 | `scorecard_publish` | `true` | Publish Scorecard results (needs `id-token: write`) |
 | `template_repo` | auto | Helper repo override for forks (validated: `owner/repo`) |
-| `template_ref` | `main` | Helper ref override (validated: branch, tag or SHA characters only) |
+| `template_ref` | `main` | Helper ref. Pin to a release tag (e.g. `v1.4.0`) - mutable branches print a warning |
 | `concurrency_key` | `''` | Distinguishes concurrent calls when one workflow calls master-ci several times |
 
 ## Permissions: least privilege, explained
@@ -325,8 +353,15 @@ The `languages:` input of `codeql.yml` accepts `javascript-typescript`,
 `python`, `go`, `java-kotlin`, `c-cpp`, `ruby`, `rust` and `swift`. That is
 **CodeQL deep security analysis** for those languages only. The full stack
 coverage - auto-detection, lint, format, types, tests, dependency policy -
-is currently built for **Rust, Node/TypeScript and Python**. Go, Java/Kotlin,
+is built for **Rust, Node/TypeScript, Python and Go**. Java/Kotlin,
 C/C++, Ruby and Swift get security scanning, not stack checks.
+
+Dependency installs are lockfile-strict: when a lockfile exists
+(`pnpm-lock.yaml`, `yarn.lock`, `package-lock.json`), the install runs
+frozen/immutable and a drift failure is a real failure - there is no
+silent fallback to mutable resolution. A Python project install
+(`pip install -e .`) that fails fails the job; tests never run against
+an environment the packaging step could not build.
 
 If your repo has the default CodeQL setup enabled, switch it off
 (Settings > Code security > Code scanning) to avoid a conflict with this

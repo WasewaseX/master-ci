@@ -69,6 +69,15 @@ on:
         required: false
         type: string
         default: 'stable'
+      select:
+        description: >-
+          Comma-separated job names to run (empty = all): hygiene, secrets,
+          ai-integrity, docs, node-lint, node-test, python, rust, go-lint,
+          go-test, security, deps-review, scorecard. Unknown names fail the
+          run in meta - never silently skipped.
+        required: false
+        type: string
+        default: ''
       semgrep_config:
         description: Space-separated Semgrep registry packs (used by standard/strict/custom)
         required: false
@@ -148,8 +157,14 @@ jobs:
           TEMPLATE_REPO_INPUT: ${{ inputs.template_repo }}
           TEMPLATE_REF: ${{ inputs.template_ref }}
           PROFILE: ${{ inputs.profile }}
+          RUN_NODE: ${{ inputs.run_node }}
+          RUN_PYTHON: ${{ inputs.run_python }}
+          RUN_RUST: ${{ inputs.run_rust }}
+          RUN_GO: ${{ inputs.run_go }}
+          SELECT: ${{ inputs.select }}
         run: |
-          # Untrusted caller input never reaches a checkout ref unvalidated.
+          # Untrusted caller input never reaches a checkout ref unvalidated,
+          # and a typo must fail the run - never silently skip a stack.
           die() { echo "::error::$1"; exit 1; }
           if [ -n "$TEMPLATE_REPO_INPUT" ] && \
             ! printf '%s' "$TEMPLATE_REPO_INPUT" | grep -Eqx '[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+'; then
@@ -162,9 +177,31 @@ jobs:
                 die "template_ref contains unsafe characters or sequences; use a branch, tag or commit SHA" ;;
             esac
           done
+          case "$TEMPLATE_REF" in
+            ''|main|master)
+              echo "::warning::template_ref='$TEMPLATE_REF' fetches helpers from a mutable branch - pin it to a release tag (template_ref: v1.4.0) for reproducible CI" ;;
+          esac
           case "$PROFILE" in
             quick|standard|strict|custom) ;;
             *) die "profile must be one of: quick, standard, strict, custom" ;;
+          esac
+          for value in "$RUN_NODE" "$RUN_PYTHON" "$RUN_RUST" "$RUN_GO"; do
+            case "$value" in
+              auto|true|false) ;;
+              *) die "run_node/run_python/run_rust/run_go must be auto, true or false (got '$value')" ;;
+            esac
+          done
+          case "$SELECT" in
+            '') ;;
+            *[[:space:]]*)
+              die "select must be comma-separated job names without spaces" ;;
+            *)
+              for token in $(printf '%s' "$SELECT" | tr ',' ' '); do
+                case "$token" in
+                  hygiene|secrets|ai-integrity|docs|node-lint|node-test|python|rust|go-lint|go-test|security|deps-review|scorecard) ;;
+                  *) die "select contains unknown job '$token' (valid: hygiene secrets ai-integrity docs node-lint node-test python rust go-lint go-test security deps-review scorecard)" ;;
+                esac
+              done ;;
           esac
           echo "caller inputs validated (profile=$PROFILE)"
       - name: Resolve helper repo
@@ -361,7 +398,7 @@ jobs:
   # ---------------------------------------------------------------------------
   hygiene:
     needs: [changes, meta]
-    if: needs.meta.result == 'success'
+    if: (inputs.select == '' || contains(format(',{0},', inputs.select), ',hygiene,')) && needs.meta.result == 'success'
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 15
     env:
@@ -445,7 +482,7 @@ jobs:
   # ---------------------------------------------------------------------------
   secrets:
     needs: [meta]
-    if: needs.meta.result == 'success'
+    if: (inputs.select == '' || contains(format(',{0},', inputs.select), ',secrets,')) && needs.meta.result == 'success'
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 10
     steps:
@@ -464,7 +501,7 @@ jobs:
   # ---------------------------------------------------------------------------
   ai-integrity:
     needs: [meta]
-    if: needs.meta.result == 'success'
+    if: (inputs.select == '' || contains(format(',{0},', inputs.select), ',ai-integrity,')) && needs.meta.result == 'success'
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 10
     permissions:
@@ -512,7 +549,7 @@ jobs:
   # ---------------------------------------------------------------------------
   docs:
     needs: [changes, meta]
-    if: needs.meta.result == 'success' && needs.changes.outputs.docs == 'true'
+    if: (inputs.select == '' || contains(format(',{0},', inputs.select), ',docs,')) && needs.meta.result == 'success' && needs.changes.outputs.docs == 'true'
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 10
     steps:
@@ -536,7 +573,10 @@ jobs:
   # ---------------------------------------------------------------------------
   node-lint:
     needs: [changes, meta]
-    if: needs.meta.result == 'success' && ((inputs.run_node == 'auto' && needs.changes.outputs.node == 'true') || inputs.run_node == 'true')
+    if: >-
+      (inputs.select == '' || contains(format(',{0},', inputs.select), ',node-lint,'))
+      && needs.meta.result == 'success'
+      && ((inputs.run_node == 'auto' && needs.changes.outputs.node == 'true') || inputs.run_node == 'true')
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 25
     steps:
@@ -566,10 +606,19 @@ jobs:
             echo "No package.json at repository root - skipping Node install"
             exit 0
           fi
+          # A lockfile is a contract: when one exists, install reproducibly
+          # and treat failures as real failures - never fall back behind a
+          # silent || to mutable dependency resolution.
           case "$PM" in
-            pnpm) pnpm install --frozen-lockfile || pnpm install ;;
-            yarn) yarn install --immutable || yarn install --frozen-lockfile || yarn install ;;
-            *) npm ci || npm install ;;
+            pnpm)
+              if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile
+              else pnpm install; fi ;;
+            yarn)
+              if [ -f yarn.lock ]; then yarn install --immutable
+              else yarn install; fi ;;
+            npm)
+              if [ -f package-lock.json ]; then npm ci
+              else npm install; fi ;;
           esac
       - name: Lint (project script or biome)
         run: |
@@ -603,7 +652,10 @@ jobs:
   # ---------------------------------------------------------------------------
   node-test:
     needs: [changes, meta]
-    if: needs.meta.result == 'success' && ((inputs.run_node == 'auto' && needs.changes.outputs.node == 'true') || inputs.run_node == 'true')
+    if: >-
+      (inputs.select == '' || contains(format(',{0},', inputs.select), ',node-test,'))
+      && needs.meta.result == 'success'
+      && ((inputs.run_node == 'auto' && needs.changes.outputs.node == 'true') || inputs.run_node == 'true')
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 25
     steps:
@@ -633,10 +685,19 @@ jobs:
             echo "No package.json at repository root - skipping Node install"
             exit 0
           fi
+          # A lockfile is a contract: when one exists, install reproducibly
+          # and treat failures as real failures - never fall back behind a
+          # silent || to mutable dependency resolution.
           case "$PM" in
-            pnpm) pnpm install --frozen-lockfile || pnpm install ;;
-            yarn) yarn install --immutable || yarn install --frozen-lockfile || yarn install ;;
-            *) npm ci || npm install ;;
+            pnpm)
+              if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile
+              else pnpm install; fi ;;
+            yarn)
+              if [ -f yarn.lock ]; then yarn install --immutable
+              else yarn install; fi ;;
+            npm)
+              if [ -f package-lock.json ]; then npm ci
+              else npm install; fi ;;
           esac
       - name: Run tests
         env:
@@ -661,7 +722,10 @@ jobs:
   # ---------------------------------------------------------------------------
   python:
     needs: [changes, meta]
-    if: needs.meta.result == 'success' && ((inputs.run_python == 'auto' && needs.changes.outputs.python == 'true') || inputs.run_python == 'true')
+    if: >-
+      (inputs.select == '' || contains(format(',{0},', inputs.select), ',python,'))
+      && needs.meta.result == 'success'
+      && ((inputs.run_python == 'auto' && needs.changes.outputs.python == 'true') || inputs.run_python == 'true')
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 25
     env:
@@ -718,8 +782,11 @@ jobs:
           fi
       - name: Install project
         run: |
+          # Installing the project is part of the test contract: a packaging
+          # failure must fail loudly, never leave the tests running against a
+          # bare environment that happens to pass.
           if [ -f pyproject.toml ] && grep -q '^\[project\]' pyproject.toml; then
-            pip install -e . || pip install . || true
+            pip install -e . || pip install .
           elif [ -f requirements.txt ]; then
             pip install -r requirements.txt
           else
@@ -744,7 +811,10 @@ jobs:
   # ---------------------------------------------------------------------------
   rust:
     needs: [changes, meta]
-    if: needs.meta.result == 'success' && ((inputs.run_rust == 'auto' && needs.changes.outputs.rust == 'true') || inputs.run_rust == 'true')
+    if: >-
+      (inputs.select == '' || contains(format(',{0},', inputs.select), ',rust,'))
+      && needs.meta.result == 'success'
+      && ((inputs.run_rust == 'auto' && needs.changes.outputs.rust == 'true') || inputs.run_rust == 'true')
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 45
     steps:
@@ -780,7 +850,10 @@ jobs:
   # ---------------------------------------------------------------------------
   go-lint:
     needs: [changes, meta]
-    if: needs.meta.result == 'success' && ((inputs.run_go == 'auto' && needs.changes.outputs.go == 'true') || inputs.run_go == 'true')
+    if: >-
+      (inputs.select == '' || contains(format(',{0},', inputs.select), ',go-lint,'))
+      && needs.meta.result == 'success'
+      && ((inputs.run_go == 'auto' && needs.changes.outputs.go == 'true') || inputs.run_go == 'true')
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 25
     steps:
@@ -825,7 +898,10 @@ jobs:
   # ---------------------------------------------------------------------------
   go-test:
     needs: [changes, meta]
-    if: needs.meta.result == 'success' && ((inputs.run_go == 'auto' && needs.changes.outputs.go == 'true') || inputs.run_go == 'true')
+    if: >-
+      (inputs.select == '' || contains(format(',{0},', inputs.select), ',go-test,'))
+      && needs.meta.result == 'success'
+      && ((inputs.run_go == 'auto' && needs.changes.outputs.go == 'true') || inputs.run_go == 'true')
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 25
     steps:
@@ -857,7 +933,7 @@ jobs:
   # ---------------------------------------------------------------------------
   security:
     needs: [meta]
-    if: needs.meta.result == 'success'
+    if: (inputs.select == '' || contains(format(',{0},', inputs.select), ',security,')) && needs.meta.result == 'success'
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 30
     permissions:
@@ -941,7 +1017,7 @@ jobs:
   # ---------------------------------------------------------------------------
   deps-review:
     needs: [meta]
-    if: github.event_name == 'pull_request' && needs.meta.result == 'success'
+    if: github.event_name == 'pull_request' && (inputs.select == '' || contains(format(',{0},', inputs.select), ',deps-review,')) && needs.meta.result == 'success'
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 10
     permissions:
@@ -954,6 +1030,11 @@ jobs:
     steps:
       - name: Probe dependency graph support
         id: dg
+        env:
+          # Without this mapping the probe would run unauthenticated, get
+          # HTTP 401 on private repos, and dependency review would silently
+          # never run at all.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           code=$(curl -s -o /dev/null -w '%{http_code}' \
             -H "Authorization: Bearer $GITHUB_TOKEN" \
@@ -978,7 +1059,10 @@ jobs:
   # (badge/API data) needs id-token: write on this job only.
   # ---------------------------------------------------------------------------
   scorecard:
-    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    if: >-
+      github.event_name == 'push'
+      && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+      && (inputs.select == '' || contains(format(',{0},', inputs.select), ',scorecard,'))
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 15
     permissions:

@@ -11,13 +11,17 @@ Profile presets (quick / standard / strict / custom) only change the
 
 ## `meta` - input validation, profile resolution and helper repo lookup
 
-- **Inspects:** the `profile` and `template_*` inputs; `GITHUB_WORKFLOW_REF`
-  to auto-detect the helper repo on forks.
+- **Inspects:** the `profile`, `select` and `template_*` inputs;
+  `GITHUB_WORKFLOW_REF` to auto-detect the helper repo on forks.
 - **Validates:** `template_repo` must look like `owner/repo`, `template_ref`
-  must contain only safe ref characters (no leading dash, no `..`), and
-  `profile` must be one of the four presets. Invalid input fails `meta`, and
-  every job that consumes helpers is gated on `meta` succeeding - so an
-  untrusted ref can never reach a checkout.
+  must contain only safe ref characters (no leading dash, no `..`),
+  `profile` must be one of the four presets, every `run_*` stack toggle
+  must be `auto`, `true` or `false`, and every `select` token must be a
+  known job name (unknown names fail the run - a typo can never silently
+  skip a check). Mutable helper refs (`main`/`master`) print a pinning
+  warning. Invalid input fails `meta`, and every job that consumes helpers
+  is gated on `meta` succeeding - so an untrusted ref can never reach a
+  checkout.
 - **Does not inspect:** your code.
 - **Fails when:** an input fails validation. (The lookup itself can no
   longer fail: the built-in fallback covers it.)
@@ -40,9 +44,9 @@ Profile presets (quick / standard / strict / custom) only change the
 - **Tested:** `tests/test_path_filters.py` extracts the live filter table
   from the workflow and pins 85+ synthetic layouts with exact expected
   stacks, plus picomatch-semantics translator checks and output wiring.
-- **Disable:** force every stack on with `run_node/run_python/run_rust:
-  'true'`; the `changes` job itself always runs (downstream gating depends
-  on it).
+- **Disable:** force every stack on with `run_node/run_python/run_rust/
+  run_go: 'true'`, or pick individual jobs with `select`; the `changes` job
+  itself always runs (downstream gating depends on it).
 - **Time:** 5-20 seconds (dominated by full checkout).
 
 ## `hygiene` - workflows, YAML, shell, whitespace, duplication
@@ -201,8 +205,9 @@ Profile presets (quick / standard / strict / custom) only change the
   (critical in quick, high elsewhere), or incompatible license changes.
 - **False positives:** transitive advisories you already mitigated.
 - **Disable:** cannot be disabled per-run in the reusable workflow; if the
-  repository dependency graph is disabled the job probes first and
-  degrades to a warning instead of a red infrastructure failure.
+  repository dependency graph is disabled the job probes first (with the
+  automatic `GITHUB_TOKEN`, so the probe is authenticated on private repos
+  too) and degrades to a warning instead of a red infrastructure failure.
 - **Time:** 20-60 seconds.
 
 ## `scorecard` - OSSF Scorecard (pushes to default branch)

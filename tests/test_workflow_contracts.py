@@ -16,6 +16,9 @@ project documents, so a regression cannot land silently:
 - helper configs referenced by workflows exist in this repository
 - automation safety: autofix only opens PRs, stale never closes
     security-labeled issues, meta validates untrusted inputs
+- release integrity: the dependency-review probe is authenticated, Node
+    installs never fall back past a lockfile, stack toggles and select
+    tokens are validated, Python project installs fail loudly
 - the selftest workflow really exercises pass, enforced-failure and
     input-validation paths of the reusable workflow
 """
@@ -258,6 +261,129 @@ def test_meta_validates_untrusted_inputs():
         assert needle in meta
 
 
+# ---------------------------------------------------------------------------
+# Release integrity (dependency-review auth, helper pinning, lockfiles,
+# input validation, install failure handling) - regression-proofed after
+# an external review found these gaps.
+# ---------------------------------------------------------------------------
+
+
+def test_dependency_review_probe_is_authenticated():
+    """The dependency-graph probe must carry the automatic token.
+
+    Without the env mapping the probe runs unauthenticated, gets HTTP 401
+    on private repositories, and dependency review silently never runs -
+    a security gate that is dead code.
+    """
+    data = load(WF_DIR / "master-ci.yml")
+    probe = next(s for s in data["jobs"]["deps-review"]["steps"] if s.get("id") == "dg")
+    env = probe.get("env") or {}
+    assert env.get("GITHUB_TOKEN") == "${{ secrets.GITHUB_TOKEN }}", (
+        "dependency-graph probe must map secrets.GITHUB_TOKEN into its env"
+    )
+
+
+def test_node_installs_never_fall_back_past_a_lockfile():
+    """A lockfile is a contract: no silent `||` fallback to mutable installs."""
+    text = (WF_DIR / "master-ci.yml").read_text(encoding="utf-8")
+    for forbidden in (
+        "pnpm install --frozen-lockfile ||",
+        "yarn install --immutable ||",
+        "npm ci || npm install",
+    ):
+        assert forbidden not in text, f"silent lockfile fallback forbidden: {forbidden}"
+    # frozen installs exist, gated explicitly on lockfile presence, in both
+    # Node jobs (node-lint and node-test)
+    assert text.count("[ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile") == 2
+    assert text.count("[ -f yarn.lock ]; then yarn install --immutable") == 2
+    assert text.count("[ -f package-lock.json ]; then npm ci") == 2
+
+
+def test_meta_validates_stack_toggles_and_select():
+    """Invalid run_* toggles or select tokens must fail the run, not skip."""
+    text = (WF_DIR / "master-ci.yml").read_text(encoding="utf-8")
+    meta = text.split("meta:")[1].split("\n  changes:")[0]
+    for needle in ("RUN_NODE", "RUN_PYTHON", "RUN_RUST", "RUN_GO", "SELECT"):
+        assert needle in meta, f"meta must validate {needle}"
+    assert "auto|true|false) ;;" in meta, "stack toggles must be auto/true/false"
+    # select tokens are checked against the full known job list
+    for job in (
+        "hygiene",
+        "secrets",
+        "ai-integrity",
+        "docs",
+        "node-lint",
+        "node-test",
+        "python",
+        "rust",
+        "go-lint",
+        "go-test",
+        "security",
+        "deps-review",
+        "scorecard",
+    ):
+        assert job in meta, f"select allowlist must contain {job}"
+
+
+def test_python_project_install_failure_fails_the_job():
+    """A packaging failure must never degrade to testing a bare environment."""
+    text = (WF_DIR / "master-ci.yml").read_text(encoding="utf-8")
+    assert "pip install -e . || pip install . || true" not in text
+    assert "pip install -e . || pip install ." in text
+
+
+def test_mutable_template_ref_warns_loudly():
+    """Helpers fetched from a moving branch must announce themselves."""
+    text = (WF_DIR / "master-ci.yml").read_text(encoding="utf-8")
+    meta = text.split("meta:")[1].split("\n  changes:")[0]
+    assert "::warning::template_ref=" in meta
+    assert "main|master" in meta, "warning must cover the mutable branch defaults"
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "template_ref" in readme and "reproducible" in readme, (
+        "README must document helper pinning"
+    )
+
+
+def test_check_jobs_can_be_selected_individually():
+    """Every check job carries a select clause so callers can run subsets."""
+    data = load(WF_DIR / "master-ci.yml")
+    trigger = data[True] if True in data else data["on"]
+    inputs = trigger["workflow_call"]["inputs"]
+    assert inputs["select"]["default"] == "", "select must default to all jobs"
+    gated = [
+        "hygiene",
+        "secrets",
+        "ai-integrity",
+        "docs",
+        "node-lint",
+        "node-test",
+        "python",
+        "rust",
+        "go-lint",
+        "go-test",
+        "security",
+        "deps-review",
+        "scorecard",
+    ]
+    for job_id in gated:
+        condition = str(data["jobs"][job_id].get("if", ""))
+        assert "inputs.select" in condition, f"{job_id} must honor the select input"
+    # infrastructure jobs must never be skippable via select
+    for job_id in ("meta", "changes", "dashboard", "ci-success"):
+        condition = str(data["jobs"][job_id].get("if", ""))
+        assert "inputs.select" not in condition, f"{job_id} is infrastructure and must always run"
+
+
+def test_readme_documents_current_inputs():
+    """Documentation must describe the actual implementation, not lag it."""
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    for needle in ("run_go", "go_version", "`select`", "template_ref"):
+        assert needle in readme, f"README config table must document {needle}"
+    assert "Rust, Node/TypeScript, Python and Go" in readme, (
+        "README must list Go as a full CI stack"
+    )
+
+
 def test_master_ci_jobs_gate_on_meta_success():
     """Jobs that fetch helpers must not run when input validation failed."""
     data = load(WF_DIR / "master-ci.yml")
@@ -276,21 +402,48 @@ def test_master_ci_jobs_gate_on_meta_success():
 def test_selftest_exercises_pass_failure_and_validation_paths():
     data = load(WF_DIR / "selftest.yml")
     jobs = data["jobs"]
-    for job_id in ("happy-path", "enforced-failure", "input-validation", "verify"):
+    for job_id in (
+        "happy-path",
+        "enforced-failure",
+        "input-validation",
+        "input-validation-stack-toggle",
+        "input-validation-select",
+        "select-subset",
+        "verify",
+    ):
         assert job_id in jobs, f"selftest missing job {job_id}"
     assert jobs["happy-path"]["uses"].startswith("./")
     # expected-failure calls are gated behind the explicit dispatch mode
-    for job_id in ("enforced-failure", "input-validation"):
+    for job_id in (
+        "enforced-failure",
+        "input-validation",
+        "input-validation-stack-toggle",
+        "input-validation-select",
+    ):
         condition = str(jobs[job_id].get("if", ""))
         assert "inputs.failure_paths == 'true'" in condition, (
             f"{job_id} must only run in the explicit failure-path mode"
         )
-    assert "happy-path" in jobs["verify"]["needs"]
-    assert "enforced-failure" in jobs["verify"]["needs"]
-    assert "input-validation" in jobs["verify"]["needs"]
+    # select-subset proves job selection in both modes and must never be gated
+    assert "if" not in jobs["select-subset"], (
+        "select-subset must run in both modes so selection is always exercised"
+    )
+    assert "select" in str(jobs["select-subset"].get("with", {}))
+    for wanted in (
+        "happy-path",
+        "enforced-failure",
+        "input-validation",
+        "input-validation-stack-toggle",
+        "input-validation-select",
+        "select-subset",
+    ):
+        assert wanted in jobs["verify"]["needs"], f"verify must watch {wanted}"
     verify_text = str(jobs["verify"]["steps"][0].get("run", ""))
     assert '"failed"' in verify_text and '"passed"' in verify_text, (
         "verify must assert verdict outputs for both the pass and fail paths"
+    )
+    assert "TOGGLE_RESULT" in verify_text and "BADSELECT_RESULT" in verify_text, (
+        "verify must assert the new validation failure paths"
     )
 
 
