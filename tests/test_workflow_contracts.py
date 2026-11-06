@@ -386,6 +386,25 @@ def test_scorecard_publish_false_skips_the_job():
     )
 
 
+def test_default_biome_policy_excludes_the_helper_checkout():
+    """The shipped default biome.jsonc sits next to a _ci/ checkout of the
+    template itself. Biome treats every discovered config as a root, so a
+    nested _ci/configs/biome.jsonc aborts the scan outright. The helper
+    checkout is template infrastructure, not consumer code - it must stay
+    out of the policy's file set."""
+    config = json.loads(
+        re.sub(r"//[^\n]*", "", (ROOT / "configs" / "biome.jsonc").read_text(encoding="utf-8"))
+    )
+    includes = config["files"]["includes"]
+    assert any("_ci" in pattern for pattern in includes), (
+        "configs/biome.jsonc must exclude the _ci helper checkout"
+    )
+    node_lint = (WF_DIR / "master-ci.yml").read_text(encoding="utf-8")
+    assert "[ -f biome.jsonc ] || cp _ci/configs/biome.jsonc ." in node_lint, (
+        "node-lint must keep offering the overridable default"
+    )
+
+
 def test_check_jobs_can_be_selected_individually():
     """Every check job carries a select clause so callers can run subsets."""
     data = load(WF_DIR / "master-ci.yml")
