@@ -912,70 +912,84 @@ def _tool_error(req_id: Any, message: str) -> None:
     _result(req_id, {"content": [{"type": "text", "text": message}], "isError": True})
 
 
+def _respond_initialize(req_id: Any, params: dict[str, Any]) -> None:
+    requested = str(params.get("protocolVersion", DEFAULT_PROTOCOL_VERSION))
+    agreed = requested if requested in PROTOCOL_VERSIONS else DEFAULT_PROTOCOL_VERSION
+    _result(
+        req_id,
+        {
+            "protocolVersion": agreed,
+            "capabilities": {"tools": {}, "prompts": {}},
+            "serverInfo": {"name": "master-ci", "version": SERVER_VERSION},
+            "instructions": (
+                "Call tools/list to discover the engines. Every tool result embeds "
+                "a fix-ready prompt field with the next step; prompts/list serves "
+                "ready made walkthroughs (fix-my-repo, explain-findings, "
+                "pre-flight). Set MASTER_CI_MCP_ROOT in the env block to pin this "
+                "server to one repository."
+            ),
+        },
+    )
+
+
+def _respond_tools_call(req_id: Any, params: dict[str, Any]) -> None:
+    name = str(params.get("name", ""))
+    handler = TOOL_HANDLERS.get(name)
+    if handler is None:
+        _error(req_id, -32602, f"unknown tool: {name}")
+        return
+    try:
+        _tool_result(req_id, handler(dict(params.get("arguments") or {})))
+    except Exception as exc:  # noqa: BLE001 - tool failures are results, not crashes
+        _tool_error(req_id, f"{type(exc).__name__}: {exc}")
+
+
+def _respond_prompts_get(req_id: Any, params: dict[str, Any]) -> None:
+    prompt_name = str(params.get("name", ""))
+    builder = PROMPT_BUILDERS.get(prompt_name)
+    if builder is None:
+        _error(req_id, -32602, f"unknown prompt: {prompt_name}")
+        return
+    try:
+        text = builder(dict(params.get("arguments") or {}))
+    except Exception as exc:  # noqa: BLE001 - bad prompt args are client errors
+        _error(req_id, -32602, f"invalid prompt arguments: {type(exc).__name__}: {exc}")
+        return
+    description = next(p["description"] for p in PROMPTS if p["name"] == prompt_name)
+    _result(
+        req_id,
+        {
+            "description": description,
+            "messages": [{"role": "user", "content": {"type": "text", "text": text}}],
+        },
+    )
+
+
+_SIMPLE_RESPONSES: dict[str, Callable[[], dict[str, Any]]] = {
+    "ping": lambda: {},
+    "tools/list": lambda: {"tools": TOOLS},
+    "prompts/list": lambda: {"prompts": PROMPTS},
+    "resources/list": lambda: {"resources": []},
+}
+
+_PARAM_HANDLERS: dict[str, Callable[[Any, dict[str, Any]], None]] = {
+    "initialize": _respond_initialize,
+    "tools/call": _respond_tools_call,
+    "prompts/get": _respond_prompts_get,
+}
+
+
 def handle_request(msg: dict[str, Any]) -> None:
     """Dispatch one JSON-RPC request or notification."""
     method = str(msg.get("method", ""))
     req_id = msg.get("id")
     params = msg.get("params") or {}
-
     if req_id is None:  # notification: never responded to
         return
-
-    if method == "initialize":
-        requested = str(params.get("protocolVersion", DEFAULT_PROTOCOL_VERSION))
-        agreed = requested if requested in PROTOCOL_VERSIONS else DEFAULT_PROTOCOL_VERSION
-        _result(
-            req_id,
-            {
-                "protocolVersion": agreed,
-                "capabilities": {"tools": {}, "prompts": {}},
-                "serverInfo": {"name": "master-ci", "version": SERVER_VERSION},
-                "instructions": (
-                    "Call tools/list to discover the engines. Every tool result embeds "
-                    "a fix-ready prompt field with the next step; prompts/list serves "
-                    "ready made walkthroughs (fix-my-repo, explain-findings, "
-                    "pre-flight). Set MASTER_CI_MCP_ROOT in the env block to pin this "
-                    "server to one repository."
-                ),
-            },
-        )
-    elif method == "ping":
-        _result(req_id, {})
-    elif method == "tools/list":
-        _result(req_id, {"tools": TOOLS})
-    elif method == "tools/call":
-        name = str(params.get("name", ""))
-        handler = TOOL_HANDLERS.get(name)
-        if handler is None:
-            _error(req_id, -32602, f"unknown tool: {name}")
-            return
-        try:
-            _tool_result(req_id, handler(dict(params.get("arguments") or {})))
-        except Exception as exc:  # noqa: BLE001 - tool failures are results, not crashes
-            _tool_error(req_id, f"{type(exc).__name__}: {exc}")
-    elif method == "prompts/list":
-        _result(req_id, {"prompts": PROMPTS})
-    elif method == "prompts/get":
-        prompt_name = str(params.get("name", ""))
-        builder = PROMPT_BUILDERS.get(prompt_name)
-        if builder is None:
-            _error(req_id, -32602, f"unknown prompt: {prompt_name}")
-            return
-        try:
-            text = builder(dict(params.get("arguments") or {}))
-        except Exception as exc:  # noqa: BLE001 - bad prompt args are client errors
-            _error(req_id, -32602, f"invalid prompt arguments: {type(exc).__name__}: {exc}")
-            return
-        description = next(p["description"] for p in PROMPTS if p["name"] == prompt_name)
-        _result(
-            req_id,
-            {
-                "description": description,
-                "messages": [{"role": "user", "content": {"type": "text", "text": text}}],
-            },
-        )
-    elif method == "resources/list":
-        _result(req_id, {"resources": []})
+    if method in _SIMPLE_RESPONSES:
+        _result(req_id, _SIMPLE_RESPONSES[method]())
+    elif method in _PARAM_HANDLERS:
+        _PARAM_HANDLERS[method](req_id, params)
     else:
         _error(req_id, -32601, f"method not found: {method}")
 

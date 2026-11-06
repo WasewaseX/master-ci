@@ -92,6 +92,75 @@ def fail(step: str, evidence: str) -> None:
     print(f"[FAIL] {step}: {evidence}")
 
 
+def _check_init(client: Client) -> None:
+    init = client.request(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "mcp_ping", "version": "1.0.0"},
+            },
+        }
+    )
+    result = init["result"]
+    ok(
+        "initialize",
+        f"protocol {result['protocolVersion']}, server v{result['serverInfo']['version']}",
+    )
+    client.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+    client.request({"jsonrpc": "2.0", "id": 2, "method": "ping"})
+    ok("ping", "server answered")
+
+
+def _check_tools(client: Client) -> None:
+    listing = client.request({"jsonrpc": "2.0", "id": 3, "method": "tools/list"})
+    names = [tool["name"] for tool in listing["result"]["tools"]]
+    if "diagnose" not in names or "apply_fixes" not in names:
+        raise AssertionError(f"expected tools missing from tools/list: {names}")
+    ok("tools/list", f"{len(names)} tools: {', '.join(names)}")
+    call = client.request(
+        {
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {"name": "diagnose", "arguments": {}},
+        }
+    )
+    if call["result"].get("isError"):
+        raise AssertionError(f"diagnose returned an error: {call['result']['content']}")
+    payload = json.loads(call["result"]["content"][0]["text"])
+    ok("tools/call diagnose", f"engines loaded, python {payload['python']}")
+
+
+def _check_prompts(client: Client) -> None:
+    prompts = client.request({"jsonrpc": "2.0", "id": 5, "method": "prompts/list"})
+    prompt_names = [p["name"] for p in prompts["result"]["prompts"]]
+    if "fix-my-repo" not in prompt_names:
+        raise AssertionError(f"fix-my-repo prompt missing from prompts/list: {prompt_names}")
+    ok("prompts/list", f"{len(prompt_names)} prompts: {', '.join(prompt_names)}")
+
+
+def _check_updates(client: Client) -> None:
+    update = client.request(
+        {
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "tools/call",
+            "params": {"name": "check_updates", "arguments": {}},
+        }
+    )
+    state = json.loads(update["result"]["content"][0]["text"])
+    if state.get("error"):
+        ok("check_updates", f"graceful offline report: {state['error'][:60]}")
+    elif state.get("up_to_date"):
+        ok("check_updates", f"install current with {state.get('latest_tag')}")
+    else:
+        ok("check_updates", f"update available: {state.get('latest_tag')}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Verify a master-ci MCP install end to end.")
     parser.add_argument("--server", default=str(SERVER_PATH), help="path to mcp_server.py")
@@ -103,64 +172,11 @@ def main() -> int:
     client: Client | None = None
     try:
         client = Client(Path(args.server), args.timeout)
-        init = client.request(
-            {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2025-06-18",
-                    "capabilities": {},
-                    "clientInfo": {"name": "mcp_ping", "version": "1.0.0"},
-                },
-            }
-        )
-        result = init["result"]
-        ok(
-            "initialize",
-            f"protocol {result['protocolVersion']}, server v{result['serverInfo']['version']}",
-        )
-        client.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
-        client.request({"jsonrpc": "2.0", "id": 2, "method": "ping"})
-        ok("ping", "server answered")
-        listing = client.request({"jsonrpc": "2.0", "id": 3, "method": "tools/list"})
-        names = [tool["name"] for tool in listing["result"]["tools"]]
-        if "diagnose" not in names or "apply_fixes" not in names:
-            raise AssertionError(f"expected tools missing from tools/list: {names}")
-        ok("tools/list", f"{len(names)} tools: {', '.join(names)}")
-        call = client.request(
-            {
-                "jsonrpc": "2.0",
-                "id": 4,
-                "method": "tools/call",
-                "params": {"name": "diagnose", "arguments": {}},
-            }
-        )
-        if call["result"].get("isError"):
-            raise AssertionError(f"diagnose returned an error: {call['result']['content']}")
-        payload = json.loads(call["result"]["content"][0]["text"])
-        ok("tools/call diagnose", f"engines loaded, python {payload['python']}")
-        prompts = client.request({"jsonrpc": "2.0", "id": 5, "method": "prompts/list"})
-        prompt_names = [p["name"] for p in prompts["result"]["prompts"]]
-        if "fix-my-repo" not in prompt_names:
-            raise AssertionError(f"fix-my-repo prompt missing from prompts/list: {prompt_names}")
-        ok("prompts/list", f"{len(prompt_names)} prompts: {', '.join(prompt_names)}")
+        _check_init(client)
+        _check_tools(client)
+        _check_prompts(client)
         if args.online:
-            update = client.request(
-                {
-                    "jsonrpc": "2.0",
-                    "id": 6,
-                    "method": "tools/call",
-                    "params": {"name": "check_updates", "arguments": {}},
-                }
-            )
-            state = json.loads(update["result"]["content"][0]["text"])
-            if state.get("error"):
-                ok("check_updates", f"graceful offline report: {state['error'][:60]}")
-            elif state.get("up_to_date"):
-                ok("check_updates", f"install current with {state.get('latest_tag')}")
-            else:
-                ok("check_updates", f"update available: {state.get('latest_tag')}")
+            _check_updates(client)
     except Exception as exc:  # noqa: BLE001 - any failure is a FAIL line, not a traceback
         failures += 1
         fail("session", f"{type(exc).__name__}: {exc}")
