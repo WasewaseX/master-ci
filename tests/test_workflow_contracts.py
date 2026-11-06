@@ -558,7 +558,12 @@ def test_benchmark_is_scheduled_report_only_and_uploads_results():
     assert "--append benchmarks/history.jsonl" in run_blocks, (
         "every hosted run must append a line to the committed history file"
     )
-    assert "git pull --rebase" in run_blocks, "push must rebase over concurrent main changes"
+    assert "git push origin benchmarks" in run_blocks, (
+        "history must be committed to the dedicated benchmarks branch"
+    )
+    assert "HEAD:main" not in run_blocks and "push origin main" not in run_blocks, (
+        "main is protected and automation never pushes it"
+    )
     assert "git diff --cached --quiet" in run_blocks, "no empty history commits"
     steps = [str(s.get("uses", "")) for s in job["steps"]]
     assert any("upload-artifact" in u for u in steps), "results must be uploaded"
