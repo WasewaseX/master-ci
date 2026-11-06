@@ -784,9 +784,9 @@ def test_event_filters_are_clean_pattern_lists():
                 value = spec.get(key)
                 if value is None:
                     continue
-                assert isinstance(value, list) and all(
-                    isinstance(p, str) for p in value
-                ), f"{wf.name}: {event}.{key} must be a list of strings, got {value!r}"
+                assert isinstance(value, list) and all(isinstance(p, str) for p in value), (
+                    f"{wf.name}: {event}.{key} must be a list of strings, got {value!r}"
+                )
                 for pattern in value:
                     assert "[" not in pattern and "]" not in pattern, (
                         f"{wf.name}: {event}.{key} pattern {pattern!r} contains a stray "
