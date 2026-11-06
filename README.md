@@ -59,6 +59,23 @@ Or fetch the ready-made caller with one shell line:
 mkdir -p .github/workflows && curl -o .github/workflows/ci.yml https://raw.githubusercontent.com/WasewaseX/master-ci/main/examples/ci.yml
 ```
 
+How the helpers find their way here: Master CI jobs fetch `scripts/` and
+default configs from a helper repo (`template_repo`, at `template_ref`).
+When you leave both unset, the workflow detects its own repository -
+which is correct when you call it from the same repo or a fork, and wrong
+for a foreign project. Since v1.7.0 meta probes for the helper module:
+a foreign caller automatically falls back to `WasewaseX/master-ci` with a
+warning, and an unresolvable setup fails `meta` with clear instructions.
+To make the choice explicit and reproducible (recommended, and what the
+[ci-canary](https://github.com/WasewaseX/ci-canary) consumer does), pin
+both:
+
+```yaml
+    with:
+      template_repo: WasewaseX/master-ci
+      template_ref: v1.6.0
+```
+
 ### Required check
 
 Branch protection sees exactly one status: **`ci-success`**. Set it as a
@@ -97,7 +114,7 @@ works for consumers too.
 | `go-test` | Go changed | Build + race-tested, shuffled test suite |
 | `security` | meta ok | Semgrep, Trivy, OSV scanning |
 | `deps-review` | PRs | Dependency and license review |
-| `scorecard` | pushes to default branch | OSSF Scorecard |
+| `scorecard` | pushes to default branch, unless `scorecard_publish: false` | OSSF Scorecard |
 | `dashboard` | PRs | Results table comment on the PR |
 | `ci-success` | always | Aggregate gate (exposes a `verdict` output) |
 
@@ -474,10 +491,10 @@ python3 scripts/mcp_ping.py --online   # plus the update check
 
 ## Testing the template
 
-The template ships three layers of self-tests, all runnable locally:
+The template ships four layers of self-tests, all runnable locally:
 
 ```bash
-python -m pytest -q          # 136 tests:
+python -m pytest -q          # 173 tests:
                              # - detector contracts (43): every rule family,
                              #   slop pairs, scoring, SARIF, baseline
                              # - path-filter regression (12): 100 synthetic
@@ -486,23 +503,39 @@ python -m pytest -q          # 136 tests:
                              # - fix engine (24): stack gating, safe/lint
                              #   tiers, generic normalizer edges, manifest
                              #   schema, engine/CI parity guard
-                             # - MCP server (33): handlers, path lock, fix-
+                             # - MCP server (46): handlers, path lock, fix-
                              #   ready prompts, docs parity, and a real
                              #   subprocess stdio session plus the standalone
                              #   mcp_ping self test
-                             # - workflow contracts (24): SHA pins, no
+                             # - workflow contracts (40): SHA pins, no
                              #   secrets:inherit, no template injection in
                              #   run blocks, timeouts, permissions, helper
                              #   configs, automation safety, selftest wiring,
                              #   self-heal circuit breakers, deep-audit
                              #   schedule/no-gate guarantees
+                             # - benchmark + meta validation (8): report
+                             #   schema, select/stack allowlists
 .github/workflows/selftest.yml  # in CI: six live calls of the reusable
                                 # workflow (pass / select subset / 4 designed
                                 # failures via the negative harness)
 .github/workflows/selftest-negative.yml  # the expected-failure harness:
                                 # runs the negative paths routinely and only
                                 # passes on a correct red
+.github/workflows/integration.yml  # the consumer canary watchdog: asserts
+                                # the independent consumer is alive, green,
+                                # and reports its pin lag
 ```
+
+The fourth layer is verification from the outside:
+[WasewaseX/ci-canary](https://github.com/WasewaseX/ci-canary) is a real,
+independent consumer - a tiny dependency-free Python+Node project whose CI
+is the one-line `uses:` call from `examples/ci.yml`, pinned to an exact
+release tag for both the workflow ref and `template_ref`. It runs on its
+own schedule in its own repository, exactly like any stranger's project
+would. The `integration.yml` watchdog then asserts from the template side,
+daily, that the canary's latest run is green and at most 48 hours old, and
+reports how far the canary's pin lags the newest release. A red or stale
+canary fails the watchdog, so independent verification cannot silently rot.
 
 The path-filter suite exists because wrong path detection is the failure
 mode a CI template must never have: it pins the filter table extracted
@@ -514,8 +547,11 @@ run for a layout fails the suite before it can fail a consumer.
 When a check needs a config file and your repo does not have one, Master CI
 copies the default from this repo at run time: `.yamllint.yaml`,
 `.markdownlint-cli2.jsonc`, `.editorconfig`, `ruff.toml`, `deny.toml`,
-`.semgrepignore`. Commit any of these to your repo to override. A contract
-test guarantees every referenced default actually exists in this repo.
+`.semgrepignore`, and `.github/zizmor.yml` (a policy that keeps SHA pinning
+mandatory for actions and allows release-tag refs for the Master CI
+workflows themselves). Commit any of these to your repo to override. A
+contract test guarantees every referenced default actually exists in this
+repo.
 
 ## Cost
 

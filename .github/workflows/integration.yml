@@ -1,0 +1,109 @@
+# =============================================================================
+# Consumer Canary watchdog - independent verification, checked automatically
+# =============================================================================
+# WasewaseX/ci-canary is a real, independent consumer: a tiny dependency-free
+# Python+Node project whose CI is a single reusable-workflow call into
+# WasewaseX/master-ci, pinned to an exact release tag for both the workflow
+# ref and template_ref. The canary's own schedule runs it daily at 05:20 UTC;
+# this watchdog then asserts, from the template side, that the canary is
+# alive and green, and reports how far its pin lags the newest release.
+#
+# A red or stale canary fails here. Independent verification is only worth
+# having when its absence is loud - a canary that silently stops running
+# would otherwise look exactly like one that keeps proving the template
+# works for strangers.
+# =============================================================================
+
+name: Consumer Canary
+
+on:
+  schedule:
+    - cron: '55 5 * * *' # daily 05:55 UTC, right after the canary's own slot
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read # read the canary's run conclusions
+
+concurrency:
+  group: consumer-canary
+  cancel-in-progress: false
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Assert the canary is alive and green
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CANARY_REPO: WasewaseX/ci-canary
+        run: |
+          set -euo pipefail
+          total=$(gh api \
+            "repos/${CANARY_REPO}/actions/workflows/ci.yml/runs?branch=main&per_page=10" \
+            --jq .total_count)
+          if [ "$total" = "0" ]; then
+            echo "::warning::no canary run found yet - give the canary's schedule or first dispatch a day to land"
+            echo "canary_status=none" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          eval "$(gh api \
+            "repos/${CANARY_REPO}/actions/workflows/ci.yml/runs?branch=main&per_page=10" \
+            --jq '[.workflow_runs[] | select(.status == "completed")][0] | "run_id=\(.id) run_conclusion=\(.conclusion) run_created=\(.created_at) run_url=\(.html_url)"')"
+          echo "canary_status=$run_conclusion" >> "$GITHUB_ENV"
+          echo "canary_url=$run_url" >> "$GITHUB_ENV"
+          if [ "$run_conclusion" != "success" ]; then
+            echo "::error::canary run ${run_id} concluded '${run_conclusion}' - a foreign consumer of master-ci is not green: ${run_url}"
+            exit 1
+          fi
+          age_hours=$(( ( $(date -u +%s) - $(date -u -d "$run_created" +%s) ) / 3600 ))
+          if [ "$age_hours" -gt 48 ]; then
+            echo "::error::the latest canary run is ${age_hours}h old (created ${run_created}) - its schedule or the consumer is dead"
+            exit 1
+          fi
+          echo "canary_age_hours=$age_hours" >> "$GITHUB_ENV"
+
+      - name: Report pin lag
+        if: env.canary_status == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CANARY_REPO: WasewaseX/ci-canary
+        run: |
+          set -euo pipefail
+          pinned=$(curl -fsSL \
+            "https://raw.githubusercontent.com/${CANARY_REPO}/main/.github/workflows/ci.yml" \
+            | grep -o 'master-ci\.yml@[^[:space:]]*' | head -1 | cut -d@ -f2)
+          newest=$(gh api "repos/${GITHUB_REPOSITORY}/tags?per_page=100" --jq '.[0].name')
+          echo "canary_pin=$pinned" >> "$GITHUB_ENV"
+          echo "newest_tag=$newest" >> "$GITHUB_ENV"
+          if [ "$pinned" != "$newest" ]; then
+            echo "::notice::the canary pins ${pinned} while ${newest} is released - bump the canary when the new baseline is proven"
+          fi
+
+      - name: Summarize
+        if: always()
+        run: |
+          {
+            echo "## Consumer canary"
+            echo ""
+            case "${canary_status:-unknown}" in
+              success)
+                echo "Status: green - the independent consumer ran and passed" \
+                  "${canary_age_hours:-?}h ago."
+                echo ""
+                echo "| what | value |"
+                echo "| --- | --- |"
+                echo "| canary | WasewaseX/ci-canary |"
+                echo "| latest run | ${canary_url:-n/a} |"
+                echo "| pinned baseline | ${canary_pin:-n/a} |"
+                echo "| newest release | ${newest_tag:-n/a} |"
+                ;;
+              none)
+                echo "Status: no canary run exists yet (grace period)."
+                ;;
+              *)
+                echo "Status: ${canary_status:-unknown} - see the run log."
+                ;;
+            esac
+          } >> "$GITHUB_STEP_SUMMARY"

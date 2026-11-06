@@ -353,6 +353,39 @@ def test_mutable_template_ref_warns_loudly():
     )
 
 
+def test_meta_verifies_helper_presence_before_fallback():
+    """GITHUB_WORKFLOW_REF points at the caller, so a foreign consumer's
+    auto-detected template_repo is their own project. Meta must probe for
+    the helper module and fall back loudly (or die with instructions)
+    instead of letting every job fail on a cryptic clone of the caller."""
+    text = (WF_DIR / "master-ci.yml").read_text(encoding="utf-8")
+    meta = text.split("meta:")[1].split("\n  changes:")[0]
+    assert "raw.githubusercontent.com" in meta, "meta must probe the helper file"
+    assert "scripts/ai_slop_detector.py" in meta, "probe must target a helper module"
+    assert "::warning::template_repo auto-detected" in meta, (
+        "the foreign-caller fallback must announce itself"
+    )
+    assert "::error::no master-ci helpers found" in meta, (
+        "an unresolvable setup must fail meta with instructions, not a red fetch"
+    )
+
+
+def test_scorecard_publish_false_skips_the_job():
+    """scorecard_publish: false must skip the scorecard job entirely so
+    callers can drop id-token: write, as the README promises. Without the
+    gate the job still runs on pushes and startup-fails every caller that
+    took the documented path."""
+    data = load(WF_DIR / "master-ci.yml")
+    condition = str(data["jobs"]["scorecard"].get("if", ""))
+    assert "inputs.scorecard_publish" in condition, (
+        "scorecard job must be gated on inputs.scorecard_publish"
+    )
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "scorecard_publish: false" in readme and "id-token" in readme, (
+        "README must keep documenting the id-token opt-out"
+    )
+
+
 def test_check_jobs_can_be_selected_individually():
     """Every check job carries a select clause so callers can run subsets."""
     data = load(WF_DIR / "master-ci.yml")

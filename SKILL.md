@@ -91,6 +91,12 @@ write-lock refusal); exit 0 means the install works. The same wire
 protocol is covered by the repo's pytest suite under
 tests/test_mcp_server.py.
 
+Verification does not stop at this repo's own tests: the
+[ci-canary](https://github.com/WasewaseX/ci-canary) repository is an
+independent consumer that calls the reusable workflow from a foreign
+project on a schedule, and master-ci's watchdog workflow asserts that
+canary stays green daily.
+
 ## Safety
 
 `apply_fixes` is the only mutating tool and only touches the working tree
