@@ -114,10 +114,13 @@ on:
         type: string
         default: ''
       template_ref:
-        description: Ref of the master-ci repo to fetch helpers from
+        description: >-
+          Ref of the master-ci repo to fetch helpers from. Empty resolves to
+          the exact commit of this workflow file, so helpers always match the
+          workflow version. Explicit main/master print a mutable-ref warning.
         required: false
         type: string
-        default: main
+        default: ''
       concurrency_key:
         description: Extra key for the concurrency group (set when calling this workflow several times from one workflow)
         required: false
@@ -145,6 +148,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       template_repo: ${{ steps.repo.outputs.template_repo }}
+      template_ref: ${{ steps.repo.outputs.template_ref }}
       semgrep_packs: ${{ steps.profile.outputs.semgrep_packs }}
       enforce_osv: ${{ steps.profile.outputs.enforce_osv }}
       enforce_trivy: ${{ steps.profile.outputs.enforce_trivy }}
@@ -178,8 +182,8 @@ jobs:
             esac
           done
           case "$TEMPLATE_REF" in
-            ''|main|master)
-              echo "::warning::template_ref='$TEMPLATE_REF' fetches helpers from a mutable branch - pin it to a release tag (template_ref: v1.4.0) for reproducible CI" ;;
+            main|master)
+              echo "::warning::template_ref='$TEMPLATE_REF' fetches helpers from a mutable branch - pin it to a release tag (template_ref: v1.8.4) or leave it empty to inherit this workflow's exact commit" ;;
           esac
           case "$PROFILE" in
             quick|standard|strict|custom) ;;
@@ -204,11 +208,12 @@ jobs:
               done ;;
           esac
           echo "caller inputs validated (profile=$PROFILE)"
-      - name: Resolve helper repo
+      - name: Resolve helper repo and ref
         id: repo
         env:
           TEMPLATE_REPO_INPUT: ${{ inputs.template_repo }}
-          TEMPLATE_REF: ${{ inputs.template_ref }}
+          TEMPLATE_REF_INPUT: ${{ inputs.template_ref }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: |
           # GITHUB_WORKFLOW_REF lives in the CALLER's repository, so the
           # auto-detection below is only correct when the caller IS the
@@ -221,6 +226,25 @@ jobs:
           # with instructions instead of a red fetch nobody can decode.
           fallback='WasewaseX/master-ci'
           helper='scripts/ai_slop_detector.py'
+          # Helper ref resolution, in order:
+          #   1. an explicit template_ref input wins (validated above)
+          #   2. empty inherits the exact commit SHA of this workflow file -
+          #      helpers then match the workflow version bit for bit, so a
+          #      consumer pinned to master-ci.yml@v1.8.5 fetches v1.8.5's
+          #      scripts no matter what lands on main afterwards
+          #   3. if the SHA is unavailable, fall back to main LOUDLY: the
+          #      mutable-branch warning is the price of the fallback
+          if [ -n "$TEMPLATE_REF_INPUT" ]; then
+            template_ref="$TEMPLATE_REF_INPUT"
+          elif [ -n "$WORKFLOW_SHA" ]; then
+            template_ref="$WORKFLOW_SHA"
+            echo "::notice::template_ref empty - helpers pinned to this workflow's own commit ${WORKFLOW_SHA}"
+          else
+            template_ref='main'
+            echo "::warning::workflow SHA unavailable - falling back to mutable template_ref=main; pin template_ref to a release tag for reproducible CI"
+          fi
+          TEMPLATE_REF="$template_ref"
+          echo "template_ref=$template_ref" >> "$GITHUB_OUTPUT"
           has_helpers() {
             curl -fsIL "https://raw.githubusercontent.com/$1/${TEMPLATE_REF}/$helper" > /dev/null 2>&1
           }
@@ -437,7 +461,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ needs.meta.outputs.template_repo }}
-          ref: ${{ inputs.template_ref }}
+          ref: ${{ needs.meta.outputs.template_ref }}
           path: _ci
           fetch-depth: 1
           persist-credentials: false
@@ -550,7 +574,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ needs.meta.outputs.template_repo }}
-          ref: ${{ inputs.template_ref }}
+          ref: ${{ needs.meta.outputs.template_ref }}
           path: _ci
           fetch-depth: 1
           persist-credentials: false
@@ -592,7 +616,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ needs.meta.outputs.template_repo }}
-          ref: ${{ inputs.template_ref }}
+          ref: ${{ needs.meta.outputs.template_ref }}
           path: _ci
           fetch-depth: 1
           persist-credentials: false
@@ -660,7 +684,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ needs.meta.outputs.template_repo }}
-          ref: ${{ inputs.template_ref }}
+          ref: ${{ needs.meta.outputs.template_ref }}
           path: _ci
           fetch-depth: 1
           persist-credentials: false
@@ -790,7 +814,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ needs.meta.outputs.template_repo }}
-          ref: ${{ inputs.template_ref }}
+          ref: ${{ needs.meta.outputs.template_ref }}
           path: _ci
           fetch-depth: 1
           persist-credentials: false
@@ -876,7 +900,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ needs.meta.outputs.template_repo }}
-          ref: ${{ inputs.template_ref }}
+          ref: ${{ needs.meta.outputs.template_ref }}
           path: _ci
           fetch-depth: 1
           persist-credentials: false
@@ -1002,7 +1026,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ needs.meta.outputs.template_repo }}
-          ref: ${{ inputs.template_ref }}
+          ref: ${{ needs.meta.outputs.template_ref }}
           path: _ci
           fetch-depth: 1
           persist-credentials: false

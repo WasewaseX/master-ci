@@ -66,14 +66,20 @@ which is correct when you call it from the same repo or a fork, and wrong
 for a foreign project. Since v1.7.0 meta probes for the helper module:
 a foreign caller automatically falls back to `WasewaseX/master-ci` with a
 warning, and an unresolvable setup fails `meta` with clear instructions.
-To make the choice explicit and reproducible (recommended, and what the
-[ci-canary](https://github.com/WasewaseX/ci-canary) consumer does), pin
-both:
+
+Since v1.8.5 the helper ref is reproducible by default: an empty
+`template_ref` resolves to the exact commit of the `master-ci.yml` you
+called, so helpers bit-match the workflow version - updating Master CI
+means bumping the workflow ref, and the helpers follow automatically.
+Pinning an explicit `template_ref` still works (that is what makes the
+choice explicit and reproducible across workflow-ref bumps, and what the
+[ci-canary](https://github.com/WasewaseX/ci-canary) consumer does); the
+mutable branches print a warning:
 
 ```yaml
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v1.8.4
+      template_ref: v1.8.5
 ```
 
 ### Required check
@@ -337,7 +343,7 @@ how to disable, added time) live in [docs/checks.md](docs/checks.md).
 | `duplication_threshold_pct` | `5` | jscpd failure threshold |
 | `scorecard_publish` | `true` | Publish Scorecard results (needs `id-token: write`) |
 | `template_repo` | auto | Helper repo override for forks (validated: `owner/repo`) |
-| `template_ref` | `main` | Helper ref. Pin to a release tag (e.g. `v1.8.4`) - mutable branches print a warning |
+| `template_ref` | workflow's own commit | Helper ref. Empty = the exact commit of the called `master-ci.yml` (helpers follow the workflow version); an explicit tag pins across bumps, mutable branches print a warning |
 | `concurrency_key` | `''` | Distinguishes concurrent calls when one workflow calls master-ci several times |
 
 ## Permissions: least privilege, explained
@@ -447,7 +453,7 @@ carries a `SKILL.md`, so assistants with a skills directory can load it
 with one command:
 
 ```bash
-git clone --depth 1 --branch v1.8.4 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+git clone --depth 1 --branch v1.8.5 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
 ```
 
 MCP clients configure the same install like this:
@@ -572,7 +578,7 @@ python3 scripts/benchmark.py --save baseline.json   # record this machine
 python3 scripts/benchmark.py --check baseline.json  # fail on >3x regression
 ```
 
-Reference numbers (`ubuntu-latest`, v1.8.4): detector ~1.2k files/s
+Reference numbers (`ubuntu-latest`, v1.8.5): detector ~1.2k files/s
 (~1.0 MB/s), fix-engine plan ~90 ms, generic whitespace scan ~30 ms for
 360 files, path filters ~60k paths/s, MCP server startup ~175 ms,
 stdio roundtrip ~55 ms (the roundtrip re-parses the live filter table
