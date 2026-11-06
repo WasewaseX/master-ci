@@ -5,9 +5,12 @@
 # publishes the numbers three ways:
 #   1. the step summary (human readable, every run)
 #   2. a downloadable artifact (90-day retention)
-#   3. benchmarks/history.jsonl, committed back to main - one JSON line per
-#      run, so the hosted history survives artifact expiry and is diffable
-#      with plain git
+#   3. benchmarks/history.jsonl on the dedicated `benchmarks` branch - one
+#      JSON line per run. The branch is unprotected ON PURPOSE: main
+#      requires the ci-success check, which a GITHUB_TOKEN push cannot
+#      satisfy, and the project rule "automation never pushes main" stands.
+#      The hosted history survives artifact expiry and is diffable with
+#      plain git: git log -p benchmarks/history.jsonl
 # Report-only by design: shared runners are too noisy to fail a build on
 # timings, but a week-over-week jump (e.g. detector slowing down) shows up
 # immediately in the history diff. Locally, use --save/--check for strict
@@ -24,7 +27,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write # append benchmarks/history.jsonl back to main
+  contents: write # append benchmarks/history.jsonl to the benchmarks branch
 
 concurrency:
   group: benchmark-history
@@ -53,7 +56,7 @@ jobs:
             echo ""
             cat bench.md
             echo ""
-            echo "Report-only: compare week over week in benchmarks/history.jsonl."
+            echo "Report-only: compare week over week on the benchmarks branch."
             echo "Strict gating is available locally via --save / --check (see the workflow header)."
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload benchmark results
@@ -62,15 +65,28 @@ jobs:
           name: benchmark-results
           path: bench.json
           retention-days: 90
-      - name: Commit history line
+      - name: Commit history line to the benchmarks branch
         run: |
           git config user.name "master-ci-bench"
           git config user.email "actions@users.noreply.github.com"
+          cp benchmarks/history.jsonl /tmp/this-run.jsonl
+          # main is protected (required ci-success check) - history goes to
+          # the dedicated benchmarks branch instead
+          if git ls-remote --exit-code --heads origin benchmarks >/dev/null 2>&1; then
+            git fetch origin benchmarks
+            git checkout -B benchmarks FETCH_HEAD
+            cat /tmp/this-run.jsonl >> benchmarks/history.jsonl
+          else
+            git checkout -B benchmarks
+            git rm -rq --cached .
+            mkdir -p benchmarks
+            cp /tmp/this-run.jsonl benchmarks/history.jsonl
+          fi
+          sort -u -o benchmarks/history.jsonl benchmarks/history.jsonl
           git add benchmarks/history.jsonl
           if git diff --cached --quiet; then
             echo "no new history line to commit"
             exit 0
           fi
           git commit -m "benchmark: hosted run $(date -u '+%Y-%m-%d %H:%M UTC')"
-          git pull --rebase origin main
-          git push origin HEAD:main
+          git push origin benchmarks
