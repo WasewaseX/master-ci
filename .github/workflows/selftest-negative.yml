@@ -95,35 +95,61 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_ID: ${{ steps.wait.outputs.run_id }}
         run: |
-          # --paginate: a full child run has 100+ jobs (six reusable calls x
-          # their inner jobs); caller jobs may land on any page. Caller jobs
-          # are the only ones whose name has no " / " separator.
+          # --paginate: a full child run has 100+ jobs. Reusable-workflow
+          # CALL jobs never appear as caller-level entries in the jobs API -
+          # only their inner jobs, named "caller / inner". So the caller
+          # outcome is derived from its inner jobs (a called run fails when
+          # any of its jobs fail), while regular jobs (verify) come through
+          # directly.
           gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/jobs?per_page=100" \
-            --jq '.jobs[] | select((.name | contains(" / ")) | not) | "\(.name)=\(.conclusion)"' > jobs.txt
-          cat jobs.txt
+            --jq '.jobs[] | "\(.name)=\(.conclusion)"' > jobs.txt
+          wc -l jobs.txt
           python3 - <<'EOF'
           import sys
 
-          jobs = {}
+          caller_jobs: dict[str, list[str]] = {}
+          plain: dict[str, str] = {}
           for line in open("jobs.txt"):
               line = line.strip()
               if line and "=" in line:
                   name, _, conclusion = line.partition("=")
-                  jobs[name] = conclusion
-          expected = {
-              "happy-path": "success",
-              "select-subset": "success",
-              "verify": "success",
-              "enforced-failure": "failure",
-              "input-validation": "failure",
-              "input-validation-stack-toggle": "failure",
-              "input-validation-select": "failure",
-          }
+                  if " / " in name:
+                      caller, inner = name.split(" / ", 1)
+                      caller_jobs.setdefault(caller, []).append(conclusion)
+                  else:
+                      plain[name] = conclusion
+
+          expected_failure = [
+              "enforced-failure",
+              "input-validation",
+              "input-validation-stack-toggle",
+              "input-validation-select",
+          ]
+          expected_success = ["happy-path", "select-subset"]
+
           problems = []
-          for name, want in expected.items():
-              got = jobs.get(name)
-              if got != want:
-                  problems.append(f"{name}: expected {want}, got {got}")
+          for name in expected_failure:
+              inner = caller_jobs.get(name)
+              if not inner:
+                  problems.append(f"{name}: never ran (no inner jobs found)")
+              elif "failure" not in inner:
+                  problems.append(
+                      f"{name}: expected failure, inner conclusions = {sorted(set(inner))}"
+                  )
+          for name in expected_success:
+              inner = caller_jobs.get(name)
+              if not inner:
+                  problems.append(f"{name}: never ran (no inner jobs found)")
+              elif {"failure", "cancelled", "timed_out", "startup_failure"} & set(inner):
+                  problems.append(
+                      f"{name}: expected success, inner conclusions = {sorted(set(inner))}"
+                  )
+              elif "success" not in inner:
+                  problems.append(
+                      f"{name}: no successful inner job, inner = {sorted(set(inner))}"
+                  )
+          if plain.get("verify") != "success":
+              problems.append(f"verify: expected success, got {plain.get('verify')}")
           if problems:
               print("expected-failure harness FAILED:")
               for p in problems:

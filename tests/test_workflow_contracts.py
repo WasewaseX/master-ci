@@ -601,20 +601,20 @@ def test_expected_failure_harness_runs_the_negative_paths_routinely():
     job = data["jobs"]["negative-harness"]
     script = " ".join(str(s.get("run", "")) for s in job["steps"])
     assert "failure_paths=true" in script, "harness must dispatch the negative selftest"
-    for job_name, want in (
-        ("happy-path", "success"),
-        ("select-subset", "success"),
-        ("verify", "success"),
-        ("enforced-failure", "failure"),
-        ("input-validation", "failure"),
-        ("input-validation-stack-toggle", "failure"),
-        ("input-validation-select", "failure"),
+    for job_name in (
+        "enforced-failure",
+        "input-validation",
+        "input-validation-stack-toggle",
+        "input-validation-select",
     ):
-        assert f'"{job_name}": "{want}"' in script, (
-            f"harness must assert {job_name} concludes {want}"
-        )
+        assert f'"{job_name}"' in script, f"harness must assert {job_name} failed"
+    for job_name in ("happy-path", "select-subset", "verify"):
+        assert f'"{job_name}"' in script, f"harness must assert {job_name} succeeded"
     assert "conclusion" in script and '"failure"' in script, (
         "harness must treat a red child run as the expected outcome"
+    )
+    assert "--paginate" in script, (
+        "the child run has 100+ jobs - the jobs endpoint must be paginated"
     )
 
 
