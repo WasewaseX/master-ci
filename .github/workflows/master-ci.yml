@@ -237,7 +237,11 @@ jobs:
           if has_helpers "$parsed"; then
             echo "template_repo=$parsed" >> "$GITHUB_OUTPUT"
           elif has_helpers "$fallback"; then
-            echo "::warning::template_repo auto-detected as ${parsed}, but it holds no master-ci helpers at template_ref=${TEMPLATE_REF}; fetching helpers from ${fallback} instead. Set template_repo (and pin template_ref) explicitly in your with: block to make this a decision instead of a warning."
+            # several short annotations instead of one >200-char line
+            echo "::warning::template_repo auto-detected as ${parsed}, but it holds no"
+            echo "::warning::master-ci helpers at template_ref=${TEMPLATE_REF}; fetching helpers"
+            echo "::warning::from ${fallback} instead. Set template_repo (and pin template_ref)"
+            echo "::warning::explicitly in your with: block to make this a decision."
             echo "template_repo=$fallback" >> "$GITHUB_OUTPUT"
           else
             echo "::error::no master-ci helpers found at ${parsed}@${TEMPLATE_REF} or ${fallback}@${TEMPLATE_REF}. Set template_repo and template_ref explicitly in your with: block."
