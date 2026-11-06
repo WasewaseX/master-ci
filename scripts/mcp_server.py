@@ -27,9 +27,19 @@ Tools are thin wrappers over the real engines (ai_slop_detector.py,
 fix_engine.py, path_filters.py), so an MCP scan reports exactly what CI
 would report and an MCP fix applies exactly what the autofix loop would
 apply. `apply_fixes` is the only mutating tool; everything else is
-read-only. If the MASTER_CI_MCP_ROOT environment variable is set, every
-path argument must resolve inside that directory - a simple lock for
-users who want the server pinned to one repository.
+read-only. Mutating tools REQUIRE the MASTER_CI_MCP_ROOT environment
+variable: without it apply_fixes refuses to run, and with it every path
+argument must resolve inside that directory. The lock is enforced, not
+recommended - the server can never be tricked into editing files outside
+the one repository it was configured for.
+
+Protocol support spans the full MCP timeline: the legacy handshake era
+(2024-11-05 through 2025-11-25, where clients call `initialize` first)
+and the modern stateless era (2026-07-28, where every request carries
+`_meta["io.modelcontextprotocol/protocolVersion"]` and `server/discover`
+replaces the handshake). Unknown per-request versions are rejected with
+the standard -32022 UnsupportedProtocolVersionError, which lists the
+versions this server does support.
 """
 
 from __future__ import annotations
@@ -48,12 +58,21 @@ from typing import Any, Callable
 
 SCRIPTS = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPTS.parent
-SERVER_VERSION = "1.5.0"
+SERVER_VERSION = "1.6.0"
 DEFAULT_REPO_SLUG = "WasewaseX/master-ci"
 DEFAULT_GH_API = "https://api.github.com"
 UPDATE_TIMEOUT_SECONDS = 10.0
-PROTOCOL_VERSIONS = ("2024-11-05", "2025-03-26", "2025-06-18")
+PROTOCOL_VERSIONS = (
+    "2024-11-05",
+    "2025-03-26",
+    "2025-06-18",
+    "2025-11-25",
+    "2026-07-28",
+)
+MODERN_PROTOCOL_VERSION = "2026-07-28"
 DEFAULT_PROTOCOL_VERSION = "2024-11-05"
+UNSUPPORTED_PROTOCOL_VERSION_ERROR = -32022
+META_PROTOCOL_KEY = "io.modelcontextprotocol/protocolVersion"
 MAX_FINDINGS_IN_RESPONSE = 200
 SNAPSHOT_MAX_CHANGED = 50
 SNAPSHOT_SKIP_DIRS = frozenset(
@@ -94,7 +113,7 @@ path_filters = _load("path_filters")
 
 
 def _resolve(path: str) -> Path:
-    """Resolve a tool path argument and enforce the optional root lock."""
+    """Resolve a tool path argument and enforce the root lock when configured."""
     root_lock = os.environ.get("MASTER_CI_MCP_ROOT")
     resolved = Path(path).expanduser().resolve()
     if root_lock:
@@ -104,6 +123,25 @@ def _resolve(path: str) -> Path:
     if not resolved.exists():
         raise ValueError(f"path does not exist: {resolved}")
     return resolved
+
+
+def _require_write_root() -> Path:
+    """Mandatory root lock for mutating tools - reads stay flexible, writes don't.
+
+    Without this gate a misconfigured client could point apply_fixes at any
+    directory the server process can reach. Enforced, not recommended: the
+    tool simply refuses to mutate anything until the operator declares the
+    one repository this server is allowed to touch.
+    """
+    root_lock = os.environ.get("MASTER_CI_MCP_ROOT")
+    if not root_lock or not root_lock.strip():
+        raise ValueError(
+            "apply_fixes refused: MASTER_CI_MCP_ROOT is not set. Mutating tools "
+            "require an explicit repository root - add it to the env block of "
+            'your mcpServers config ("env": {"MASTER_CI_MCP_ROOT": "/abs/path"}) '
+            "and reconnect."
+        )
+    return Path(root_lock).expanduser().resolve()
 
 
 # ---------------------------------------------------------------------------
@@ -167,7 +205,14 @@ def tool_scan_slop(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _changed_files(root: Path, base: str, include_uncommitted: bool) -> list[str]:
-    """Changed paths for scan_diff: git diff against base, optionally vs HEAD."""
+    """Changed paths for scan_diff: git diff against base, optionally vs HEAD.
+
+    Untracked files are discovered with `git ls-files --others` - plain
+    `git diff` never reports them, and a brand new source file is exactly
+    the change an AI assistant most needs the pre-flight scan to see.
+    Ignored files stay invisible (respecting .gitignore), matching what a
+    commit would actually contain.
+    """
     paths: list[str] = []
     if base:
         out = subprocess.run(
@@ -188,7 +233,31 @@ def _changed_files(root: Path, base: str, include_uncommitted: bool) -> list[str
         )
         if out.returncode == 0:
             paths.extend(line for line in out.stdout.splitlines() if line)
+    untracked = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "--others", "--exclude-standard"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if untracked.returncode == 0:
+        paths.extend(line for line in untracked.stdout.splitlines() if line)
     return sorted(set(paths))
+
+
+def _finding_rel_path(finding_path: str, root: Path) -> str | None:
+    """Normalize a detector finding path to a repo-relative posix path.
+
+    The detector reports absolute paths for directory scans; some rule
+    helpers already emit repo-relative ones. scan_diff intersects findings
+    with the git change set, so both shapes must land in the same space.
+    """
+    candidate = Path(finding_path)
+    if not candidate.is_absolute():
+        return candidate.as_posix()
+    try:
+        return candidate.resolve().relative_to(root).as_posix()
+    except ValueError:
+        return None
 
 
 def tool_scan_diff(args: dict[str, Any]) -> dict[str, Any]:
@@ -202,10 +271,14 @@ def tool_scan_diff(args: dict[str, Any]) -> dict[str, Any]:
     phrases = detector.load_phrases()
     findings = detector.scan(root, phrases)
     changed_set = set(changed)
-    hits = [f for f in findings if f.path in changed_set]
+    hits = []
+    for f in findings:
+        rel = _finding_rel_path(f.path, root)
+        if rel is not None and rel in changed_set:
+            hits.append((rel, f))
     filters, source = path_filters.filters_for_repo(root)
     fired = path_filters.stacks_for_paths(changed, filters)
-    blocking = detector.blocking_score(hits)
+    blocking = detector.blocking_score([f for _, f in hits])
     label = base or "HEAD (uncommitted)"
     return {
         "path": str(root),
@@ -217,7 +290,7 @@ def tool_scan_diff(args: dict[str, Any]) -> dict[str, Any]:
         "blocking_score": blocking,
         "findings": [
             {
-                "path": f.path,
+                "path": rel,
                 "line": f.line,
                 "check": f.check,
                 "message": f.message,
@@ -225,7 +298,7 @@ def tool_scan_diff(args: dict[str, Any]) -> dict[str, Any]:
                 "advisory": f.advisory,
                 "remedy": f.remedy,
             }
-            for f in hits[:MAX_FINDINGS_IN_RESPONSE]
+            for rel, f in hits[:MAX_FINDINGS_IN_RESPONSE]
         ],
         "prompt": (
             f"Change set on {root} vs {label}: {len(changed)} files, CI stacks "
@@ -291,7 +364,10 @@ def _snapshot(root: Path) -> dict[str, str]:
 
 def tool_apply_fixes(args: dict[str, Any]) -> dict[str, Any]:
     """Run the fix policy for real (MUTATES files under path)."""
+    write_root = _require_write_root()  # mandatory: no lock, no mutation
     root = _resolve(str(args.get("path", ".")))
+    if root != write_root and write_root not in root.parents:
+        raise ValueError(f"path {root} is outside MASTER_CI_MCP_ROOT ({write_root})")
     tiers = _tier_list(args)
     semgrep_config = str(args.get("semgrep_config", ""))
     plan = fix_engine.build_plan(root, set(tiers), semgrep_config)
@@ -442,6 +518,9 @@ def tool_diagnose(_args: dict[str, Any]) -> dict[str, Any]:
     lock = os.environ.get("MASTER_CI_MCP_ROOT")
     self_test = f"python3 {SCRIPTS / 'mcp_ping.py'}"
     missing_text = f"{len(missing)} ({', '.join(missing)})" if missing else "none"
+    lock_state = (
+        str(lock) if lock else "(unset: apply_fixes is refused until MASTER_CI_MCP_ROOT is set)"
+    )
     return {
         "server": {
             "name": "master-ci",
@@ -453,7 +532,7 @@ def tool_diagnose(_args: dict[str, Any]) -> dict[str, Any]:
         "server_root": str(SCRIPTS),
         "repo_root": str(REPO_ROOT),
         "cwd": str(Path.cwd()),
-        "path_lock": lock or "(unset: tool paths may target anything)",
+        "path_lock": lock_state,
         "engines_loaded": ["ai_slop_detector", "fix_engine", "path_filters"],
         "external_tools": available,
         "missing_tools": missing,
@@ -462,7 +541,8 @@ def tool_diagnose(_args: dict[str, Any]) -> dict[str, Any]:
             f"Install verified: master-ci v{SERVER_VERSION} on Python "
             f"{sys.version.split()[0]}, missing formatters: {missing_text}. Missing "
             "tools only narrow apply_fixes; the scan tools are stdlib and always work. "
-            f"For a full wire-level self test run: {self_test}."
+            f"For a full wire-level self test run: {self_test}. apply_fixes requires "
+            "MASTER_CI_MCP_ROOT to be set."
         ),
     }
 
@@ -899,8 +979,11 @@ def _result(req_id: Any, payload: dict[str, Any]) -> None:
     _write({"jsonrpc": "2.0", "id": req_id, "result": payload})
 
 
-def _error(req_id: Any, code: int, message: str) -> None:
-    _write({"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": message}})
+def _error(req_id: Any, code: int, message: str, data: Any = None) -> None:
+    err: dict[str, Any] = {"code": code, "message": message}
+    if data is not None:
+        err["data"] = data
+    _write({"jsonrpc": "2.0", "id": req_id, "error": err})
 
 
 def _tool_result(req_id: Any, payload: dict[str, Any]) -> None:
@@ -910,6 +993,33 @@ def _tool_result(req_id: Any, payload: dict[str, Any]) -> None:
 
 def _tool_error(req_id: Any, message: str) -> None:
     _result(req_id, {"content": [{"type": "text", "text": message}], "isError": True})
+
+
+def _respond_discover(req_id: Any, params: dict[str, Any]) -> None:
+    """server/discover - the stateless capability query of the 2026-07-28 era."""
+    meta = params.get("_meta") if isinstance(params, dict) else None
+    client_info = meta.get("io.modelcontextprotocol/clientInfo") if isinstance(meta, dict) else None
+    _result(
+        req_id,
+        {
+            "resultType": "complete",
+            "supportedVersions": list(PROTOCOL_VERSIONS),
+            "capabilities": {"tools": {}, "prompts": {}},
+            "_meta": {
+                "io.modelcontextprotocol/serverInfo": {
+                    "name": "master-ci",
+                    "version": SERVER_VERSION,
+                }
+            },
+            "instructions": (
+                "Call tools/list to discover the engines. Every tool result embeds "
+                "a fix-ready prompt field with the next step. apply_fixes mutates "
+                "files and therefore requires MASTER_CI_MCP_ROOT; everything else "
+                "is read-only."
+            ),
+            "client_echo": client_info if isinstance(client_info, dict) else None,
+        },
+    )
 
 
 def _respond_initialize(req_id: Any, params: dict[str, Any]) -> None:
@@ -925,8 +1035,8 @@ def _respond_initialize(req_id: Any, params: dict[str, Any]) -> None:
                 "Call tools/list to discover the engines. Every tool result embeds "
                 "a fix-ready prompt field with the next step; prompts/list serves "
                 "ready made walkthroughs (fix-my-repo, explain-findings, "
-                "pre-flight). Set MASTER_CI_MCP_ROOT in the env block to pin this "
-                "server to one repository."
+                "pre-flight). apply_fixes requires MASTER_CI_MCP_ROOT in the env "
+                "block - it refuses to mutate anything without it."
             ),
         },
     )
@@ -976,7 +1086,17 @@ _PARAM_HANDLERS: dict[str, Callable[[Any, dict[str, Any]], None]] = {
     "initialize": _respond_initialize,
     "tools/call": _respond_tools_call,
     "prompts/get": _respond_prompts_get,
+    "server/discover": _respond_discover,
 }
+
+
+def _meta_protocol_version(params: dict[str, Any]) -> str | None:
+    """Per-request protocol version from _meta (the 2026-07-28 negotiation)."""
+    meta = params.get("_meta")
+    if not isinstance(meta, dict):
+        return None
+    version = meta.get(META_PROTOCOL_KEY)
+    return str(version) if version else None
 
 
 def handle_request(msg: dict[str, Any]) -> None:
@@ -985,6 +1105,18 @@ def handle_request(msg: dict[str, Any]) -> None:
     req_id = msg.get("id")
     params = msg.get("params") or {}
     if req_id is None:  # notification: never responded to
+        return
+    # 2026-07-28 era: every request carries its protocol version in _meta.
+    # Unknown versions get the spec'd rejection with the supported list;
+    # requests without _meta fall through to the legacy initialize flow.
+    requested_version = _meta_protocol_version(params)
+    if requested_version is not None and requested_version not in PROTOCOL_VERSIONS:
+        _error(
+            req_id,
+            UNSUPPORTED_PROTOCOL_VERSION_ERROR,
+            "Unsupported protocol version",
+            {"supported": list(PROTOCOL_VERSIONS), "requested": requested_version},
+        )
         return
     if method in _SIMPLE_RESPONSES:
         _result(req_id, _SIMPLE_RESPONSES[method]())

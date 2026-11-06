@@ -36,7 +36,7 @@ Optional environment variables:
 
 | Variable | Effect |
 |---|---|
-| `MASTER_CI_MCP_ROOT` | Lock every path argument to resolve inside this directory. Recommended when the server should only ever touch one repository. |
+| `MASTER_CI_MCP_ROOT` | Lock every path argument to resolve inside this directory. REQUIRED for `apply_fixes`: the mutating tool refuses to run until this is set, and with it set every path must stay inside. Read-only tools work without it. |
 
 To serve a different repository, point the client's `cwd` at it or pass
 `path` arguments per call. `filter_paths` reads the live filter table from
@@ -168,12 +168,25 @@ what Claude Desktop, Cursor or z.ai produce.
 
 ## Protocol notes
 
-The server supports `initialize` (protocol versions 2024-11-05, 2025-03-26
-and 2025-06-18; unknown versions fall back to 2024-11-05), `ping`,
-`tools/list`, `tools/call`, `prompts/list`, `prompts/get`, and answers
-`resources/list` with an empty list. Notifications are never answered.
-Malformed lines get a `-32700` error, unknown methods `-32601`, unknown
-tools or prompts `-32602`, and tool execution failures come back as
+The server speaks the full MCP timeline:
+
+- **Legacy handshake era** (2024-11-05, 2025-03-26, 2025-06-18 and
+  2025-11-25): clients call `initialize` first; the server echoes the
+  requested version if supported and falls back to 2024-11-05 otherwise.
+- **Modern stateless era** (2026-07-28): no handshake. Every request
+  carries its protocol version in `params._meta["io.modelcontextprotocol/
+  protocolVersion"]`, and `server/discover` replaces `initialize` as the
+  capability query - it returns `resultType: complete`, the full
+  `supportedVersions` list, the capabilities object and the serverInfo
+  meta block. A request with an unknown per-request version is rejected
+  with the standard `-32022 UnsupportedProtocolVersionError` whose `data`
+  lists the versions this server supports.
+
+Both eras can be mixed freely on one connection. Also supported: `ping`,
+`tools/list`, `tools/call`, `prompts/list`, `prompts/get`, and
+`resources/list` (empty). Notifications are never answered. Malformed
+lines get a `-32700` error, unknown methods `-32601`, unknown tools or
+prompts `-32602`, and tool execution failures come back as
 `isError: true` results - the server itself never crashes on a bad
 message.
 
@@ -181,10 +194,12 @@ message.
 
 The server has no secrets, never pushes anything, and its only network
 access is the `check_updates` tool. `apply_fixes` is the only mutating
-tool and it mutates only the working tree you point it at - set
-`MASTER_CI_MCP_ROOT` to pin it. The lint tier runs `semgrep --autofix`,
-which only applies fixes that ship with registry rules you explicitly
-pass in `semgrep_config`.
+tool and it is double-gated: it refuses to run at all unless
+`MASTER_CI_MCP_ROOT` is set (enforced, not recommended), and it rejects
+any path outside that root. Reads stay flexible; writes cannot happen
+without an explicitly declared repository. The lint tier runs
+`semgrep --autofix`, which only applies fixes that ship with registry
+rules you explicitly pass in `semgrep_config`.
 
 ## Supply chain
 

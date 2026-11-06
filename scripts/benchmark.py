@@ -17,11 +17,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import platform
 import random
 import statistics
 import sys
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -336,12 +338,37 @@ def load_json(path: Path) -> dict[str, float]:
     return {str(k): float(v) for k, v in data.items()}
 
 
+def append_history(path: Path, metrics: dict[str, float], scale: str, repeat: int) -> None:
+    """Append one JSON line to the hosted history file (benchmarks/history.jsonl).
+
+    One line per run keeps the file append-only and diffable: each record
+    carries the timestamp, the corpus scale, and the full metric dict, so a
+    week-over-week comparison is a plain `git log -p` or a jq one-liner.
+    """
+    record = {
+        "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "python": platform.python_version(),
+        "scale": scale,
+        "repeat": repeat,
+        "seed": SEED,
+        "metrics": metrics,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record, sort_keys=True) + "\n")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Master CI performance benchmark")
     parser.add_argument("--scale", choices=sorted(SCALES), default="full")
     parser.add_argument("--repeat", type=int, default=3, help="best-of-N timing runs")
     parser.add_argument("--json", type=Path, help="write results as JSON to this path")
     parser.add_argument("--save", type=Path, help="write a baseline file (same as --json)")
+    parser.add_argument(
+        "--append",
+        type=Path,
+        help="append one JSON line to this history file (benchmarks/history.jsonl)",
+    )
     parser.add_argument(
         "--check",
         type=Path,
@@ -365,6 +392,10 @@ def main(argv: list[str] | None = None) -> int:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(metrics, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         print(f"results written: {out}")
+
+    if args.append:
+        append_history(args.append, metrics, args.scale, args.repeat)
+        print(f"history appended: {args.append}")
 
     if args.check:
         baseline = load_json(args.check)

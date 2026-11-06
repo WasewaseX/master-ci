@@ -88,7 +88,8 @@ def test_plan_fixes_never_mutates(tmp_path: Path) -> None:
     assert (root / "dirty.txt").read_text() == before
 
 
-def test_apply_fixes_normalizes_and_reports(tmp_path: Path) -> None:
+def test_apply_fixes_normalizes_and_reports(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("MASTER_CI_MCP_ROOT", str(tmp_path))
     root = _make_repo(tmp_path, {"dirty.txt": "trailing   \n\n\n"})
     result = mcp.tool_apply_fixes({"path": str(root), "tiers": ["safe"]})
     assert result["changed_any"] is True
@@ -108,7 +109,8 @@ def test_snapshot_skips_git_and_vendored_dirs(tmp_path: Path) -> None:
     assert len(snapshot) == 1
 
 
-def test_apply_fixes_clean_repo_reports_no_action(tmp_path: Path) -> None:
+def test_apply_fixes_clean_repo_reports_no_action(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("MASTER_CI_MCP_ROOT", str(tmp_path))
     root = _make_repo(tmp_path, {"clean.txt": "already tidy\n"})
     result = mcp.tool_apply_fixes({"path": str(root), "tiers": ["safe"]})
     assert result["changed_any"] is False
@@ -140,7 +142,8 @@ def test_filter_paths_empty_files_is_error() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_every_tool_result_embeds_a_fix_ready_prompt(tmp_path: Path) -> None:
+def test_every_tool_result_embeds_a_fix_ready_prompt(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("MASTER_CI_MCP_ROOT", str(tmp_path))
     root = _make_repo(tmp_path, {"slop.py": "# TODO: implement this\n", "dirty.txt": "x   \n"})
     scan = mcp.tool_scan_slop({"path": str(root)})
     assert "apply_fixes" in scan["prompt"] and str(root) in scan["prompt"]
@@ -150,7 +153,7 @@ def test_every_tool_result_embeds_a_fix_ready_prompt(tmp_path: Path) -> None:
     assert "git diff" in applied["prompt"]
     catalog = mcp.tool_list_checks({})
     assert "scan_slop" in catalog["prompt"]
-    filtered = mcp.tool_filter_paths({"files": ["src/mod.py"], "path": str(ROOT)})
+    filtered = mcp.tool_filter_paths({"files": ["src/mod.py"], "path": str(root)})
     assert "scan_diff" in filtered["prompt"]
     report = mcp.tool_diagnose({})
     assert "mcp_ping" in report["prompt"]
@@ -259,6 +262,110 @@ def test_master_ci_mcp_root_lock(tmp_path: Path, monkeypatch) -> None:
     assert mcp.tool_scan_slop({"path": str(inside)})["score"] >= 0
 
 
+def test_apply_fixes_refused_without_root_lock(tmp_path: Path, monkeypatch) -> None:
+    """The write gate: no MASTER_CI_MCP_ROOT, no mutation - ever."""
+    monkeypatch.delenv("MASTER_CI_MCP_ROOT", raising=False)
+    root = _make_repo(tmp_path, {"dirty.txt": "trailing   \n\n"})
+    with pytest.raises(ValueError, match="MASTER_CI_MCP_ROOT"):
+        mcp.tool_apply_fixes({"path": str(root)})
+    # nothing was touched by the refused call
+    assert (root / "dirty.txt").read_text() == "trailing   \n\n"
+
+
+def test_apply_fixes_runs_inside_root_lock(tmp_path: Path, monkeypatch) -> None:
+    """With the lock set, the fix policy applies normally inside it."""
+    root = _make_repo(tmp_path, {"dirty.txt": "trailing   \n\n"})
+    monkeypatch.setenv("MASTER_CI_MCP_ROOT", str(tmp_path))
+    payload = mcp.tool_apply_fixes({"path": str(root), "tiers": ["safe"]})
+    assert payload["changed_any"] is True
+    assert (root / "dirty.txt").read_text() == "trailing\n"
+
+
+def test_apply_fixes_cannot_escape_root_lock(tmp_path: Path, monkeypatch) -> None:
+    """Lock set + path outside the lock must fail on both guard layers."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    inner = tmp_path / "locked"
+    inner.mkdir()
+    monkeypatch.setenv("MASTER_CI_MCP_ROOT", str(inner))
+    with pytest.raises(ValueError, match="MASTER_CI_MCP_ROOT"):
+        mcp.tool_apply_fixes({"path": str(outside)})
+    assert list(outside.iterdir()) == []
+
+
+# ---------------------------------------------------------------------------
+# scan_diff change discovery (tracked, staged, untracked, deleted, ignored)
+# ---------------------------------------------------------------------------
+
+
+def _git_repo_with_base(tmp_path: Path) -> Path:
+    """Repo with one committed file - the base all change types hang off."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    git = ["git", "-C", str(root)]
+    subprocess.run([*git, "init", "-q"], check=True)
+    subprocess.run([*git, "-C", str(root), "config", "user.email", "t@t"], check=True)
+    subprocess.run([*git, "-C", str(root), "config", "user.name", "t"], check=True)
+    (root / "base.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run([*git, "add", "-A"], cwd=root, check=True)
+    subprocess.run([*git, "commit", "-q", "-m", "init"], cwd=root, check=True)
+    return root
+
+
+def test_scan_diff_finds_every_change_kind(tmp_path: Path) -> None:
+    """New, staged, modified and deleted files are all part of the change set."""
+    root = _git_repo_with_base(tmp_path)
+    # modified (unstaged, tracked)
+    (root / "base.txt").write_text("changed\n", encoding="utf-8")
+    # staged (tracked, added to index)
+    (root / "staged.py").write_text("x = 1\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(root), "add", "staged.py"], check=True)
+    # untracked (plain `git diff` never reports this - the regression);
+    # content carries a real AI-slop finding so the scan must see it too
+    (root / "brand-new.py").write_text("# we delve deep here\n", encoding="utf-8")
+    # deleted (tracked, removed from the worktree); the path-limited commit
+    # leaves staged.py staged-but-uncommitted
+    (root / "doomed.txt").write_text("bye\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(root), "add", "doomed.txt"], check=True)
+    subprocess.run(
+        ["git", "-C", str(root), "commit", "-q", "-m", "add doomed", "--", "doomed.txt"],
+        check=True,
+    )
+    (root / "doomed.txt").unlink()
+
+    payload = mcp.tool_scan_diff({"path": str(root)})
+    changed = payload["changed_files"]
+    assert "brand-new.py" in changed, "untracked file missed by scan_diff"
+    assert "staged.py" in changed, "staged file missed by scan_diff"
+    assert "base.txt" in changed, "modified file missed by scan_diff"
+    assert "doomed.txt" in changed, "deleted file missed by scan_diff"
+    # findings must cover the untracked file too (it carries a real finding)
+    hit_paths = {f["path"] for f in payload["findings"]}
+    assert "brand-new.py" in hit_paths, "pre-flight scan overlooked the new file"
+
+
+def test_scan_diff_ignores_gitignored_files(tmp_path: Path) -> None:
+    """Untracked discovery respects .gitignore - noise stays out of the diff."""
+    root = _git_repo_with_base(tmp_path)
+    (root / ".gitignore").write_text("ignored.log\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(root), "add", ".gitignore"], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-q", "-m", "ignore"], check=True)
+    (root / "ignored.log").write_text("noise\n", encoding="utf-8")
+    (root / "real.py").write_text("y = 2\n", encoding="utf-8")
+
+    payload = mcp.tool_scan_diff({"path": str(root)})
+    assert "real.py" in payload["changed_files"]
+    assert "ignored.log" not in payload["changed_files"]
+
+
+def test_scan_diff_untracked_visible_against_base(tmp_path: Path) -> None:
+    """Untracked files belong to the change set even when diffing vs a base."""
+    root = _git_repo_with_base(tmp_path)
+    (root / "later.py").write_text("z = 3\n", encoding="utf-8")
+    payload = mcp.tool_scan_diff({"path": str(root), "base": "HEAD"})
+    assert "later.py" in payload["changed_files"]
+
+
 # ---------------------------------------------------------------------------
 # JSON-RPC plumbing (in process)
 # ---------------------------------------------------------------------------
@@ -298,6 +405,110 @@ def test_initialize_falls_back_on_unknown_protocol(monkeypatch) -> None:
         }
     )
     assert captured[0]["result"]["protocolVersion"] == mcp.DEFAULT_PROTOCOL_VERSION
+
+
+def test_initialize_accepts_2025_11_25_and_modern(monkeypatch) -> None:
+    """Both newer revisions negotiate over the legacy handshake for hybrid clients."""
+    captured: list = []
+    monkeypatch.setattr(mcp, "_write", lambda m: captured.append(m))
+    for idx, version in enumerate(("2025-11-25", mcp.MODERN_PROTOCOL_VERSION), start=20):
+        mcp.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": idx,
+                "method": "initialize",
+                "params": {"protocolVersion": version},
+            }
+        )
+        assert captured[idx - 20]["result"]["protocolVersion"] == version
+
+
+def test_server_discover_is_the_modern_handshake(monkeypatch) -> None:
+    """2026-07-28: server/discover returns identity, versions, capabilities."""
+    captured: list = []
+    monkeypatch.setattr(mcp, "_write", lambda m: captured.append(m))
+    mcp.handle_request(
+        {
+            "jsonrpc": "2.0",
+            "id": 30,
+            "method": "server/discover",
+            "params": {
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                    "io.modelcontextprotocol/clientInfo": {"name": "probe", "version": "0.1"},
+                }
+            },
+        }
+    )
+    result = captured[0]["result"]
+    assert result["resultType"] == "complete"
+    assert mcp.MODERN_PROTOCOL_VERSION in result["supportedVersions"]
+    assert "tools" in result["capabilities"]
+    info = result["_meta"]["io.modelcontextprotocol/serverInfo"]
+    assert info["name"] == "master-ci"
+    assert info["version"] == mcp.SERVER_VERSION
+    assert result["client_echo"] == {"name": "probe", "version": "0.1"}
+
+
+def test_meta_protocol_version_supported_passes_through(monkeypatch) -> None:
+    """Stateless calls carrying a known _meta version just work - no handshake."""
+    captured: list = []
+    monkeypatch.setattr(mcp, "_write", lambda m: captured.append(m))
+    mcp.handle_request(
+        {
+            "jsonrpc": "2.0",
+            "id": 31,
+            "method": "tools/call",
+            "params": {
+                "name": "diagnose",
+                "arguments": {},
+                "_meta": {"io.modelcontextprotocol/protocolVersion": mcp.MODERN_PROTOCOL_VERSION},
+            },
+        }
+    )
+    assert captured[0]["result"]["isError"] is False
+
+
+def test_meta_protocol_version_unknown_is_32022(monkeypatch) -> None:
+    """Unknown per-request version: -32022 with the supported list, per spec."""
+    captured: list = []
+    monkeypatch.setattr(mcp, "_write", lambda m: captured.append(m))
+    mcp.handle_request(
+        {
+            "jsonrpc": "2.0",
+            "id": 32,
+            "method": "tools/call",
+            "params": {
+                "name": "diagnose",
+                "arguments": {},
+                "_meta": {"io.modelcontextprotocol/protocolVersion": "1900-01-01"},
+            },
+        }
+    )
+    err = captured[0]["error"]
+    assert err["code"] == mcp.UNSUPPORTED_PROTOCOL_VERSION_ERROR == -32022
+    assert err["data"]["requested"] == "1900-01-01"
+    assert mcp.MODERN_PROTOCOL_VERSION in err["data"]["supported"]
+    assert mcp.DEFAULT_PROTOCOL_VERSION in err["data"]["supported"]
+
+
+def test_meta_without_protocol_key_is_ignored(monkeypatch) -> None:
+    """_meta objects that carry other data but no version key stay harmless."""
+    captured: list = []
+    monkeypatch.setattr(mcp, "_write", lambda m: captured.append(m))
+    mcp.handle_request(
+        {
+            "jsonrpc": "2.0",
+            "id": 33,
+            "method": "tools/call",
+            "params": {
+                "name": "diagnose",
+                "arguments": {},
+                "_meta": {"some/other-key": 1},
+            },
+        }
+    )
+    assert captured[0]["result"]["isError"] is False
 
 
 def test_unknown_method_is_32601(monkeypatch) -> None:
@@ -436,7 +647,7 @@ class StdioClient:
 
 def test_stdio_full_session(tmp_path: Path) -> None:
     root = _make_repo(tmp_path, {"dirty.txt": "trailing   \n\n", "README.md": "# hi\n"})
-    client = StdioClient()
+    client = StdioClient(env_root=str(root))  # apply_fixes needs the write lock
     try:
         init = client.request(
             {

@@ -5,13 +5,17 @@
 # with the quick profile and asserts the pipeline passes and reports
 # verdict=passed. Green by design.
 #
-# Failure-path mode (dispatch with failure_paths=true): additionally calls the
-# reusable workflow with a Semgrep pack that cannot exist, with an unsafe
-# template_ref, with an invalid stack toggle, and with an unknown select job.
-# Those four calls are EXPECTED to fail - the run turns red on purpose, and
-# `verify` asserts that every pipeline reports verdict=failed, proving the
-# aggregate gate fails when a check fails and that untrusted input is
-# rejected before any checkout.
+# Failure-path mode: the four intentionally failing calls below (unreachable
+# semgrep pack, traversal template_ref, typo'd stack toggle, unknown select
+# job) run whenever this workflow is dispatched with failure_paths=true and
+# turn the run red on purpose; `verify` asserts every pipeline reported
+# verdict=failed. RED BY DESIGN - never dispatch this flag casually.
+#
+# The flag is exercised ROUTINELY by .github/workflows/selftest-negative.yml:
+# that harness dispatches this workflow with failure_paths=true on a weekly
+# schedule and on relevant pushes, then asserts every job concluded exactly
+# as designed (a correct red) and exits green. A red run in the Actions list
+# named "Selftest Negative Harness" being green means the negative paths work.
 #
 # The `select-subset` call runs in BOTH modes with `select: secrets` and must
 # pass: it proves job selection works end-to-end (most jobs skip cleanly, the

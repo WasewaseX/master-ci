@@ -15,11 +15,12 @@ drift.
 
 ## Install (one command)
 
-Clone the repository into your skills directory (pin a tag for stability):
+Clone the repository into your skills directory, pinned to the current
+release tag (v1.6.0 - one clear stable baseline, kept in lockstep with
+the MCP server version and the GitHub Release):
 
 ```bash
-git clone --depth 1 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
-git clone --depth 1 --branch v1.3.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+git clone --depth 1 --branch v1.6.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
 ```
 
 MCP clients configure it the same way Claude Desktop does:
@@ -48,7 +49,7 @@ for the scan and `python3 <skills-dir>/master-ci/scripts/fix_engine.py
 | `scan_slop` | no | Score a path (0-100, grade, verdict), list findings with remedies, show whether CI would gate. |
 | `scan_diff` | no | Score only the changed files of a git repo; report which CI stacks fire. |
 | `plan_fixes` | no | Dry-run the fix policy: planned tools, tiers, files the normalizer would touch. |
-| `apply_fixes` | **yes** | Run the fix policy in place (safe tier by default, lint tier opt-in). |
+| `apply_fixes` | **yes** | Run the fix policy in place (safe tier by default, lint tier opt-in). Requires `MASTER_CI_MCP_ROOT`; refuses to run without it. |
 | `list_checks` | no | The check catalog: rules, phrase database, remedies, scoring, fix policy. |
 | `filter_paths` | no | Which CI stacks a change set would activate, per file. |
 | `diagnose` | no | Install report: versions, engines, missing formatters, self-test command. |
@@ -84,13 +85,17 @@ then update explicitly: `git -C <skills-dir>/master-ci pull --ff-only`.
 ## Trust it
 
 `python3 scripts/mcp_ping.py` spawns the server and drives a real MCP
-session (initialize, tools/list, diagnose, prompts); exit 0 means the
-install works. The same wire protocol is covered by the repo's pytest
-suite under `tests/test_mcp_server.py`.
+session (initialize, tools/list, diagnose, prompts, `server/discover`
+with the 2026-07-28 per-request `_meta` protocol, and the apply_fixes
+write-lock refusal); exit 0 means the install works. The same wire
+protocol is covered by the repo's pytest suite under
+tests/test_mcp_server.py.
 
 ## Safety
 
 `apply_fixes` is the only mutating tool and only touches the working tree
-you point it at. Set `MASTER_CI_MCP_ROOT` to pin the server to one
-repository. The safe tier can only reformat; the lint tier only applies
-tool-verified transforms; the server has no secrets and never pushes.
+you point it at. `MASTER_CI_MCP_ROOT` is MANDATORY for it: the tool
+refuses to mutate anything until the server is pinned to one repository,
+and with the lock set every path must resolve inside it. The safe tier
+can only reformat; the lint tier only applies tool-verified transforms;
+the server has no secrets and never pushes.

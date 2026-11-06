@@ -25,7 +25,9 @@ project documents, so a regression cannot land silently:
 
 from __future__ import annotations
 
+import json
 import re
+import sys
 from pathlib import Path
 
 import yaml
@@ -36,7 +38,14 @@ WORKFLOWS = sorted(list(WF_DIR.glob("*.yml")) + list(WF_DIR.glob("*.yaml")))
 SHA_RE = re.compile(r"^(?P<action>[\w./-]+)@(?P<ref>[0-9a-f]{40})(?:\s*#\s*(?P<comment>\S.*))?$")
 REUSABLE_TAG_RE = re.compile(r"^[\w.-]+/[\w.-]+/\.github/workflows/[\w.-]+@v[\d.]+$")
 
-_ALLOWED_PERMISSIONS = {"contents", "security-events", "pull-requests", "issues", "id-token"}
+_ALLOWED_PERMISSIONS = {
+    "contents",
+    "security-events",
+    "pull-requests",
+    "issues",
+    "id-token",
+    "actions",  # the expected-failure harness dispatches selftest and reads its runs
+}
 
 
 def load(path: Path) -> dict:
@@ -538,13 +547,142 @@ def test_benchmark_is_scheduled_report_only_and_uploads_results():
     assert set(trigger) == {"schedule", "workflow_dispatch"}, (
         "benchmark is a scheduled/manual report, not a push or PR gate"
     )
-    assert (data.get("permissions") or {}).get("contents") == "read"
-    text = (WF_DIR / "benchmark.yml").read_text(encoding="utf-8")
-    assert "git push" not in text, "benchmark must never push"
+    assert (data.get("permissions") or {}).get("contents") == "write", (
+        "benchmark needs contents: write to commit benchmarks/history.jsonl"
+    )
+    assert "concurrency" in data, "history appends must be serialized"
     job = data["jobs"]["bench"]
     run_blocks = " ".join(str(s.get("run", "")) for s in job["steps"])
     assert "scripts/benchmark.py" in run_blocks
     assert "--json" in run_blocks, "results must be written as JSON for the artifact"
+    assert "--append benchmarks/history.jsonl" in run_blocks, (
+        "every hosted run must append a line to the committed history file"
+    )
+    assert "git pull --rebase" in run_blocks, "push must rebase over concurrent main changes"
+    assert "git diff --cached --quiet" in run_blocks, "no empty history commits"
     steps = [str(s.get("uses", "")) for s in job["steps"]]
     assert any("upload-artifact" in u for u in steps), "results must be uploaded"
     assert "$GITHUB_STEP_SUMMARY" in run_blocks, "results must reach the step summary"
+
+
+def test_benchmark_history_lines_parse_when_present():
+    """Every committed history line is a valid record with the required keys."""
+    history = ROOT / "benchmarks" / "history.jsonl"
+    if not history.exists():
+        return  # first hosted run creates it
+    for i, line in enumerate(history.read_text(encoding="utf-8").splitlines()):
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        for key in ("timestamp", "scale", "metrics"):
+            assert key in record, f"history line {i} missing {key}"
+        assert isinstance(record["metrics"], dict) and record["metrics"], (
+            f"history line {i} has empty metrics"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Expected-failure harness (selftest-negative.yml)
+# ---------------------------------------------------------------------------
+
+
+def test_expected_failure_harness_runs_the_negative_paths_routinely():
+    data = load(WF_DIR / "selftest-negative.yml")
+    trigger = data[True] if True in data else data["on"]
+    assert {"push", "schedule", "workflow_dispatch"} <= set(trigger), (
+        "negative paths must run routinely, not only on manual dispatch"
+    )
+    assert (data.get("permissions") or {}).get("actions") == "write"
+    job = data["jobs"]["negative-harness"]
+    script = " ".join(str(s.get("run", "")) for s in job["steps"])
+    assert "failure_paths=true" in script, "harness must dispatch the negative selftest"
+    for job_name, want in (
+        ("happy-path", "success"),
+        ("select-subset", "success"),
+        ("verify", "success"),
+        ("enforced-failure", "failure"),
+        ("input-validation", "failure"),
+        ("input-validation-stack-toggle", "failure"),
+        ("input-validation-select", "failure"),
+    ):
+        assert f'"{job_name}": "{want}"' in script, (
+            f"harness must assert {job_name} concludes {want}"
+        )
+    assert "conclusion" in script and '"failure"' in script, (
+        "harness must treat a red child run as the expected outcome"
+    )
+
+
+def test_selftest_negative_jobs_stay_gated_for_humans_only_when_direct():
+    """The manual gate remains in selftest.yml; the harness is the routine caller."""
+    text = (WF_DIR / "selftest.yml").read_text(encoding="utf-8")
+    for job in ("enforced-failure", "input-validation-stack-toggle", "input-validation-select"):
+        assert job in text
+        assert "failure_paths == 'true'" in text
+
+
+# ---------------------------------------------------------------------------
+# Release integrity (one stable baseline across code and docs)
+# ---------------------------------------------------------------------------
+
+
+def _load_mcp_server():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "mcp_server_contracts", ROOT / "scripts" / "mcp_server.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_server_version_is_semver():
+    mcp = _load_mcp_server()
+    assert re.fullmatch(r"\d+\.\d+\.\d+", mcp.SERVER_VERSION), (
+        f"SERVER_VERSION {mcp.SERVER_VERSION!r} must be X.Y.Z"
+    )
+
+
+def test_skill_and_readme_pin_the_release_baseline():
+    """One version everywhere: MCP server, SKILL.md, README, docs/mcp.md."""
+    mcp = _load_mcp_server()
+    baseline = f"v{mcp.SERVER_VERSION}"
+    for doc in ("SKILL.md", "README.md"):
+        text = (ROOT / doc).read_text(encoding="utf-8")
+        assert f"--branch {baseline}" in text, (
+            f"{doc} must pin the skill install to the release baseline {baseline}"
+        )
+        stale = re.findall(r"--branch (v\d+\.\d+\.\d+)", text)
+        assert set(stale) == {baseline}, f"{doc} has mixed version pins: {stale}"
+
+
+def test_modern_mcp_protocol_is_supported():
+    """The 2026-07-28 stateless era must stay supported alongside the legacy eras."""
+    mcp = _load_mcp_server()
+    assert "2026-07-28" in mcp.PROTOCOL_VERSIONS
+    assert mcp.MODERN_PROTOCOL_VERSION == "2026-07-28"
+    assert mcp.DEFAULT_PROTOCOL_VERSION in mcp.PROTOCOL_VERSIONS
+    assert mcp.UNSUPPORTED_PROTOCOL_VERSION_ERROR == -32022
+    skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+    assert "2026-07-28" in skill, "SKILL.md must document modern protocol support"
+
+
+def test_apply_fixes_write_lock_is_enforced_in_source():
+    """The mutating tool must require MASTER_CI_MCP_ROOT - not just document it."""
+    text = (ROOT / "scripts" / "mcp_server.py").read_text(encoding="utf-8")
+    apply_body = text.split("def tool_apply_fixes", 1)[1].split("\ndef ", 1)[0]
+    assert "_require_write_root" in apply_body, (
+        "apply_fixes must call the mandatory write-root guard first"
+    )
+
+
+def test_scan_diff_discovers_untracked_files():
+    """Untracked discovery is the whole point of the change-set scan."""
+    text = (ROOT / "scripts" / "mcp_server.py").read_text(encoding="utf-8")
+    changed_body = text.split("def _changed_files", 1)[1].split("\ndef ", 1)[0]
+    assert "ls-files" in changed_body and "--exclude-standard" in changed_body, (
+        "_changed_files must run git ls-files --others --exclude-standard"
+    )

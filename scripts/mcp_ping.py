@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import queue
 import subprocess
 import sys
@@ -36,6 +37,9 @@ class Client:
 
     def __init__(self, server: Path, timeout: float) -> None:
         self.timeout = timeout
+        # deterministic self-test: the child never sees a pre-set root lock,
+        # so _check_write_lock exercises the refusal path, never a real write
+        env = {k: v for k, v in os.environ.items() if k != "MASTER_CI_MCP_ROOT"}
         self.proc = subprocess.Popen(
             [sys.executable, str(server)],
             stdin=subprocess.PIPE,
@@ -43,6 +47,7 @@ class Client:
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
+            env=env,
         )
         self.lines: queue.Queue[str] = queue.Queue()
         assert self.proc.stdout is not None
@@ -161,6 +166,82 @@ def _check_updates(client: Client) -> None:
         ok("check_updates", f"update available: {state.get('latest_tag')}")
 
 
+def _check_modern_era(client: Client) -> None:
+    """2026-07-28 stateless era: server/discover plus per-request _meta."""
+    discover = client.request(
+        {
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "server/discover",
+            "params": {
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                    "io.modelcontextprotocol/clientInfo": {"name": "mcp_ping", "version": "1.0.0"},
+                }
+            },
+        }
+    )
+    result = discover["result"]
+    if result.get("resultType") != "complete":
+        raise AssertionError(f"discover resultType: {result}")
+    versions = result.get("supportedVersions", [])
+    if "2026-07-28" not in versions:
+        raise AssertionError(f"modern protocol missing from discover: {versions}")
+    info = result["_meta"]["io.modelcontextprotocol/serverInfo"]
+    ok("server/discover", f"modern era ok, server v{info['version']}")
+    # a stateless tools/call that carries its protocol version in _meta
+    call = client.request(
+        {
+            "jsonrpc": "2.0",
+            "id": 8,
+            "method": "tools/call",
+            "params": {
+                "name": "diagnose",
+                "arguments": {},
+                "_meta": {"io.modelcontextprotocol/protocolVersion": "2026-07-28"},
+            },
+        }
+    )
+    if call["result"].get("isError"):
+        raise AssertionError(f"modern-era tools/call failed: {call['result']['content']}")
+    # an unknown per-request version must be rejected with -32022 + supported list
+    bad = client.request(
+        {
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": "tools/call",
+            "params": {
+                "name": "diagnose",
+                "arguments": {},
+                "_meta": {"io.modelcontextprotocol/protocolVersion": "1999-09-09"},
+            },
+        }
+    )
+    if bad.get("error", {}).get("code") != -32022:
+        raise AssertionError(f"expected -32022 for unknown _meta version: {bad}")
+    if "2026-07-28" not in json.dumps(bad["error"].get("data", {})):
+        raise AssertionError("-32022 payload must list supported versions")
+    ok("meta protocol negotiation", "unknown version rejected with supported list")
+
+
+def _check_write_lock(client: Client) -> None:
+    """apply_fixes must refuse to mutate when MASTER_CI_MCP_ROOT is unset."""
+    call = client.request(
+        {
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "tools/call",
+            "params": {"name": "apply_fixes", "arguments": {"path": "."}},
+        }
+    )
+    text = json.dumps(call)
+    if call.get("error") or not call["result"].get("isError"):
+        raise AssertionError("apply_fixes ran without MASTER_CI_MCP_ROOT - lock is broken")
+    if "MASTER_CI_MCP_ROOT" not in text:
+        raise AssertionError("apply_fixes refusal does not mention MASTER_CI_MCP_ROOT")
+    ok("write lock", "apply_fixes refused without MASTER_CI_MCP_ROOT")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Verify a master-ci MCP install end to end.")
     parser.add_argument("--server", default=str(SERVER_PATH), help="path to mcp_server.py")
@@ -175,6 +256,8 @@ def main() -> int:
         _check_init(client)
         _check_tools(client)
         _check_prompts(client)
+        _check_modern_era(client)
+        _check_write_lock(client)
         if args.online:
             _check_updates(client)
     except Exception as exc:  # noqa: BLE001 - any failure is a FAIL line, not a traceback

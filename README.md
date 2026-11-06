@@ -8,6 +8,8 @@ updated.
 
 ![CI](https://github.com/WasewaseX/master-ci/actions/workflows/ci.yml/badge.svg)
 ![Selftest](https://github.com/WasewaseX/master-ci/actions/workflows/selftest.yml/badge.svg)
+![Selftest Negative Harness](https://github.com/WasewaseX/master-ci/actions/workflows/selftest-negative.yml/badge.svg)
+![Benchmark](https://github.com/WasewaseX/master-ci/actions/workflows/benchmark.yml/badge.svg)
 ![Nightly Deep Scan](https://github.com/WasewaseX/master-ci/actions/workflows/nightly.yml/badge.svg)
 
 - Runs entirely on free `ubuntu-latest` runners for public repositories
@@ -17,7 +19,8 @@ updated.
 - Least-privilege per job, no `secrets: inherit`, every action pinned by commit SHA
 - Validates untrusted caller inputs before they can reach a checkout
 - The template tests itself: path-filter regression suite, workflow contract
-  tests and a three-path integration selftest
+  tests, a six-path integration selftest and an expected-failure harness that
+  runs the negative paths routinely
 - Every check has a documented contract: [docs/checks.md](docs/checks.md)
 
 ## Setup: one line, any project
@@ -317,7 +320,7 @@ how to disable, added time) live in [docs/checks.md](docs/checks.md).
 | `duplication_threshold_pct` | `5` | jscpd failure threshold |
 | `scorecard_publish` | `true` | Publish Scorecard results (needs `id-token: write`) |
 | `template_repo` | auto | Helper repo override for forks (validated: `owner/repo`) |
-| `template_ref` | `main` | Helper ref. Pin to a release tag (e.g. `v1.4.0`) - mutable branches print a warning |
+| `template_ref` | `main` | Helper ref. Pin to a release tag (e.g. `v1.6.0`) - mutable branches print a warning |
 | `concurrency_key` | `''` | Distinguishes concurrent calls when one workflow calls master-ci several times |
 
 ## Permissions: least privilege, explained
@@ -385,7 +388,8 @@ Nightly ──> audit tracking issue (secrets, vulns, prose: humans)
 |---|---|---|---|
 | Dogfood | `ci.yml` | every push / PR | The template CI-checks itself with its own workflows |
 | Fixture contracts | `ci.yml` | every push / PR | Detector and tooling run against `fixtures/` edge cases (empty, slop, ignore-file, malformed YAML) |
-| **Selftest** | `selftest.yml` | every push / PR | Calls the reusable workflow three ways: must pass (quick profile), must fail (broken Semgrep pack), must reject an unsafe `template_ref` - the `verify` job asserts all three verdicts |
+| **Selftest** | `selftest.yml` | every push / PR | Calls the reusable workflow six ways: must pass (quick profile), select-subset must pass, and four designed-failure calls (broken Semgrep pack, unsafe `template_ref`, typo'd stack toggle, unknown select token) run in failure-path mode - the `verify` job asserts every verdict |
+| **Expected-failure harness** | `selftest-negative.yml` | weekly + relevant pushes + manual | Runs the four designed-failure calls ROUTINELY: dispatches the selftest with `failure_paths=true` (red by design) and asserts every job concluded exactly as designed - only a correct red turns the harness green |
 | Self-update | `dependabot.yml` | weekly | Bumps every pinned action, grouped PR |
 | **Autofix** | `autofix.yml` | weekly + right after every Deep Audit + manual | Runs the shared fix engine (`scripts/fix_engine.py`) - safe tier (rustfmt, gofmt, `ruff format`, Biome, shfmt, markdownlint, whitespace/EOF normalizer) plus lint tier (`ruff check --fix`, `go mod tidy`, `sqlfluff fix`, `semgrep --autofix`) - and opens one PR |
 | **Self-Heal** | `heal.yml` | after CI failures on the default branch | Applies the **same fix engine** reactively, opens/updates the `ci/autofix` PR; circuit breakers: default-branch failures only, one heal at a time, stops while a fix PR is open |
@@ -426,7 +430,7 @@ carries a `SKILL.md`, so assistants with a skills directory can load it
 with one command:
 
 ```bash
-git clone --depth 1 --branch v1.3.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+git clone --depth 1 --branch v1.6.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
 ```
 
 MCP clients configure the same install like this:
@@ -492,8 +496,12 @@ python -m pytest -q          # 136 tests:
                              #   configs, automation safety, selftest wiring,
                              #   self-heal circuit breakers, deep-audit
                              #   schedule/no-gate guarantees
-.github/workflows/selftest.yml  # in CI: three live calls of the reusable
-                                # workflow (pass / enforced fail / invalid input)
+.github/workflows/selftest.yml  # in CI: six live calls of the reusable
+                                # workflow (pass / select subset / 4 designed
+                                # failures via the negative harness)
+.github/workflows/selftest-negative.yml  # the expected-failure harness:
+                                # runs the negative paths routinely and only
+                                # passes on a correct red
 ```
 
 The path-filter suite exists because wrong path detection is the failure
@@ -526,15 +534,17 @@ python3 scripts/benchmark.py --save baseline.json   # record this machine
 python3 scripts/benchmark.py --check baseline.json  # fail on >3x regression
 ```
 
-Reference numbers (`ubuntu-latest`, v1.5.0): detector ~1.2k files/s
+Reference numbers (`ubuntu-latest`, v1.6.0): detector ~1.2k files/s
 (~1.0 MB/s), fix-engine plan ~90 ms, generic whitespace scan ~30 ms for
 360 files, path filters ~60k paths/s, MCP server startup ~175 ms,
 stdio roundtrip ~55 ms (the roundtrip re-parses the live filter table
 per call - a known, measured optimization target). A weekly Benchmark
-workflow publishes fresh numbers to its step summary and a 90-day
-artifact; it is report-only because shared runners are too noisy to
-fail a build on timings. The MCP `bench` tool runs the same corpus from
-any AI client.
+workflow publishes fresh numbers to its step summary, a 90-day
+artifact, AND appends one JSON line per run to `benchmarks/history.jsonl`
+in the repo - a reproducible hosted history that survives artifact
+expiry and is diffable week over week. It is report-only because shared
+runners are too noisy to fail a build on timings. The MCP `bench` tool
+runs the same corpus from any AI client.
 
 ## Local development
 

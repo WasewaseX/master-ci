@@ -250,18 +250,46 @@ positive rate documented above.
 
 ## `selftest` - the template tests itself
 
-`selftest.yml` calls the reusable workflow three ways on every push and PR:
+`selftest.yml` calls the reusable workflow six ways:
 
-1. **happy-path** - quick profile, Python stack only; the `verify` job
-   asserts job success and `verdict=passed`.
-2. **enforced-failure** - a Semgrep pack that cannot exist; continue-on-error
-   keeps the run green while `verify` asserts `verdict=failed`, proving the
-   aggregate gate really fails when a check fails.
-3. **input-validation** - an unsafe `template_ref`; `verify` asserts
-   `verdict=failed`, proving untrusted input is rejected before any checkout.
+1. **happy-path** - quick profile; `verify` asserts job success and
+   `verdict=passed`. Runs on every push and PR.
+2. **select-subset** - `select: secrets`; most jobs skip cleanly and the
+   aggregate gate still reports `verdict=passed`, proving job selection
+   works end-to-end. Runs on every push and PR.
+3. **enforced-failure** - a Semgrep pack that cannot exist.
+4. **input-validation** - an unsafe `template_ref` (path traversal).
+5. **input-validation-stack-toggle** - `run_python: 'ture'`, a typo that
+   must fail meta instead of silently skipping the Python stack.
+6. **input-validation-select** - `select: 'secrets,bogus-job'`, an unknown
+   token that must fail meta instead of silently skipping a check.
+
+Calls 3-6 are designed to fail, and a workflow run cannot stay green while
+its own jobs fail - so they run in failure-path mode (dispatch with
+`failure_paths=true`, run goes red on purpose) and `verify` asserts every
+one of them reported `verdict=failed`.
+
+That red is exercised ROUTINELY by `selftest-negative.yml`, the
+**expected-failure harness**: it dispatches the selftest with
+`failure_paths=true` (weekly schedule, plus pushes that touch the reusable
+workflow, the selftest or the test bed), waits for the child run, and
+asserts every job concluded exactly as designed - happy-path, select-subset
+and verify succeed, the four negative calls fail. Only a correct red turns
+the harness green; a green child run or a mis-shaped failure fails it.
 
 A regression that makes the pipeline pass when it should fail - or fail for
-the wrong reason - turns the selftest red.
+the wrong reason - turns the selftest or the harness red.
+
+## `benchmark` - the hosted performance history
+
+`benchmark.yml` runs `scripts/benchmark.py` on a deterministic corpus
+(Sundays 04:00 UTC and on demand) and publishes the numbers three ways:
+the step summary, a 90-day artifact, and - the durable one - one JSON line
+per run appended to `benchmarks/history.jsonl`, committed back to main.
+The history survives artifact expiry, is diffable week over week with
+plain git, and every line is schema-checked by the pytest suite. It is
+report-only: shared runners are too noisy to gate on timings, but a
+week-over-week jump is immediately visible in the history diff.
 
 ## `heal` and `audit` - the reactive loop, the fix engine and the whole-repo sweep
 
