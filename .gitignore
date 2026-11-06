@@ -13,3 +13,5 @@ dashboard.md
 
 # fix-engine report output (default local dir)
 fix/
+actionlint
+/actionlint

@@ -40,7 +40,8 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          # the history append pushes to main; a full fetch keeps the rebase honest
+          # the history append pushes to the benchmarks branch; a full fetch
+          # keeps the rebase honest
           fetch-depth: 0
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:

@@ -21,6 +21,8 @@ project documents, so a regression cannot land silently:
     tokens are validated, Python project installs fail loudly
 - the selftest workflow really exercises pass, enforced-failure and
     input-validation paths of the reusable workflow
+- event filters are explicit, clean pattern lists and the self-loop
+    workflows push-target exactly [main] (trigger regression net)
 """
 
 from __future__ import annotations
@@ -743,3 +745,60 @@ def test_scan_diff_discovers_untracked_files():
     assert "ls-files" in changed_body and "--exclude-standard" in changed_body, (
         "_changed_files must run git ls-files --others --exclude-standard"
     )
+
+
+# ---------------------------------------------------------------------------
+# Trigger filters (explicit, auditable event configuration)
+# ---------------------------------------------------------------------------
+
+
+def test_event_filters_are_clean_pattern_lists():
+    """Every branches/tags/paths filter must be a list of clean strings.
+
+    A review pass misread a trigger filter and sent this repository
+    chasing a `branches: ain]` corruption that was never there: the
+    filter was always a proper [main] list (codepoint-verified).
+    A wrong reading is exactly how trigger regressions slip through
+    human review, though - the wrong thing is valid YAML and invisible
+    to yamllint and actionlint - so the expectation is now mechanical:
+    filters are lists, patterns carry no stray brackets, and the
+    self-loop workflows push-target exactly the default branch.
+    """
+    filter_keys = (
+        "branches",
+        "branches-ignore",
+        "tags",
+        "tags-ignore",
+        "paths",
+        "paths-ignore",
+    )
+    for wf in WORKFLOWS:
+        data = load(wf)
+        trigger = data[True] if True in data else data.get("on") or {}
+        if not isinstance(trigger, dict):
+            continue
+        for event, spec in trigger.items():
+            if not isinstance(spec, dict):
+                continue
+            for key in filter_keys:
+                value = spec.get(key)
+                if value is None:
+                    continue
+                assert isinstance(value, list) and all(
+                    isinstance(p, str) for p in value
+                ), f"{wf.name}: {event}.{key} must be a list of strings, got {value!r}"
+                for pattern in value:
+                    assert "[" not in pattern and "]" not in pattern, (
+                        f"{wf.name}: {event}.{key} pattern {pattern!r} contains a stray "
+                        "bracket - this repository does not use character-class globs"
+                    )
+
+
+def test_self_loop_workflows_push_target_main():
+    """The self-loop workflows must explicitly push-target [main] and nothing else."""
+    for name in ("ci.yml", "selftest.yml", "selftest-negative.yml"):
+        data = load(WF_DIR / name)
+        trigger = data[True] if True in data else data["on"]
+        assert trigger["push"]["branches"] == ["main"], (
+            f"{name}: push.branches must be exactly ['main'], got {trigger['push']['branches']!r}"
+        )
