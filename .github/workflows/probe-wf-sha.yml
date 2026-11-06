@@ -1,0 +1,19 @@
+name: Probe WF SHA
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  caller:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Caller context
+        run: |
+          echo "caller workflow_sha=${{ github.workflow_sha }}"
+          echo "caller workflow_ref=${{ github.workflow_ref }}"
+          echo "caller sha=${{ github.sha }}"
+  callee:
+    uses: ./.github/workflows/probe-callee.yml
