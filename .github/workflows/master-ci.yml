@@ -654,6 +654,16 @@ jobs:
               if [ -f package-lock.json ]; then npm ci
               else npm install; fi ;;
           esac
+      - name: Fetch master-ci helpers
+        # node-lint now ships a default biome policy from the template, so
+        # it joins every other check job in fetching the helper checkout.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ needs.meta.outputs.template_repo }}
+          ref: ${{ inputs.template_ref }}
+          path: _ci
+          fetch-depth: 1
+          persist-credentials: false
       - name: Default biome policy (if absent)
         # Biome 2.x formats YAML and Markdown by default, which drags
         # consumer workflow files and prose into the Node stack's gate -
