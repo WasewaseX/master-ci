@@ -73,7 +73,7 @@ both:
 ```yaml
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v1.6.0
+      template_ref: v1.7.0
 ```
 
 ### Required check
@@ -337,7 +337,7 @@ how to disable, added time) live in [docs/checks.md](docs/checks.md).
 | `duplication_threshold_pct` | `5` | jscpd failure threshold |
 | `scorecard_publish` | `true` | Publish Scorecard results (needs `id-token: write`) |
 | `template_repo` | auto | Helper repo override for forks (validated: `owner/repo`) |
-| `template_ref` | `main` | Helper ref. Pin to a release tag (e.g. `v1.6.0`) - mutable branches print a warning |
+| `template_ref` | `main` | Helper ref. Pin to a release tag (e.g. `v1.7.0`) - mutable branches print a warning |
 | `concurrency_key` | `''` | Distinguishes concurrent calls when one workflow calls master-ci several times |
 
 ## Permissions: least privilege, explained
@@ -447,7 +447,7 @@ carries a `SKILL.md`, so assistants with a skills directory can load it
 with one command:
 
 ```bash
-git clone --depth 1 --branch v1.6.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+git clone --depth 1 --branch v1.7.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
 ```
 
 MCP clients configure the same install like this:
@@ -570,7 +570,7 @@ python3 scripts/benchmark.py --save baseline.json   # record this machine
 python3 scripts/benchmark.py --check baseline.json  # fail on >3x regression
 ```
 
-Reference numbers (`ubuntu-latest`, v1.6.0): detector ~1.2k files/s
+Reference numbers (`ubuntu-latest`, v1.7.0): detector ~1.2k files/s
 (~1.0 MB/s), fix-engine plan ~90 ms, generic whitespace scan ~30 ms for
 360 files, path filters ~60k paths/s, MCP server startup ~175 ms,
 stdio roundtrip ~55 ms (the roundtrip re-parses the live filter table
