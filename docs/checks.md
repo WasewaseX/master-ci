@@ -265,13 +265,13 @@ the calling run no matter what - and red in CI may only ever mean broken.
 The five designed-failure calls therefore live in their own file,
 `selftest-guardrails.yml`:
 
-3. **enforced-failure** - a Semgrep pack that cannot exist.
-4. **input-validation** - an unsafe `template_ref` (path traversal).
-5. **input-validation-stack-toggle** - `run_python: 'ture'`, a typo that
+1. **enforced-failure** - a Semgrep pack that cannot exist.
+2. **input-validation** - an unsafe `template_ref` (path traversal).
+3. **input-validation-stack-toggle** - `run_python: 'ture'`, a typo that
    must fail meta instead of silently skipping the Python stack.
-6. **input-validation-select** - `select: 'secrets,bogus-job'`, an unknown
+4. **input-validation-select** - `select: 'secrets,bogus-job'`, an unknown
    token that must fail meta instead of silently skipping a check.
-7. **input-validation-template-ref** - a foreign helper repo with an empty
+5. **input-validation-template-ref** - a foreign helper repo with an empty
    `template_ref`; a helper cannot infer a ref safely for callers other
    than the template itself, so this must fail meta (the fail-closed rule
    introduced in v1.8.6).
