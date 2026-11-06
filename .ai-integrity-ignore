@@ -1,3 +1,0 @@
-# Fixtures under fixtures/ deliberately contain slop, broken YAML and
-# emoji padding - they exist to exercise the detector in CI. Do not scan.
-fixtures/
