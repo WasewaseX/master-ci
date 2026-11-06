@@ -54,7 +54,7 @@ jobs:
       TEMPLATE_REPO_INPUT: ${{ inputs.template_repo }}
       TEMPLATE_REF: ${{ inputs.template_ref }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # the full history IS the audit database
           persist-credentials: false
@@ -84,7 +84,7 @@ jobs:
           fi
 
       - name: Fetch master-ci helpers
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ steps.repo.outputs.template_repo }}
           ref: ${{ env.TEMPLATE_REF }}
@@ -98,7 +98,7 @@ jobs:
       # --- scan 1: every commit ever made -------------------------------------
       - name: Sweep full git history for secrets (gitleaks)
         continue-on-error: true
-        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
