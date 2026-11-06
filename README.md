@@ -73,7 +73,7 @@ both:
 ```yaml
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v1.7.0
+      template_ref: v1.8.0
 ```
 
 ### Required check
@@ -337,7 +337,7 @@ how to disable, added time) live in [docs/checks.md](docs/checks.md).
 | `duplication_threshold_pct` | `5` | jscpd failure threshold |
 | `scorecard_publish` | `true` | Publish Scorecard results (needs `id-token: write`) |
 | `template_repo` | auto | Helper repo override for forks (validated: `owner/repo`) |
-| `template_ref` | `main` | Helper ref. Pin to a release tag (e.g. `v1.7.0`) - mutable branches print a warning |
+| `template_ref` | `main` | Helper ref. Pin to a release tag (e.g. `v1.8.0`) - mutable branches print a warning |
 | `concurrency_key` | `''` | Distinguishes concurrent calls when one workflow calls master-ci several times |
 
 ## Permissions: least privilege, explained
@@ -447,7 +447,7 @@ carries a `SKILL.md`, so assistants with a skills directory can load it
 with one command:
 
 ```bash
-git clone --depth 1 --branch v1.7.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+git clone --depth 1 --branch v1.8.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
 ```
 
 MCP clients configure the same install like this:
@@ -547,11 +547,13 @@ run for a layout fails the suite before it can fail a consumer.
 When a check needs a config file and your repo does not have one, Master CI
 copies the default from this repo at run time: `.yamllint.yaml`,
 `.markdownlint-cli2.jsonc`, `.editorconfig`, `ruff.toml`, `deny.toml`,
-`.semgrepignore`, and `.github/zizmor.yml` (a policy that keeps SHA pinning
+`.semgrepignore`, `.github/zizmor.yml` (a policy that keeps SHA pinning
 mandatory for actions and allows release-tag refs for the Master CI
-workflows themselves). Commit any of these to your repo to override. A
-contract test guarantees every referenced default actually exists in this
-repo.
+workflows themselves), and `biome.jsonc` (scopes the Node linter to code
+files and aligns its formatting with the default `.editorconfig` - Biome's
+own defaults would otherwise format your YAML and Markdown). Commit any of
+these to your repo to override. A contract test guarantees every referenced
+default actually exists in this repo.
 
 ## Cost
 
@@ -570,7 +572,7 @@ python3 scripts/benchmark.py --save baseline.json   # record this machine
 python3 scripts/benchmark.py --check baseline.json  # fail on >3x regression
 ```
 
-Reference numbers (`ubuntu-latest`, v1.7.0): detector ~1.2k files/s
+Reference numbers (`ubuntu-latest`, v1.8.0): detector ~1.2k files/s
 (~1.0 MB/s), fix-engine plan ~90 ms, generic whitespace scan ~30 ms for
 360 files, path filters ~60k paths/s, MCP server startup ~175 ms,
 stdio roundtrip ~55 ms (the roundtrip re-parses the live filter table

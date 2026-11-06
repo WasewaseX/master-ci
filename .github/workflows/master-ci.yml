@@ -654,6 +654,15 @@ jobs:
               if [ -f package-lock.json ]; then npm ci
               else npm install; fi ;;
           esac
+      - name: Default biome policy (if absent)
+        # Biome 2.x formats YAML and Markdown by default, which drags
+        # consumer workflow files and prose into the Node stack's gate -
+        # YAML hygiene belongs to the hygiene job (yamllint), prose to the
+        # docs job. Ship an explicit code-file scope, aligned with the
+        # default .editorconfig (spaces, width 2). Commit your own
+        # biome.jsonc to take full control.
+        run: |
+          [ -f biome.jsonc ] || cp _ci/configs/biome.jsonc .
       - name: Lint (project script or biome)
         run: |
           if [ ! -f package.json ]; then
