@@ -354,7 +354,7 @@ def _snapshot(root: Path) -> dict[str, str]:
         if any(part in SNAPSHOT_SKIP_DIRS for part in rel_parts[:-1]):
             continue
         try:
-            snapshot[path.relative_to(root).as_posix()] = hashlib.sha1(
+            snapshot[path.relative_to(root).as_posix()] = hashlib.sha256(
                 path.read_bytes()
             ).hexdigest()
         except OSError:
