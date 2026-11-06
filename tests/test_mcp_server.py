@@ -308,6 +308,7 @@ def test_stdio_parse_error_and_unknown_method(tmp_path: Path) -> None:
     try:
         client.send({"jsonrpc": "2.0", "id": 10, "method": "initialize", "params": {}})
         assert client.read()["result"]["serverInfo"]["name"] == "master-ci"
+        assert client.proc.stdin is not None
         client.proc.stdin.write("this is not json\n")
         client.proc.stdin.flush()
         parse_err = client.read()
