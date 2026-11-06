@@ -1843,7 +1843,7 @@ def project_score(deficits: list[int]) -> tuple[int, str, str]:
 def fingerprint(item: Finding) -> str:
     normalized = re.sub(r"\d+", "#", item.message)
     raw = f"{item.path}|{item.check}|{normalized}"
-    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 # ---------------------------------------------------------------------------
