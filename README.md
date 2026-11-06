@@ -373,6 +373,38 @@ code without a human pressing the button, CI must be green before the PR
 merges, and closing the PR is the rollback. The Deep Audit never gates CI
 at all - it is a clock-driven, read-only sweep with one tracking issue.
 
+## MCP server: drive Master CI from any AI assistant
+
+The template ships a built-in MCP server (`scripts/mcp_server.py`,
+stdlib-only, MCP over stdio) so any MCP-capable AI assistant - Claude
+Desktop, Cursor, Cline, Windsurf, z.ai and friends - can use the same
+engines CI uses: scan for AI slop, ask which checks a change set would
+trigger, dry-run the fix policy, apply it, and read the check catalog.
+One engine, many surfaces: an MCP scan reports exactly what CI reports.
+
+```json
+{
+  "mcpServers": {
+    "master-ci": {
+      "command": "python3",
+      "args": ["/path/to/master-ci/scripts/mcp_server.py"]
+    }
+  }
+}
+```
+
+Set `MASTER_CI_MCP_ROOT` in the `env` block to lock every tool call to
+one repository. Full tool reference: `docs/mcp.md`.
+
+| Tool | Mutates? | What it does |
+|---|---|---|
+| `scan_slop` | no | AI-integrity scan: score, grade, verdict, blocking vs advisory findings with remedies |
+| `scan_diff` | no | Scan only changed files (uncommitted or vs a base ref) + which CI stacks the change fires |
+| `plan_fixes` | no | Dry-run of the fix policy: which tools would run, how many files the normalizer would touch |
+| `apply_fixes` | **yes** | Run the fix policy in place (safe tier by default); review with `git diff` |
+| `list_checks` | no | Blocking vs advisory rules, phrase database, remedies, scoring formula, fix tiers |
+| `filter_paths` | no | Which stacks a change set activates, from the live `dorny/paths-filter` table |
+
 ## Testing the template
 
 The template ships three layers of self-tests, all runnable locally:

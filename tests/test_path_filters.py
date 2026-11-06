@@ -21,7 +21,9 @@ Semantics implemented per dorny + picomatch:
 
 from __future__ import annotations
 
+import importlib.util
 import re
+import sys
 from pathlib import Path
 
 import yaml
@@ -29,86 +31,35 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "master-ci.yml"
 
+# The translator is shared production code now: the MCP server's
+# filter_paths tool and this regression suite MUST use one implementation
+# so they can never drift apart. The import below rebinds the historical
+# names; every assertion in this file stays exactly as it was.
+_PF_PATH = ROOT / "scripts" / "path_filters.py"
+_spec = importlib.util.spec_from_file_location("path_filters", _PF_PATH)
+assert _spec is not None and _spec.loader is not None
+_pf = importlib.util.module_from_spec(_spec)
+sys.modules[_spec.name] = _pf
+_spec.loader.exec_module(_pf)
 
-# ---------------------------------------------------------------------------
-# picomatch-subset glob translation
-# ---------------------------------------------------------------------------
-
-
-class UnsupportedPatternError(ValueError):
-    """Raised when a pattern uses syntax the translator does not support."""
-
-
-_ALLOWED = re.compile(r"^[\w .\-/@{,}!?$*+~^&=%]*$")
-
-
-def _translate_brace_group(glob: str, i: int) -> tuple[str, int]:
-    """Translate a ``{a,b}`` group starting at ``i``; return (regex, next_i)."""
-    end = glob.index("}", i)
-    body = glob[i + 1 : end]
-    branches = [_translate(branch) for branch in body.split(",")]
-    return "(?:" + "|".join(branches) + ")", end + 1
+UnsupportedPatternError = _pf.UnsupportedPatternError
+_translate = _pf._translate
+FilterSet = _pf.FilterSet
+load_filters = _pf.load_filters
+FILTERS = _pf.FILTERS
+stacks_for = _pf.stacks_for
 
 
-def _next_token(glob: str, i: int) -> tuple[str, int]:
-    """Translate the glob token starting at ``i``; return (regex, advance)."""
-    chunk = glob[i:]
-    if chunk.startswith("**/"):
-        return r"(?:[^/]+/)*", 3
-    if chunk.startswith("**"):
-        return r".*", 2
-    if chunk.startswith("*"):
-        return r"[^/]*", 1
-    if chunk.startswith("?"):
-        return r"[^/]", 1
-    if chunk.startswith("{"):
-        return _translate_brace_group(glob, i)
-    return re.escape(glob[i]), 1
-
-
-def _translate(glob: str) -> str:
-    if not _ALLOWED.match(glob):
-        raise UnsupportedPatternError(f"unsupported pattern syntax: {glob!r}")
-    out: list[str] = []
-    i = 0
-    while i < len(glob):
-        piece, advance = _next_token(glob, i)
-        out.append(piece)
-        i += advance
-    return "".join(out)
-
-
-class FilterSet:
-    """One named dorny filter group: positives minus negations."""
-
-    def __init__(self, name: str, patterns: list[str]) -> None:
-        self.name = name
-        self.positive = [p for p in patterns if not p.startswith("!")]
-        self.negative = [p[1:] for p in patterns if p.startswith("!")]
-        self._positive_re = [re.compile(_translate(p)) for p in self.positive]
-        self._negative_re = [re.compile(_translate(p)) for p in self.negative]
-
-    def matches(self, path: str) -> bool:
-        if any(rx.fullmatch(path) for rx in self._negative_re):
-            return False
-        return any(rx.fullmatch(path) for rx in self._positive_re)
-
-
-def load_filters(workflow: Path = WORKFLOW) -> dict[str, FilterSet]:
-    data = yaml.safe_load(workflow.read_text(encoding="utf-8"))
-    changes = data["jobs"]["changes"]
-    step = next(
-        s for s in changes["steps"] if str(s.get("uses", "")).startswith("dorny/paths-filter")
-    )
-    table = yaml.safe_load(step["with"]["filters"])
-    return {name: FilterSet(name, patterns or []) for name, patterns in table.items()}
-
-
-FILTERS = load_filters()
-
-
-def stacks_for(path: str) -> frozenset[str]:
-    return frozenset(name for name, fs in FILTERS.items() if fs.matches(path))
+def test_fallback_table_matches_live_workflow() -> None:
+    """The committed snapshot must equal the live table, name for name."""
+    live = {name: sorted(fs.positive) + sorted(fs.negative) for name, fs in FILTERS.items()}
+    live = {name: sorted(set(patterns)) for name, patterns in live.items()}
+    fallback_sets = _pf.load_fallback_filters()
+    fallback = {
+        name: sorted(fs.positive) + sorted(fs.negative) for name, fs in fallback_sets.items()
+    }
+    fallback = {name: sorted(set(patterns)) for name, patterns in fallback.items()}
+    assert live == fallback, "path_filters_fallback.json has drifted from master-ci.yml"
 
 
 # ---------------------------------------------------------------------------
