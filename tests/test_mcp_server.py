@@ -92,8 +92,27 @@ def test_apply_fixes_normalizes_and_reports(tmp_path: Path) -> None:
     root = _make_repo(tmp_path, {"dirty.txt": "trailing   \n\n\n"})
     result = mcp.tool_apply_fixes({"path": str(root), "tiers": ["safe"]})
     assert result["changed_any"] is True
+    assert result["changed_files"] == ["dirty.txt"]
     assert (root / "dirty.txt").read_text() == "trailing\n"
     assert "| tool |" in result["summary"]
+
+
+def test_snapshot_skips_git_and_vendored_dirs(tmp_path: Path) -> None:
+    root = _make_repo(tmp_path, {"a.py": "x = 1\n"})
+    (root / ".git").mkdir()
+    (root / ".git" / "HEAD").write_text("ref\n")
+    (root / "node_modules").mkdir()
+    (root / "node_modules" / "pkg.js").write_text("x\n")
+    snapshot = mcp._snapshot(root)
+    assert snapshot == {"a.py": snapshot["a.py"]}
+    assert len(snapshot) == 1
+
+
+def test_apply_fixes_clean_repo_reports_no_action(tmp_path: Path) -> None:
+    root = _make_repo(tmp_path, {"clean.txt": "already tidy\n"})
+    result = mcp.tool_apply_fixes({"path": str(root), "tiers": ["safe"]})
+    assert result["changed_any"] is False
+    assert "Nothing needed fixing" in result["prompt"]
 
 
 def test_list_checks_catalog(tmp_path: Path) -> None:
@@ -114,6 +133,91 @@ def test_filter_paths_empty_files_is_error() -> None:
     with pytest.raises(ValueError) as exc:
         mcp.tool_filter_paths({"files": []})
     assert "non-empty" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# fix-ready prompts and the meta tools
+# ---------------------------------------------------------------------------
+
+
+def test_every_tool_result_embeds_a_fix_ready_prompt(tmp_path: Path) -> None:
+    root = _make_repo(tmp_path, {"slop.py": "# TODO: implement this\n", "dirty.txt": "x   \n"})
+    scan = mcp.tool_scan_slop({"path": str(root)})
+    assert "apply_fixes" in scan["prompt"] and str(root) in scan["prompt"]
+    plan = mcp.tool_plan_fixes({"path": str(root), "tiers": ["safe"]})
+    assert "plan_fixes" in plan["prompt"] and "zero files changed" in plan["prompt"]
+    applied = mcp.tool_apply_fixes({"path": str(root), "tiers": ["safe"]})
+    assert "git diff" in applied["prompt"]
+    catalog = mcp.tool_list_checks({})
+    assert "scan_slop" in catalog["prompt"]
+    filtered = mcp.tool_filter_paths({"files": ["src/mod.py"], "path": str(ROOT)})
+    assert "scan_diff" in filtered["prompt"]
+    report = mcp.tool_diagnose({})
+    assert "mcp_ping" in report["prompt"]
+
+
+def test_scan_slop_prompt_flags_gate_verdict(tmp_path: Path) -> None:
+    root = _make_repo(tmp_path, {"slop.py": "# TODO: implement this\n# done\n"})
+    result = mcp.tool_scan_slop({"path": str(root), "max_score": -1})
+    assert result["blocking_gate"]["would_fail_ci"] is True
+    assert "WOULD FAIL CI" in result["prompt"]
+
+
+def test_diagnose_reports_install(tmp_path: Path) -> None:
+    result = mcp.tool_diagnose({})
+    assert result["server"]["version"] == mcp.SERVER_VERSION
+    assert result["server"]["protocol_versions"] == list(mcp.PROTOCOL_VERSIONS)
+    assert result["python"]
+    assert result["engines_loaded"] == ["ai_slop_detector", "fix_engine", "path_filters"]
+    assert "git" in result["external_tools"]
+    assert result["mutating_tools"] == ["apply_fixes"]
+    assert "mcp_ping" in result["prompt"]
+
+
+def test_diagnose_reports_path_lock(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("MASTER_CI_MCP_ROOT", str(tmp_path))
+    result = mcp.tool_diagnose({})
+    assert result["path_lock"] == str(tmp_path)
+
+
+def test_check_updates_up_to_date_with_stub(monkeypatch) -> None:
+    monkeypatch.setattr(
+        mcp, "_fetch_latest_tag", lambda slug, api, timeout: f"v{mcp.SERVER_VERSION}"
+    )
+    result = mcp.tool_check_updates({})
+    assert result["up_to_date"] is True
+    assert result["auto_update"] is False
+    assert "Install is current" in result["prompt"]
+
+
+def test_check_updates_update_available_with_stub(monkeypatch) -> None:
+    monkeypatch.setattr(mcp, "_fetch_latest_tag", lambda slug, api, timeout: "v9.9.9")
+    result = mcp.tool_check_updates({})
+    assert result["up_to_date"] is False
+    assert result["latest_tag"] == "v9.9.9"
+    assert "git" in result["update_command"]
+    assert "never pushed" in result["prompt"]
+
+
+def test_check_updates_offline_is_graceful(monkeypatch) -> None:
+    monkeypatch.setenv("MASTER_CI_GH_API", "http://127.0.0.1:9")
+    result = mcp.tool_check_updates({})
+    assert "error" in result
+    assert "up_to_date" not in result
+    assert "latest_tag" not in result
+    assert "Nothing ever updates" in result["prompt"]
+
+
+def test_newest_tag_picks_highest_semver() -> None:
+    assert mcp._newest_tag(["v1.0.0", "v1.10.0", "v1.9.0", "nonsense"]) == "v1.10.0"
+    assert mcp._newest_tag([]) is None
+    assert mcp._newest_tag(["docs"]) is None
+
+
+def test_version_tuple_parses_and_stops() -> None:
+    assert mcp._version_tuple("v1.2.3") == (1, 2, 3)
+    assert mcp._version_tuple("1.2") == (1, 2)
+    assert mcp._version_tuple("weird") == ()
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +257,8 @@ def test_initialize_echoes_supported_protocol(monkeypatch) -> None:
     )
     assert captured[0]["result"]["protocolVersion"] == "2025-06-18"
     assert captured[0]["result"]["serverInfo"]["name"] == "master-ci"
+    assert "prompts" in captured[0]["result"]["capabilities"]
+    assert "instructions" in captured[0]["result"]
 
 
 def test_initialize_falls_back_on_unknown_protocol(monkeypatch) -> None:
@@ -198,6 +304,61 @@ def test_tool_call_error_is_isError_payload(monkeypatch, tmp_path: Path) -> None
     result = captured[0]["result"]
     assert result["isError"] is True
     assert "does not exist" in result["content"][0]["text"]
+
+
+def test_unknown_tool_is_32602(monkeypatch) -> None:
+    captured: list = []
+    monkeypatch.setattr(mcp, "_write", lambda m: captured.append(m))
+    mcp.handle_request(
+        {"jsonrpc": "2.0", "id": 8, "method": "tools/call", "params": {"name": "nope"}}
+    )
+    assert captured[0]["error"]["code"] == -32602
+
+
+def test_prompts_list_and_get(monkeypatch, tmp_path: Path) -> None:
+    captured: list = []
+    monkeypatch.setattr(mcp, "_write", lambda m: captured.append(m))
+    mcp.handle_request({"jsonrpc": "2.0", "id": 9, "method": "prompts/list"})
+    names = [p["name"] for p in captured[0]["result"]["prompts"]]
+    assert names == ["fix-my-repo", "explain-findings", "pre-flight"]
+    mcp.handle_request(
+        {
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "prompts/get",
+            "params": {"name": "fix-my-repo", "arguments": {"path": str(tmp_path)}},
+        }
+    )
+    message = captured[1]["result"]["messages"][0]
+    assert message["role"] == "user"
+    assert "apply_fixes" in message["content"]["text"]
+    assert str(tmp_path) in message["content"]["text"]
+
+
+def test_prompts_get_unknown_and_invalid(monkeypatch) -> None:
+    captured: list = []
+    monkeypatch.setattr(mcp, "_write", lambda m: captured.append(m))
+    mcp.handle_request(
+        {"jsonrpc": "2.0", "id": 11, "method": "prompts/get", "params": {"name": "nope"}}
+    )
+    assert captured[0]["error"]["code"] == -32602
+    mcp.handle_request(
+        {"jsonrpc": "2.0", "id": 12, "method": "prompts/get", "params": {"name": "pre-flight"}}
+    )
+    assert captured[1]["error"]["code"] == -32602
+    assert "files must be" in captured[1]["error"]["message"]
+
+
+def test_documentation_lists_every_tool_and_prompt() -> None:
+    """Docs parity: SKILL.md and docs/mcp.md name every registered capability."""
+    docs = (ROOT / "docs" / "mcp.md").read_text(encoding="utf-8")
+    skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+    for tool in mcp.TOOLS:
+        assert tool["name"] in docs, f"{tool['name']} missing from docs/mcp.md"
+        assert tool["name"] in skill, f"{tool['name']} missing from SKILL.md"
+    for prompt in mcp.PROMPTS:
+        assert prompt["name"] in docs, f"{prompt['name']} missing from docs/mcp.md"
+        assert prompt["name"] in skill, f"{prompt['name']} missing from SKILL.md"
 
 
 # ---------------------------------------------------------------------------
@@ -274,12 +435,29 @@ def test_stdio_full_session(tmp_path: Path) -> None:
             "apply_fixes",
             "list_checks",
             "filter_paths",
+            "diagnose",
+            "check_updates",
         ]
         assert all(t["inputSchema"]["type"] == "object" for t in listing["result"]["tools"])
+        prompts = client.request({"jsonrpc": "2.0", "id": 4, "method": "prompts/list"})
+        assert [p["name"] for p in prompts["result"]["prompts"]] == [
+            "fix-my-repo",
+            "explain-findings",
+            "pre-flight",
+        ]
+        walkthrough = client.request(
+            {
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "prompts/get",
+                "params": {"name": "fix-my-repo", "arguments": {"path": str(root)}},
+            }
+        )
+        assert "apply_fixes" in walkthrough["result"]["messages"][0]["content"]["text"]
         call = client.request(
             {
                 "jsonrpc": "2.0",
-                "id": 4,
+                "id": 6,
                 "method": "tools/call",
                 "params": {
                     "name": "apply_fixes",
@@ -289,16 +467,18 @@ def test_stdio_full_session(tmp_path: Path) -> None:
         )
         payload = json.loads(call["result"]["content"][0]["text"])
         assert payload["changed_any"] is True
+        assert payload["changed_files"] == ["dirty.txt"]
+        assert "git diff" in payload["prompt"]
         assert (root / "dirty.txt").read_text() == "trailing\n"
         bad = client.request(
             {
                 "jsonrpc": "2.0",
-                "id": 5,
+                "id": 7,
                 "method": "tools/call",
                 "params": {"name": "no_such_tool", "arguments": {}},
             }
         )
-        assert bad["result"]["isError"] is True
+        assert bad["error"]["code"] == -32602
     finally:
         client.close()
 
@@ -331,3 +511,17 @@ def test_stdio_parse_error_and_unknown_method(tmp_path: Path) -> None:
         assert "MASTER_CI_MCP_ROOT" in outside_call["result"]["content"][0]["text"]
     finally:
         client.close()
+
+
+def test_mcp_ping_self_test_passes() -> None:
+    """The standalone self-test client must pass against the real server."""
+    out = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "mcp_ping.py"), "--timeout", "30"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert out.returncode == 0, f"stdout: {out.stdout}\nstderr: {out.stderr}"
+    assert "[PASS] initialize" in out.stdout
+    assert "[PASS] tools/call diagnose" in out.stdout
+    assert out.stdout.rstrip().endswith("result: PASS")

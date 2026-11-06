@@ -3,14 +3,18 @@
 `scripts/mcp_server.py` exposes the Master CI engines over the Model
 Context Protocol so any MCP-capable AI assistant can use them: Claude
 Desktop, Cursor, Cline, Windsurf, z.ai, or any client that speaks MCP.
-The server is stdlib-only (no SDK, no pip install, no network) and speaks
-MCP over stdio with newline-delimited JSON-RPC 2.0.
+The server is stdlib-only (no SDK, no pip install, no required network)
+and speaks MCP over stdio with newline-delimited JSON-RPC 2.0. The
+repository root carries a `SKILL.md`, so the same install doubles as a
+skill that non-MCP assistants can load and follow.
 
 The guiding rule is the same one vibecheck applies: the MCP server wraps
 the exact engines CI runs - `ai_slop_detector.py`, `fix_engine.py`,
 `path_filters.py` - so a scan over MCP reports exactly what CI reports,
 and a fix over MCP applies exactly what the autofix and self-heal loops
-apply. There is no second implementation to drift.
+apply. There is no second implementation to drift. Every tool result also
+embeds a fix-ready `prompt` field: the next instruction the assistant
+should execute, so data never arrives without a plan.
 
 ## Configuration
 
@@ -91,20 +95,93 @@ picomatch-subset translator as the path-filter regression suite (one
 implementation, guaranteed by tests), so the answer matches what
 dorny/paths-filter will decide in CI.
 
+### `diagnose` (read-only)
+
+The install report: server and protocol versions, Python version, the
+loaded engines, which external formatters are on PATH and which are
+missing, the active `MASTER_CI_MCP_ROOT` lock, and the one-command self
+test. Missing formatters only narrow `apply_fixes`; the scan tools are
+stdlib and always work. This is the first tool to call when something
+behaves oddly.
+
+### `check_updates` (network)
+
+Compares the installed `SERVER_VERSION` against the newest semver tag on
+GitHub and returns the exact update command for the install type. Offline
+or rate-limited is reported gracefully as an `error` field, never a
+crash. The server never updates itself and never pushes anything; the
+only network call in the entire codebase lives behind this tool.
+
+## Prompts
+
+Three ready-made walkthroughs ship through the MCP prompts primitive
+(`prompts/list`, `prompts/get`), next to the per-result `prompt` fields:
+
+- `fix-my-repo`: the full loop as one paste-ready instruction (scan,
+  deliberate prose edits, plan, apply, verify, report).
+- `explain-findings`: reviewer-style triage of a scan - what is
+  mechanical, what needs real edits, what CI would do.
+- `pre-flight`: before pushing, which CI stacks fire and how the changed
+  files score.
+
+## Updates
+
+Nothing on a user's device updates automatically, ever. That is
+deliberate: silent auto-update would be a supply chain risk and would
+contradict the zero-surprise model of the rest of the template. The
+installed copy tells you when it is stale instead. Call `check_updates`
+over MCP, run `python3 scripts/mcp_ping.py --online`, or compare against
+<https://github.com/WasewaseX/master-ci/releases> manually. To update:
+
+```bash
+git -C <install-dir> pull --ff-only
+git -C <install-dir> fetch --tags --force
+```
+
+## Trust
+
+The wire protocol is what you should trust, and it is tested as such.
+`tests/test_mcp_server.py` spawns the server as a real subprocess and
+drives a full session over real stdio: initialize negotiation, the
+initialized notification, ping, tools/list schema checks, a mutating
+tools/call over a fixture repository, the path lock, parse errors and
+method-not-found codes. The suite runs in CI on every push. On any
+device, after any install, run:
+
+```bash
+python3 scripts/mcp_ping.py            # full wire-level self test
+python3 scripts/mcp_ping.py --online   # plus the update check
+```
+
+Exit code 0 means the install speaks MCP correctly; the same traffic is
+what Claude Desktop, Cursor or z.ai produce.
+
 ## Protocol notes
 
 The server supports `initialize` (protocol versions 2024-11-05, 2025-03-26
 and 2025-06-18; unknown versions fall back to 2024-11-05), `ping`,
-`tools/list`, `tools/call`, and answers `prompts/list` and
-`resources/list` with empty lists. Notifications are never answered.
-Malformed lines get a `-32700` error, unknown methods `-32601`, and tool
-failures come back as `isError: true` results - the server itself never
-crashes on a bad message.
+`tools/list`, `tools/call`, `prompts/list`, `prompts/get`, and answers
+`resources/list` with an empty list. Notifications are never answered.
+Malformed lines get a `-32700` error, unknown methods `-32601`, unknown
+tools or prompts `-32602`, and tool execution failures come back as
+`isError: true` results - the server itself never crashes on a bad
+message.
 
 ## Security model
 
-The server has no secrets, makes no network calls, and never pushes
-anything. `apply_fixes` is the only mutating tool and it mutates only the
-working tree you point it at - set `MASTER_CI_MCP_ROOT` to pin it. The
-lint tier runs `semgrep --autofix`, which only applies fixes that ship
-with registry rules you explicitly pass in `semgrep_config`.
+The server has no secrets, never pushes anything, and its only network
+access is the `check_updates` tool. `apply_fixes` is the only mutating
+tool and it mutates only the working tree you point it at - set
+`MASTER_CI_MCP_ROOT` to pin it. The lint tier runs `semgrep --autofix`,
+which only applies fixes that ship with registry rules you explicitly
+pass in `semgrep_config`.
+
+## Supply chain
+
+One file, zero dependencies, nothing to install: the server imports the
+stdlib plus its sibling engine scripts from the same checkout, so there
+is no package manager, no postinstall hook, no transitive dependency and
+no lockfile to audit. Upgrades are git pulls of a tagged release, and the
+SHA-pinned GitHub Actions in the workflows follow the same discipline.
+The engines themselves are the exact files CI runs, verified by the
+parity tests in `tests/test_workflow_contracts.py`.

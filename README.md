@@ -381,6 +381,20 @@ Desktop, Cursor, Cline, Windsurf, z.ai and friends - can use the same
 engines CI uses: scan for AI slop, ask which checks a change set would
 trigger, dry-run the fix policy, apply it, and read the check catalog.
 One engine, many surfaces: an MCP scan reports exactly what CI reports.
+Every tool result embeds a **fix-ready `prompt` field** - the next
+instruction the assistant should execute - and the MCP prompts primitive
+serves ready-made walkthroughs (`fix-my-repo`, `explain-findings`,
+`pre-flight`).
+
+Installing the repository doubles as installing the skill: the repo root
+carries a `SKILL.md`, so assistants with a skills directory can load it
+with one command:
+
+```bash
+git clone --depth 1 --branch v1.3.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+```
+
+MCP clients configure the same install like this:
 
 ```json
 {
@@ -401,22 +415,43 @@ one repository. Full tool reference: `docs/mcp.md`.
 | `scan_slop` | no | AI-integrity scan: score, grade, verdict, blocking vs advisory findings with remedies |
 | `scan_diff` | no | Scan only changed files (uncommitted or vs a base ref) + which CI stacks the change fires |
 | `plan_fixes` | no | Dry-run of the fix policy: which tools would run, how many files the normalizer would touch |
-| `apply_fixes` | **yes** | Run the fix policy in place (safe tier by default); review with `git diff` |
+| `apply_fixes` | **yes** | Run the fix policy in place (safe tier by default); returns the exact changed-file list; review with `git diff` |
 | `list_checks` | no | Blocking vs advisory rules, phrase database, remedies, scoring formula, fix tiers |
 | `filter_paths` | no | Which stacks a change set activates, from the live `dorny/paths-filter` table |
+| `diagnose` | no | Install report: versions, loaded engines, missing formatters, self-test command |
+| `check_updates` | network | Compare installed version with the newest tag; return the exact update command |
+
+**Updates are never automatic.** The install tells you when it is stale
+(`check_updates` or `mcp_ping --online`); you pull when you choose:
+`git -C <install-dir> pull --ff-only`.
+
+**Trust it before you use it** - the wire protocol is tested end to end
+in CI, and you can re-prove it on any device at any time:
+
+```bash
+python3 scripts/mcp_ping.py            # spawns the server, drives a real MCP session
+python3 scripts/mcp_ping.py --online   # plus the update check
+```
 
 ## Testing the template
 
 The template ships three layers of self-tests, all runnable locally:
 
 ```bash
-python -m pytest -q          # 78 tests:
+python -m pytest -q          # 136 tests:
                              # - detector contracts (43): every rule family,
                              #   slop pairs, scoring, SARIF, baseline
                              # - path-filter regression (12): 100 synthetic
                              #   repo layouts with exact expected stacks,
                              #   picomatch-semantics translator, output wiring
-                             # - workflow contracts (23): SHA pins, no
+                             # - fix engine (24): stack gating, safe/lint
+                             #   tiers, generic normalizer edges, manifest
+                             #   schema, engine/CI parity guard
+                             # - MCP server (33): handlers, path lock, fix-
+                             #   ready prompts, docs parity, and a real
+                             #   subprocess stdio session plus the standalone
+                             #   mcp_ping self test
+                             # - workflow contracts (24): SHA pins, no
                              #   secrets:inherit, no template injection in
                              #   run blocks, timeouts, permissions, helper
                              #   configs, automation safety, selftest wiring,
