@@ -42,6 +42,8 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: '3.13'
+      - name: Install runtime dependency (path_filters reads YAML)
+        run: python3 -m pip install --quiet pyyaml
       - name: Run benchmark (full corpus, best of 3)
         run: |
           python3 scripts/benchmark.py --repeat 3 --json bench.json \

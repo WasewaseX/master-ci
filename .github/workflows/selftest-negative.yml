@@ -56,7 +56,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           before=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          gh workflow run selftest.yml --ref main -f failure_paths=true
+          # -R because this job has no checkout; the API is all we need
+          gh workflow run selftest.yml -R "$GITHUB_REPOSITORY" --ref main -f failure_paths=true
           echo "dispatched at $before" | tee dispatch-time.txt
           sleep 10 # let GitHub register the run
       - name: Wait for the (intentionally red) child run
