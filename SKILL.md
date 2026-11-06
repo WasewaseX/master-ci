@@ -1,6 +1,6 @@
 ---
 name: master-ci
-description: Reusable CI template plus a zero-dependency MCP toolkit. Scan any repository for AI slop, preview and apply mechanical fixes, pre-check which CI stacks a change set fires, diagnose the install, and check for updates. Use when the user asks to scan or fix a repo, asks what CI would run, mentions master-ci, MCP, or AI slop, or wants fix-ready guidance.
+description: Reusable CI template plus a zero-dependency MCP toolkit. Scan any repository for AI slop, preview and apply mechanical fixes, pre-check which CI stacks a change set fires, benchmark engine performance, diagnose the install, and check for updates. Use when the user asks to scan or fix a repo, asks what CI would run, mentions master-ci, MCP, AI slop, or performance, or wants fix-ready guidance.
 license: MIT
 ---
 
@@ -52,6 +52,7 @@ for the scan and `python3 <skills-dir>/master-ci/scripts/fix_engine.py
 | `list_checks` | no | The check catalog: rules, phrase database, remedies, scoring, fix policy. |
 | `filter_paths` | no | Which CI stacks a change set would activate, per file. |
 | `diagnose` | no | Install report: versions, engines, missing formatters, self-test command. |
+| `bench` | no | Performance numbers of the engines on a deterministic corpus; baseline/check guidance. |
 | `check_updates` | network | Compare installed version with the newest GitHub tag; return the update command. |
 
 Every tool result ends with a `prompt` field: the fix-ready next step.

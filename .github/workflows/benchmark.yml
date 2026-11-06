@@ -1,0 +1,48 @@
+# =============================================================================
+# Benchmark - weekly performance tracking of the core engines
+# =============================================================================
+# Runs scripts/benchmark.py against a deterministic synthetic corpus and
+# publishes the numbers to the step summary plus a downloadable artifact.
+# Report-only by design: shared runners are too noisy to fail a build on
+# timings, but a week-over-week jump (e.g. detector slowing down) shows up
+# immediately in the summary. Locally, use --save/--check for strict gates:
+#   python3 scripts/benchmark.py --save baseline.json
+#   python3 scripts/benchmark.py --check baseline.json
+# =============================================================================
+
+name: Benchmark
+
+on:
+  schedule:
+    - cron: '0 4 * * 0' # Sundays 04:00 UTC - its own slot, away from the other loops
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: '3.13'
+      - name: Run benchmark (full corpus, best of 3)
+        run: |
+          python3 scripts/benchmark.py --repeat 3 --json bench.json > bench.md
+          {
+            echo "## Engine benchmark"
+            echo ""
+            cat bench.md
+            echo ""
+            echo "Report-only: compare week over week. Strict gating is available "
+            echo "locally via --save / --check (see the workflow header)."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: benchmark-results
+          path: bench.json
+          retention-days: 90

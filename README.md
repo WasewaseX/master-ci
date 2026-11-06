@@ -515,6 +515,27 @@ Public repos: free, no minutes burned against private-repo quotas.
 Private repos: works, but Actions minutes and Advanced Security SARIF
 ingestion have their own billing; test before adopting there.
 
+## Performance
+
+The engines are benchmarked against a deterministic synthetic corpus
+(fixed seed - identical on every machine, only timings vary):
+
+```bash
+python3 scripts/benchmark.py                        # full corpus, table
+python3 scripts/benchmark.py --save baseline.json   # record this machine
+python3 scripts/benchmark.py --check baseline.json  # fail on >3x regression
+```
+
+Reference numbers (`ubuntu-latest`, v1.5.0): detector ~1.2k files/s
+(~1.0 MB/s), fix-engine plan ~90 ms, generic whitespace scan ~30 ms for
+360 files, path filters ~60k paths/s, MCP server startup ~175 ms,
+stdio roundtrip ~55 ms (the roundtrip re-parses the live filter table
+per call - a known, measured optimization target). A weekly Benchmark
+workflow publishes fresh numbers to its step summary and a 90-day
+artifact; it is report-only because shared runners are too noisy to
+fail a build on timings. The MCP `bench` tool runs the same corpus from
+any AI client.
+
 ## Local development
 
 ```bash

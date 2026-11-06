@@ -104,6 +104,16 @@ test. Missing formatters only narrow `apply_fixes`; the scan tools are
 stdlib and always work. This is the first tool to call when something
 behaves oddly.
 
+### `bench` (read-only)
+
+Runs the performance benchmark (`scripts/benchmark.py`) of the loaded
+engines against a deterministic synthetic corpus (fixed seed, identical
+on every machine): detector throughput, fix-engine plan and generic scan
+times, path-filter throughput. Returns the metrics with units plus a
+`prompt` that explains how to save a baseline and gate a release with
+`--check`. MCP roundtrips are excluded inside the tool; run the script
+directly for the full suite including MCP startup and stdio timings.
+
 ### `check_updates` (network)
 
 Compares the installed `SERVER_VERSION` against the newest semver tag on

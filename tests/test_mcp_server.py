@@ -163,6 +163,31 @@ def test_scan_slop_prompt_flags_gate_verdict(tmp_path: Path) -> None:
     assert "WOULD FAIL CI" in result["prompt"]
 
 
+def test_bench_reports_metrics_and_next_steps() -> None:
+    result = mcp.tool_bench({"scale": "small", "repeat": 1})
+    assert result["scale"] == "small"
+    for key in (
+        "detector_files_per_sec",
+        "detector_ms",
+        "fix_plan_ms",
+        "fix_generic_scan_ms",
+        "pathfilter_paths_per_sec",
+    ):
+        assert key in result["metrics"]
+        assert result["metrics"][key] >= 0.0
+    assert "benchmark.py" in result["prompt"] and "--check" in result["prompt"]
+    assert result["units"]["detector_ms"] == "ms"
+
+
+def test_bench_rejects_unknown_scale() -> None:
+    try:
+        mcp.tool_bench({"scale": "huge"})
+    except ValueError as exc:
+        assert "small" in str(exc) and "full" in str(exc)
+    else:  # pragma: no cover - only reachable on regression
+        raise AssertionError("unknown scale must raise ValueError")
+
+
 def test_diagnose_reports_install(tmp_path: Path) -> None:
     result = mcp.tool_diagnose({})
     assert result["server"]["version"] == mcp.SERVER_VERSION
@@ -436,6 +461,7 @@ def test_stdio_full_session(tmp_path: Path) -> None:
             "list_checks",
             "filter_paths",
             "diagnose",
+            "bench",
             "check_updates",
         ]
         assert all(t["inputSchema"]["type"] == "object" for t in listing["result"]["tools"])

@@ -525,3 +525,26 @@ def test_deep_audit_never_gates_ci_and_never_fails_on_findings():
     steps = data["jobs"]["audit"]["steps"]
     scan_steps = [s for s in steps if s.get("continue-on-error") is True]
     assert len(scan_steps) >= 4, "scan steps must tolerate findings without failing the run"
+
+
+# ---------------------------------------------------------------------------
+# Benchmark (benchmark.yml)
+# ---------------------------------------------------------------------------
+
+
+def test_benchmark_is_scheduled_report_only_and_uploads_results():
+    data = load(WF_DIR / "benchmark.yml")
+    trigger = data[True] if True in data else data["on"]
+    assert set(trigger) == {"schedule", "workflow_dispatch"}, (
+        "benchmark is a scheduled/manual report, not a push or PR gate"
+    )
+    assert (data.get("permissions") or {}).get("contents") == "read"
+    text = (WF_DIR / "benchmark.yml").read_text(encoding="utf-8")
+    assert "git push" not in text, "benchmark must never push"
+    job = data["jobs"]["bench"]
+    run_blocks = " ".join(str(s.get("run", "")) for s in job["steps"])
+    assert "scripts/benchmark.py" in run_blocks
+    assert "--json" in run_blocks, "results must be written as JSON for the artifact"
+    steps = [str(s.get("uses", "")) for s in job["steps"]]
+    assert any("upload-artifact" in u for u in steps), "results must be uploaded"
+    assert "$GITHUB_STEP_SUMMARY" in run_blocks, "results must reach the step summary"

@@ -48,7 +48,7 @@ from typing import Any, Callable
 
 SCRIPTS = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPTS.parent
-SERVER_VERSION = "1.3.0"
+SERVER_VERSION = "1.5.0"
 DEFAULT_REPO_SLUG = "WasewaseX/master-ci"
 DEFAULT_GH_API = "https://api.github.com"
 UPDATE_TIMEOUT_SECONDS = 10.0
@@ -519,6 +519,39 @@ def _fetch_latest_tag(slug: str, api: str, timeout: float) -> str | None:
     return _newest_tag(names)
 
 
+def tool_bench(args: dict[str, Any]) -> dict[str, Any]:
+    """Measure engine throughput and latency on a deterministic corpus."""
+    bench_module = _load("benchmark")
+
+    scale = str(args.get("scale", "small"))
+    if scale not in bench_module.SCALES:
+        raise ValueError(f"scale must be one of: {', '.join(sorted(bench_module.SCALES))}")
+    repeat = int(args.get("repeat", 1))
+    metrics = bench_module.run_suite(scale=scale, repeat=max(1, repeat), with_mcp=False)
+    return {
+        "scale": scale,
+        "repeat": repeat,
+        "metrics": metrics,
+        "units": bench_module.UNITS,
+        "note": (
+            "MCP roundtrips are excluded here (this call already runs inside the "
+            "server); run scripts/benchmark.py for the full suite including MCP "
+            "startup and stdio roundtrips."
+        ),
+        "prompt": (
+            f"Benchmark finished on the {scale} corpus: detector "
+            f"{metrics.get('detector_files_per_sec', 0):.0f} files/s, fix plan "
+            f"{metrics.get('fix_plan_ms', 0):.0f} ms, generic scan "
+            f"{metrics.get('fix_generic_scan_ms', 0):.0f} ms, path filters "
+            f"{metrics.get('pathfilter_paths_per_sec', 0):.0f} paths/s. To gate a "
+            "release on performance, run: python3 scripts/benchmark.py --save "
+            "baseline.json, then benchmark.py --check baseline.json before the next "
+            "tag. Pair with diagnose to see which external tools are missing on "
+            "this machine."
+        ),
+    }
+
+
 def tool_check_updates(_args: dict[str, Any]) -> dict[str, Any]:
     """Compare the installed version against the newest tag on GitHub."""
     slug = os.environ.get("MASTER_CI_REPO", DEFAULT_REPO_SLUG)
@@ -693,6 +726,29 @@ TOOLS: list[dict[str, Any]] = [
             "Read-only."
         ),
         "inputSchema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "bench",
+        "description": (
+            "Run the performance benchmark of the Master CI engines (AI-integrity "
+            "detector, fix engine, path filters) against a deterministic synthetic "
+            "corpus and get comparable numbers for this machine. Read-only."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "scale": {
+                    "type": "string",
+                    "enum": ["small", "full"],
+                    "description": "corpus size (default: small for quick checks)",
+                },
+                "repeat": {
+                    "type": "integer",
+                    "description": "best-of-N timing runs (default 1)",
+                },
+            },
+            "required": [],
+        },
     },
     {
         "name": "check_updates",
