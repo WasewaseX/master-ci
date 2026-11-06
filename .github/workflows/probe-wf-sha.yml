@@ -11,9 +11,13 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Caller context
+        env:
+          WF_SHA: ${{ github.workflow_sha }}
+          WF_REF: ${{ github.workflow_ref }}
+          GHA_SHA: ${{ github.sha }}
         run: |
-          echo "caller workflow_sha=${{ github.workflow_sha }}"
-          echo "caller workflow_ref=${{ github.workflow_ref }}"
-          echo "caller sha=${{ github.sha }}"
+          echo "caller workflow_sha=$WF_SHA"
+          echo "caller workflow_ref=$WF_REF"
+          echo "caller github.sha=$GHA_SHA"
   callee:
     uses: ./.github/workflows/probe-callee.yml
