@@ -541,10 +541,11 @@ stdio roundtrip ~55 ms (the roundtrip re-parses the live filter table
 per call - a known, measured optimization target). A weekly Benchmark
 workflow publishes fresh numbers to its step summary, a 90-day
 artifact, AND appends one JSON line per run to `benchmarks/history.jsonl`
-in the repo - a reproducible hosted history that survives artifact
-expiry and is diffable week over week. It is report-only because shared
-runners are too noisy to fail a build on timings. The MCP `bench` tool
-runs the same corpus from any AI client.
+on the dedicated `benchmarks` branch - a reproducible hosted history
+that survives artifact expiry and is diffable with plain git
+(`git log -p benchmarks/history.jsonl`). It is report-only because
+shared runners are too noisy to fail a build on timings. The MCP
+`bench` tool runs the same corpus from any AI client.
 
 ## Local development
 

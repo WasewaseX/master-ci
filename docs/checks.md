@@ -285,11 +285,14 @@ the wrong reason - turns the selftest or the harness red.
 `benchmark.yml` runs `scripts/benchmark.py` on a deterministic corpus
 (Sundays 04:00 UTC and on demand) and publishes the numbers three ways:
 the step summary, a 90-day artifact, and - the durable one - one JSON line
-per run appended to `benchmarks/history.jsonl`, committed back to main.
-The history survives artifact expiry, is diffable week over week with
-plain git, and every line is schema-checked by the pytest suite. It is
-report-only: shared runners are too noisy to gate on timings, but a
-week-over-week jump is immediately visible in the history diff.
+per run appended to `benchmarks/history.jsonl` on the dedicated
+`benchmarks` branch. The branch is unprotected on purpose: main requires
+the `ci-success` status check, which a GITHUB_TOKEN push cannot satisfy,
+and the project rule "automation never pushes main" stands. The history
+survives artifact expiry, is diffable week over week with plain git, and
+every line is schema-checked by the pytest suite. It is report-only:
+shared runners are too noisy to gate on timings, but a week-over-week
+jump is immediately visible in the history diff.
 
 ## `heal` and `audit` - the reactive loop, the fix engine and the whole-repo sweep
 
