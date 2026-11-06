@@ -355,42 +355,41 @@ def test_mutable_template_ref_warns_loudly():
     )
 
 
-def test_template_ref_defaults_to_the_workflow_commit():
-    """The default helper ref must be immutable, not a moving branch.
+def test_template_ref_fails_closed_for_foreign_callers():
+    """Empty template_ref must resolve only when helpers live in the caller.
 
-    github.workflow_sha inside a called reusable workflow is the exact
-    commit of the workflow file that was fetched (verified empirically,
-    run 42282668886). Resolving an empty template_ref to that SHA makes
-    the zero-config path reproducible: helpers bit-match the workflow
-    version, and the mutable main default disappears.
+    github.workflow_sha is the CALLER's commit even for cross-repo calls -
+    the canary proved it by fetching "not our ref" for its own HEAD
+    against the template repo (canary run 42283700844, master-ci v1.8.5).
+    So the resolution chain is: an explicit input wins; empty falls back
+    to the caller's own commit only when the helper repo IS the caller
+    (self/fork, probed for the helper module at that exact SHA); and
+    everything else fails meta with pin instructions instead of silently
+    fetching a mutable branch.
     """
     text = (WF_DIR / "master-ci.yml").read_text(encoding="utf-8")
-    # input: empty default, no mutable default anywhere
     assert "default: main" not in text, "template_ref must not default to a mutable branch"
     block = text.split("template_ref:")[1].split("concurrency_key:")[0]
     assert "default: ''" in block, "template_ref input must default to the empty string"
     meta = text.split("meta:")[1].split("\n  changes:")[0]
-    # resolution chain and output wiring
-    assert "WORKFLOW_SHA: ${{ github.workflow_sha }}" in meta, (
-        "meta must read the called workflow's SHA"
+    assert "WORKFLOW_SHA: ${{ github.workflow_sha }}" in meta, "meta must read the caller's SHA"
+    assert 'caller_slug="${caller_ref%%/.github/*}"' in meta, "meta must parse the caller slug"
+    assert "raw.githubusercontent.com/$caller_slug/${WORKFLOW_SHA}/$helper" in meta, (
+        "the self/fork default must be probed at the caller's exact commit"
     )
-    assert 'template_ref="$WORKFLOW_SHA"' in meta, "empty input must resolve to the workflow SHA"
-    assert "template_ref=$template_ref" in meta and '>> "$GITHUB_OUTPUT"' in meta, (
-        "the resolved ref must be exported for downstream jobs"
+    assert '[ "$TEMPLATE_REPO_INPUT" = "$caller_slug" ]' in meta, (
+        "the SHA default must not fire for an explicit foreign helper repo"
     )
+    assert "::error::template_ref is empty" in meta, "foreign callers must fail closed"
     assert "template_ref: ${{ steps.repo.outputs.template_ref }}" in meta, (
-        "meta must expose template_ref as a job output"
+        "meta must expose the resolved ref as a job output"
     )
-    # downstream consumption: helper checkouts follow meta, never the raw input
     assert "ref: ${{ inputs.template_ref }}" not in text, (
         "helper checkouts must consume the resolved ref, not the raw input"
     )
     assert text.count("ref: ${{ needs.meta.outputs.template_ref }}") == 7, (
         "all seven helper checkouts must use the resolved ref"
     )
-    # validation no longer treats empty as mutable
-    validate = meta.split("caller inputs validated")[0]
-    assert "''|main|master)" not in validate, "empty template_ref must not warn as mutable"
 
 
 def test_meta_verifies_helper_presence_before_fallback():
@@ -509,6 +508,7 @@ def test_selftest_exercises_pass_failure_and_validation_paths():
         "input-validation",
         "input-validation-stack-toggle",
         "input-validation-select",
+        "input-validation-template-ref",
         "select-subset",
         "verify",
     ):
@@ -520,6 +520,7 @@ def test_selftest_exercises_pass_failure_and_validation_paths():
         "input-validation",
         "input-validation-stack-toggle",
         "input-validation-select",
+        "input-validation-template-ref",
     ):
         condition = str(jobs[job_id].get("if", ""))
         assert "inputs.failure_paths == 'true'" in condition, (
@@ -536,6 +537,7 @@ def test_selftest_exercises_pass_failure_and_validation_paths():
         "input-validation",
         "input-validation-stack-toggle",
         "input-validation-select",
+        "input-validation-template-ref",
         "select-subset",
     ):
         assert wanted in jobs["verify"]["needs"], f"verify must watch {wanted}"
@@ -698,6 +700,7 @@ def test_expected_failure_harness_runs_the_negative_paths_routinely():
         "input-validation",
         "input-validation-stack-toggle",
         "input-validation-select",
+        "input-validation-template-ref",
     ):
         assert f'"{job_name}"' in script, f"harness must assert {job_name} failed"
     for job_name in ("happy-path", "select-subset", "verify"):

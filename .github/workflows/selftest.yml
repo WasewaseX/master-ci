@@ -107,6 +107,21 @@ jobs:
       security-events: write
       id-token: write
 
+  # a foreign helper repo with an empty template_ref must fail meta -
+  # helpers cannot be inferred safely for callers other than the template
+  input-validation-template-ref:
+    if: inputs.failure_paths == 'true'
+    uses: ./.github/workflows/master-ci.yml # zizmor: ignore[self-repository]
+    with:
+      template_repo: 'octocat/not-a-real-helper-repo'
+      scorecard_publish: false
+      concurrency_key: selftest-tref
+    permissions:
+      contents: read
+      pull-requests: write
+      security-events: write
+      id-token: write
+
   # a valid select token runs only that job and the pipeline still passes
   select-subset:
     uses: ./.github/workflows/master-ci.yml # zizmor: ignore[self-repository]
@@ -121,7 +136,7 @@ jobs:
       id-token: write
 
   verify:
-    needs: [happy-path, enforced-failure, input-validation, input-validation-stack-toggle, input-validation-select, select-subset]
+    needs: [happy-path, enforced-failure, input-validation, input-validation-stack-toggle, input-validation-select, input-validation-template-ref, select-subset]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -137,6 +152,8 @@ jobs:
       TOGGLE_VERDICT: ${{ needs.input-validation-stack-toggle.outputs.verdict }}
       BADSELECT_RESULT: ${{ needs.input-validation-select.result }}
       BADSELECT_VERDICT: ${{ needs.input-validation-select.outputs.verdict }}
+      BADREF_RESULT: ${{ needs.input-validation-template-ref.result }}
+      BADREF_VERDICT: ${{ needs.input-validation-template-ref.outputs.verdict }}
       SUBSET_RESULT: ${{ needs.select-subset.result }}
       SUBSET_VERDICT: ${{ needs.select-subset.outputs.verdict }}
     steps:
@@ -164,11 +181,14 @@ jobs:
             assert_eq "stack-toggle validation verdict" "$TOGGLE_VERDICT" "failed"
             assert_eq "select validation result" "$BADSELECT_RESULT" "failure"
             assert_eq "select validation verdict" "$BADSELECT_VERDICT" "failed"
+            assert_eq "template-ref validation result" "$BADREF_RESULT" "failure"
+            assert_eq "template-ref validation verdict" "$BADREF_VERDICT" "failed"
           else
             assert_eq "enforced-failure skipped" "$FAIL_RESULT" "skipped"
             assert_eq "input-validation skipped" "$VALID_RESULT" "skipped"
             assert_eq "stack-toggle validation skipped" "$TOGGLE_RESULT" "skipped"
             assert_eq "select validation skipped" "$BADSELECT_RESULT" "skipped"
+            assert_eq "template-ref validation skipped" "$BADREF_RESULT" "skipped"
           fi
-          echo "selftest summary: happy=$HAPPY_VERDICT fail=$FAIL_VERDICT valid=$VALID_VERDICT subset=$SUBSET_VERDICT"
+          echo "selftest summary: happy=$HAPPY_VERDICT fail=$FAIL_VERDICT valid=$VALID_VERDICT tref=$BADREF_VERDICT subset=$SUBSET_VERDICT"
           exit $fail

@@ -183,7 +183,8 @@ jobs:
           done
           case "$TEMPLATE_REF" in
             main|master)
-              echo "::warning::template_ref='$TEMPLATE_REF' fetches helpers from a mutable branch - pin it to a release tag (template_ref: v1.8.4) or leave it empty to inherit this workflow's exact commit" ;;
+              echo "::warning::template_ref='$TEMPLATE_REF' fetches helpers from a mutable branch"
+              echo "::warning::pin it to a release tag for reproducible CI - empty means the caller's own commit (self/fork only)" ;;
           esac
           case "$PROFILE" in
             quick|standard|strict|custom) ;;
@@ -228,20 +229,30 @@ jobs:
           helper='scripts/ai_slop_detector.py'
           # Helper ref resolution, in order:
           #   1. an explicit template_ref input wins (validated above)
-          #   2. empty inherits the exact commit SHA of this workflow file -
-          #      helpers then match the workflow version bit for bit, so a
-          #      consumer pinned to master-ci.yml@v1.8.5 fetches v1.8.5's
-          #      scripts no matter what lands on main afterwards
-          #   3. if the SHA is unavailable, fall back to main LOUDLY: the
-          #      mutable-branch warning is the price of the fallback
+          #   2. empty = the calling repository's own commit. Correct ONLY
+          #      when the helpers live in the caller (self or fork):
+          #      github.workflow_sha is the CALLER's commit even for
+          #      cross-repo calls - the canary proved it by fetching
+          #      "not our ref" for its own HEAD against the template
+          #      repo. So probe caller@SHA for the helper module and pass
+          #      only when the helper repo is the caller (or unset).
+          #   3. everything else fails meta with pin instructions - a
+          #      silent mutable-main fallback is exactly the helper drift
+          #      this input exists to prevent.
+          caller_ref="${GITHUB_WORKFLOW_REF:-}"
+          caller_slug="${caller_ref%%/.github/*}"
           if [ -n "$TEMPLATE_REF_INPUT" ]; then
             template_ref="$TEMPLATE_REF_INPUT"
-          elif [ -n "$WORKFLOW_SHA" ]; then
+          elif [ -n "$WORKFLOW_SHA" ] && [ -n "$caller_slug" ] \
+            && [ "$caller_slug" != "$caller_ref" ] \
+            && { [ -z "$TEMPLATE_REPO_INPUT" ] || [ "$TEMPLATE_REPO_INPUT" = "$caller_slug" ]; } \
+            && curl -fsIL "https://raw.githubusercontent.com/$caller_slug/${WORKFLOW_SHA}/$helper" > /dev/null 2>&1; then
             template_ref="$WORKFLOW_SHA"
-            echo "::notice::template_ref empty - helpers pinned to this workflow's own commit ${WORKFLOW_SHA}"
+            echo "::notice::template_ref empty - helpers resolved to the calling repository's own commit (self/fork path)"
           else
-            template_ref='main'
-            echo "::warning::workflow SHA unavailable - falling back to mutable template_ref=main; pin template_ref to a release tag for reproducible CI"
+            echo "::error::template_ref is empty and the helpers are not available from the calling repository's own commit."
+            echo "::error::Pin the helper ref to a release tag, e.g. template_ref: <tag of ${TEMPLATE_REPO_INPUT:-$fallback}>."
+            exit 1
           fi
           TEMPLATE_REF="$template_ref"
           echo "template_ref=$template_ref" >> "$GITHUB_OUTPUT"

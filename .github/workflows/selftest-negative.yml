@@ -14,7 +14,8 @@
 #        happy-path / select-subset / verify        -> success
 #        enforced-failure / input-validation /
 #        input-validation-stack-toggle /
-#        input-validation-select                    -> failure
+#        input-validation-select /
+#        input-validation-template-ref             -> failure
 #      If the child run is green, the negative paths did not fail - the
 #      gate is broken. If a job failed in the wrong way, the gate lied.
 #      Either way this harness exits non-zero; only a correct red passes.
@@ -124,6 +125,7 @@ jobs:
               "input-validation",
               "input-validation-stack-toggle",
               "input-validation-select",
+              "input-validation-template-ref",
           ]
           expected_success = ["happy-path", "select-subset"]
 
@@ -155,7 +157,7 @@ jobs:
               for p in problems:
                   print(f"  - {p}")
               sys.exit(1)
-          print("expected-failure harness PASS: all 7 jobs concluded exactly as designed")
+          print("expected-failure harness PASS: all 8 jobs concluded exactly as designed")
           EOF
       - name: Summarize
         if: always()
