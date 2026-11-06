@@ -1,28 +1,33 @@
 # =============================================================================
-# Expected-failure harness - the negative selftest paths, run routinely
+# Expected-failure watchdog - the negative selftest paths, run routinely
 # =============================================================================
-# selftest.yml contains four calls that are DESIGNED to fail (unreachable
-# semgrep pack, traversal template_ref, typo'd stack toggle, unknown select
-# job). A workflow run cannot stay green while its own jobs fail - GitHub
-# colors the whole run red - so those calls used to be gated behind a
-# manual `failure_paths=true` dispatch and effectively never ran.
+# Red in CI may only ever mean broken, so the five designed-failure calls
+# (unreachable semgrep pack, traversal template_ref, typo'd stack toggle,
+# unknown select job, foreign helper with an empty template_ref) live in
+# their own dispatch-only workflow, selftest-guardrails.yml, whose red runs
+# are correct by construction. A reusable-workflow caller job has no
+# continue-on-error, so isolation is the only way to keep a designed
+# failure from reddening a routine run.
 #
-# This harness turns that red into a pass signal:
-#   1. dispatch selftest.yml with failure_paths=true on main
-#   2. wait for the child run to finish (it IS red, by design)
-#   3. assert every job concluded exactly as designed:
-#        happy-path / select-subset / verify        -> success
+# This watchdog makes that designed red ROUTINE instead of
+# never-dispatched:
+#   1. dispatch selftest-guardrails.yml on main
+#   2. wait for the child run to finish - it MUST conclude red
+#   3. assert the red is exactly the designed red:
 #        enforced-failure / input-validation /
 #        input-validation-stack-toggle /
 #        input-validation-select /
-#        input-validation-template-ref             -> failure
-#      If the child run is green, the negative paths did not fail - the
-#      gate is broken. If a job failed in the wrong way, the gate lied.
-#      Either way this harness exits non-zero; only a correct red passes.
+#        input-validation-template-ref             -> inner jobs fail
+#        verify                                    -> success
+#      If the child run is green, the guardrails did not fail - a
+#      validation rule is gone. If verify failed, a guardrail fired in the
+#      wrong way. Either way this harness exits non-zero; only the correct
+#      red passes.
 #
-# Triggers: pushes to main that touch the workflow or its test bed, a
-# weekly schedule, and manual dispatch. The child selftest run appears red
-# in the Actions list - that is the point, and it is contained there.
+# Triggers: pushes to main that touch the test bed, a weekly schedule, and
+# manual dispatch. The dispatched child run appears red in the Actions list
+# under the name "Selftest Guardrails" - that is the point, and its name
+# says so.
 # =============================================================================
 
 name: Selftest Negative Harness
@@ -34,6 +39,7 @@ on:
       - '.github/workflows/master-ci.yml'
       - '.github/workflows/selftest.yml'
       - '.github/workflows/selftest-negative.yml'
+      - '.github/workflows/selftest-guardrails.yml'
       - 'tests/**'
   schedule:
     - cron: '30 4 * * 0' # Sundays 04:30 UTC, right after the Benchmark slot
@@ -41,7 +47,7 @@ on:
 
 permissions:
   contents: read
-  actions: write # dispatch selftest.yml and read its runs
+  actions: write # dispatch selftest-guardrails.yml and read its runs
 
 concurrency:
   group: selftest-negative
@@ -52,16 +58,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - name: Dispatch selftest with failure_paths=true
+      - name: Dispatch the guardrails suite
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           before=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           # -R because this job has no checkout; the API is all we need
-          gh workflow run selftest.yml -R "$GITHUB_REPOSITORY" --ref main -f failure_paths=true
+          gh workflow run selftest-guardrails.yml -R "$GITHUB_REPOSITORY" --ref main
           echo "dispatched at $before" | tee dispatch-time.txt
           sleep 10 # let GitHub register the run
-      - name: Wait for the (intentionally red) child run
+      - name: Wait for the (designed-red) child run
         id: wait
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -70,13 +76,13 @@ jobs:
           run_id=""
           for _ in $(seq 1 12); do
             run_id=$(gh api \
-              "repos/${GITHUB_REPOSITORY}/actions/workflows/selftest.yml/runs?event=workflow_dispatch&created=%3E%3D${dispatched_at}&per_page=5" \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/selftest-guardrails.yml/runs?event=workflow_dispatch&created=%3E%3D${dispatched_at}&per_page=5" \
               --jq '.workflow_runs | map(select(.head_branch == "main")) | sort_by(.created_at) | last | .id // empty')
             if [ -n "$run_id" ]; then break; fi
             sleep 10
           done
           if [ -z "$run_id" ]; then
-            echo "::error::could not find the dispatched selftest run"
+            echo "::error::could not find the dispatched guardrails run"
             exit 1
           fi
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
@@ -88,10 +94,10 @@ jobs:
           conclusion=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}" --jq .conclusion)
           echo "child run ${run_id} conclusion: ${conclusion}"
           if [ "$conclusion" != "failure" ]; then
-            echo "::error::child selftest run concluded '${conclusion}' - the designed failures did NOT fail (gate is broken)"
+            echo "::error::guardrails run concluded '${conclusion}' - the designed failures did NOT fail (a guardrail is gone; the gate is broken)"
             exit 1
           fi
-      - name: Assert every job concluded exactly as designed
+      - name: Assert the red is exactly the designed red
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_ID: ${{ steps.wait.outputs.run_id }}
@@ -127,7 +133,7 @@ jobs:
               "input-validation-select",
               "input-validation-template-ref",
           ]
-          expected_success = ["happy-path", "select-subset"]
+          expected_success = ["verify"]
 
           problems = []
           for name in expected_failure:
@@ -139,25 +145,14 @@ jobs:
                       f"{name}: expected failure, inner conclusions = {sorted(set(inner))}"
                   )
           for name in expected_success:
-              inner = caller_jobs.get(name)
-              if not inner:
-                  problems.append(f"{name}: never ran (no inner jobs found)")
-              elif {"failure", "cancelled", "timed_out", "startup_failure"} & set(inner):
-                  problems.append(
-                      f"{name}: expected success, inner conclusions = {sorted(set(inner))}"
-                  )
-              elif "success" not in inner:
-                  problems.append(
-                      f"{name}: no successful inner job, inner = {sorted(set(inner))}"
-                  )
-          if plain.get("verify") != "success":
-              problems.append(f"verify: expected success, got {plain.get('verify')}")
+              if plain.get(name) != "success":
+                  problems.append(f"{name}: expected success, got {plain.get(name)}")
           if problems:
               print("expected-failure harness FAILED:")
               for p in problems:
                   print(f"  - {p}")
               sys.exit(1)
-          print("expected-failure harness PASS: all 8 jobs concluded exactly as designed")
+          print("expected-failure harness PASS: designed red, all 5 guardrails fired and verify succeeded")
           EOF
       - name: Summarize
         if: always()
@@ -165,9 +160,10 @@ jobs:
           RUN_URL: ${{ steps.wait.outputs.run_id != '' && format('https://github.com/{0}/actions/runs/{1}', github.repository, steps.wait.outputs.run_id) || 'not dispatched' }}
         run: |
           {
-            echo "## Expected-failure harness"
+            echo "## Expected-failure watchdog"
             echo ""
-            echo "Child selftest run: $RUN_URL"
+            echo "Child guardrails run: $RUN_URL"
             echo ""
-            echo "Red child run + this green harness = the negative paths work."
+            echo "A red child run named \"Selftest Guardrails\" + this green"
+            echo "watchdog = the negative paths work. Red anywhere else = broken."
           } >> "$GITHUB_STEP_SUMMARY"

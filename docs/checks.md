@@ -250,35 +250,48 @@ positive rate documented above.
 
 ## `selftest` - the template tests itself
 
-`selftest.yml` calls the reusable workflow six ways:
+`selftest.yml` is the routine integration test and is permanently green.
+It calls the reusable workflow two ways:
 
 1. **happy-path** - quick profile; `verify` asserts job success and
    `verdict=passed`. Runs on every push and PR.
 2. **select-subset** - `select: secrets`; most jobs skip cleanly and the
    aggregate gate still reports `verdict=passed`, proving job selection
    works end-to-end. Runs on every push and PR.
+
+A GitHub limitation shapes the rest of the story: a job that calls a
+reusable workflow has no `continue-on-error`, so a failing call reddens
+the calling run no matter what - and red in CI may only ever mean broken.
+The five designed-failure calls therefore live in their own file,
+`selftest-guardrails.yml`:
+
 3. **enforced-failure** - a Semgrep pack that cannot exist.
 4. **input-validation** - an unsafe `template_ref` (path traversal).
 5. **input-validation-stack-toggle** - `run_python: 'ture'`, a typo that
    must fail meta instead of silently skipping the Python stack.
 6. **input-validation-select** - `select: 'secrets,bogus-job'`, an unknown
    token that must fail meta instead of silently skipping a check.
+7. **input-validation-template-ref** - a foreign helper repo with an empty
+   `template_ref`; a helper cannot infer a ref safely for callers other
+   than the template itself, so this must fail meta (the fail-closed rule
+   introduced in v1.8.6).
 
-Calls 3-6 are designed to fail, and a workflow run cannot stay green while
-its own jobs fail - so they run in failure-path mode (dispatch with
-`failure_paths=true`, run goes red on purpose) and `verify` asserts every
-one of them reported `verdict=failed`.
+`selftest-guardrails.yml` is dispatch-only: it never runs on push or
+schedule by itself, its run name says the red is the expected outcome, and
+its `verify` job asserts every one of the five reported result=failure and
+`verdict=failed` - if any guardrail stops firing, that red is a real
+defect signal, not the designed red.
 
-That red is exercised ROUTINELY by `selftest-negative.yml`, the
-**expected-failure harness**: it dispatches the selftest with
-`failure_paths=true` (weekly schedule, plus pushes that touch the reusable
-workflow, the selftest or the test bed), waits for the child run, and
-asserts every job concluded exactly as designed - happy-path, select-subset
-and verify succeed, the four negative calls fail. Only a correct red turns
-the harness green; a green child run or a mis-shaped failure fails it.
+That designed red is exercised ROUTINELY by `selftest-negative.yml`, the
+**expected-failure watchdog**: it dispatches the guardrails suite (weekly
+schedule, plus pushes that touch the reusable workflow, the selftest, the
+watchdog or the test bed), waits for the child run, and asserts the red is
+exactly the designed red - the five negative calls failed on their inner
+jobs and verify succeeded. A green child run or a mis-shaped outcome fails
+the watchdog.
 
 A regression that makes the pipeline pass when it should fail - or fail for
-the wrong reason - turns the selftest or the harness red.
+the wrong reason - turns the selftest or the watchdog red.
 
 ## `benchmark` - the hosted performance history
 

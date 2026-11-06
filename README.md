@@ -80,7 +80,7 @@ which keeps its baseline reproducible across template releases:
 ```yaml
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v1.8.6
+      template_ref: v1.8.7
 ```
 
 ### Required check
@@ -412,8 +412,9 @@ Nightly ──> audit tracking issue (secrets, vulns, prose: humans)
 |---|---|---|---|
 | Dogfood | `ci.yml` | every push / PR | The template CI-checks itself with its own workflows |
 | Fixture contracts | `ci.yml` | every push / PR | Detector and tooling run against `fixtures/` edge cases (empty, slop, ignore-file, malformed YAML) |
-| **Selftest** | `selftest.yml` | every push / PR | Calls the reusable workflow six ways: must pass (quick profile), select-subset must pass, and four designed-failure calls (broken Semgrep pack, unsafe `template_ref`, typo'd stack toggle, unknown select token) run in failure-path mode - the `verify` job asserts every verdict |
-| **Expected-failure harness** | `selftest-negative.yml` | weekly + relevant pushes + manual | Runs the four designed-failure calls ROUTINELY: dispatches the selftest with `failure_paths=true` (red by design) and asserts every job concluded exactly as designed - only a correct red turns the harness green |
+| **Selftest** | `selftest.yml` | every push / PR | The routine integration test, permanently green by construction: quick profile must pass, `select: secrets` must pass, and `verify` asserts both verdicts. A manual dispatch behaves exactly like a push - red always means broken |
+| **Expected-failure watchdog** | `selftest-negative.yml` | weekly + relevant pushes + manual | Dispatches `selftest-guardrails.yml` and asserts the red is exactly the designed red - all five guardrails fired on their inner jobs and verify succeeded. Green child or mis-shaped outcome fails the watchdog |
+| Designed-failure suite | `selftest-guardrails.yml` | dispatched by the watchdog only | The five guardrail calls (broken Semgrep pack, traversal `template_ref`, typo'd stack toggle, unknown select token, foreign helper with empty `template_ref`) run isolated here - caller jobs have no `continue-on-error`, so a dedicated dispatch-only workflow is the only way a designed red cannot pollute a routine run; its run name says red is expected |
 | Self-update | `dependabot.yml` | weekly | Bumps every pinned action, grouped PR |
 | **Autofix** | `autofix.yml` | weekly + right after every Deep Audit + manual | Runs the shared fix engine (`scripts/fix_engine.py`) - safe tier (rustfmt, gofmt, `ruff format`, Biome, shfmt, markdownlint, whitespace/EOF normalizer) plus lint tier (`ruff check --fix`, `go mod tidy`, `sqlfluff fix`, `semgrep --autofix`) - and opens one PR |
 | **Self-Heal** | `heal.yml` | after CI failures on the default branch | Applies the **same fix engine** reactively, opens/updates the `ci/autofix` PR; circuit breakers: default-branch failures only, one heal at a time, stops while a fix PR is open |
@@ -454,7 +455,7 @@ carries a `SKILL.md`, so assistants with a skills directory can load it
 with one command:
 
 ```bash
-git clone --depth 1 --branch v1.8.6 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+git clone --depth 1 --branch v1.8.7 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
 ```
 
 MCP clients configure the same install like this:
@@ -522,12 +523,16 @@ python -m pytest -q          # 173 tests:
                              #   schedule/no-gate guarantees
                              # - benchmark + meta validation (8): report
                              #   schema, select/stack allowlists
-.github/workflows/selftest.yml  # in CI: six live calls of the reusable
-                                # workflow (pass / select subset / 4 designed
-                                # failures via the negative harness)
-.github/workflows/selftest-negative.yml  # the expected-failure harness:
-                                # runs the negative paths routinely and only
-                                # passes on a correct red
+.github/workflows/selftest.yml  # in CI: the routine integration test,
+                                # permanently green (pass / select subset,
+                                # asserted by verify)
+.github/workflows/selftest-guardrails.yml  # the five designed-failure
+                                # calls, isolated in a dispatch-only
+                                # workflow whose red runs are correct by
+                                # construction
+.github/workflows/selftest-negative.yml  # the expected-failure watchdog:
+                                # dispatches the guardrails suite and only
+                                # passes on the exactly-designed red
 .github/workflows/integration.yml  # the consumer canary watchdog: asserts
                                 # the independent consumer is alive, green,
                                 # and reports its pin lag

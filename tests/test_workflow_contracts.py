@@ -499,22 +499,69 @@ def test_master_ci_jobs_gate_on_meta_success():
 # ---------------------------------------------------------------------------
 
 
-def test_selftest_exercises_pass_failure_and_validation_paths():
+def test_selftest_stays_green_and_exercises_the_pass_paths():
+    """selftest.yml is the routine integration test and must be permanently green.
+
+    Red in CI may only ever mean broken. The five designed-failure calls
+    cannot carry continue-on-error (GitHub gives reusable-workflow caller
+    jobs no such key), so they must NOT live here - a red dispatch would be
+    indistinguishable from a real defect. They live in
+    selftest-guardrails.yml, isolated behind the watchdog.
+    """
     data = load(WF_DIR / "selftest.yml")
     jobs = data["jobs"]
-    for job_id in (
-        "happy-path",
-        "enforced-failure",
-        "input-validation",
-        "input-validation-stack-toggle",
-        "input-validation-select",
-        "input-validation-template-ref",
-        "select-subset",
-        "verify",
-    ):
+    for job_id in ("happy-path", "select-subset", "verify"):
         assert job_id in jobs, f"selftest missing job {job_id}"
     assert jobs["happy-path"]["uses"].startswith("./")
-    # expected-failure calls are gated behind the explicit dispatch mode
+    # no designed-failure callers in the green workflow, in any shape
+    designed = {
+        "enforced-failure",
+        "input-validation",
+        "input-validation-stack-toggle",
+        "input-validation-select",
+        "input-validation-template-ref",
+    }
+    assert not designed & set(jobs), (
+        "selftest.yml must stay green - designed-failure callers belong in selftest-guardrails.yml"
+    )
+    # no failure_paths flag: a manual dispatch must behave exactly like a push
+    assert "failure_paths" not in (WF_DIR / "selftest.yml").read_text(encoding="utf-8"), (
+        "selftest.yml must not carry a failure_paths flag - it has only one, green mode"
+    )
+    # select-subset proves job selection on every run and must never be gated
+    assert "if" not in jobs["select-subset"], (
+        "select-subset must run on every selftest run so selection is always exercised"
+    )
+    assert "select" in str(jobs["select-subset"].get("with", {}))
+    assert set(jobs["verify"]["needs"]) == {"happy-path", "select-subset"}, (
+        "verify must watch exactly the two green calls"
+    )
+    verify_text = str(jobs["verify"]["steps"][0].get("run", ""))
+    assert '"passed"' in verify_text, "verify must assert the verdict outputs"
+    assert "HAPPY_VERDICT" in verify_text and "SUBSET_VERDICT" in verify_text, (
+        "verify must assert both calls' verdicts"
+    )
+
+
+def test_selftest_guardrails_isolate_the_designed_failures():
+    """The five designed-failure calls live in a dispatch-only, red-by-construction file.
+
+    Isolation is the only way a designed failure can exist without reddening
+    a routine run (caller jobs have no continue-on-error). The file must be
+    unreachable from push/schedule and must prove, via verify, that every
+    guardrail fired - so the watchdog can tell designed red from broken red.
+    """
+    data = load(WF_DIR / "selftest-guardrails.yml")
+    trigger = data[True] if True in data else data["on"]
+    assert set(trigger) == {"workflow_dispatch"}, (
+        "the guardrails suite must be dispatch-only - it must never run on "
+        "push or schedule and redden a routine run"
+    )
+    text = (WF_DIR / "selftest-guardrails.yml").read_text(encoding="utf-8")
+    assert "designed" in text.lower() and "red" in text.lower(), (
+        "the guardrails header must say the red runs are the expected outcome"
+    )
+    jobs = data["jobs"]
     for job_id in (
         "enforced-failure",
         "input-validation",
@@ -522,31 +569,40 @@ def test_selftest_exercises_pass_failure_and_validation_paths():
         "input-validation-select",
         "input-validation-template-ref",
     ):
-        condition = str(jobs[job_id].get("if", ""))
-        assert "inputs.failure_paths == 'true'" in condition, (
-            f"{job_id} must only run in the explicit failure-path mode"
+        assert job_id in jobs, f"guardrails missing job {job_id}"
+        assert jobs[job_id]["uses"].startswith("./"), (
+            f"{job_id} must call the local reusable workflow"
         )
-    # select-subset proves job selection in both modes and must never be gated
-    assert "if" not in jobs["select-subset"], (
-        "select-subset must run in both modes so selection is always exercised"
+        assert "if" not in jobs[job_id], (
+            f"{job_id} must run unconditionally - this file has exactly one, red mode"
+        )
+    # the five designed inputs must still be the wrong-on-purpose values
+    assert jobs["input-validation"]["with"]["template_ref"].startswith("../"), (
+        "input-validation must pass a traversal template_ref"
     )
-    assert "select" in str(jobs["select-subset"].get("with", {}))
-    for wanted in (
-        "happy-path",
+    assert jobs["input-validation-stack-toggle"]["with"]["run_python"] == "ture", (
+        "stack-toggle must pass the typo'd toggle"
+    )
+    assert "bogus-job" in jobs["input-validation-select"]["with"]["select"], (
+        "select must pass an unknown select token"
+    )
+    assert set(jobs["verify"]["needs"]) == {
         "enforced-failure",
         "input-validation",
         "input-validation-stack-toggle",
         "input-validation-select",
         "input-validation-template-ref",
-        "select-subset",
-    ):
-        assert wanted in jobs["verify"]["needs"], f"verify must watch {wanted}"
-    verify_text = str(jobs["verify"]["steps"][0].get("run", ""))
-    assert '"failed"' in verify_text and '"passed"' in verify_text, (
-        "verify must assert verdict outputs for both the pass and fail paths"
+    }, "verify must watch exactly the five designed calls"
+    assert str(jobs["verify"].get("if", "")) == "always()", (
+        "verify must run even when the designed calls fail - it is the "
+        "designed-vs-broken discriminator inside the red run"
     )
-    assert "TOGGLE_RESULT" in verify_text and "BADSELECT_RESULT" in verify_text, (
-        "verify must assert the new validation failure paths"
+    verify_text = str(jobs["verify"]["steps"][0].get("run", ""))
+    assert '"failure"' in verify_text and '"failed"' in verify_text, (
+        "verify must assert result=failure and verdict=failed for every guardrail"
+    )
+    assert "TOGGLE_RESULT" in verify_text and "BADREF_RESULT" in verify_text, (
+        "verify must assert all five guardrails, not just the first two"
     )
 
 
@@ -694,7 +750,13 @@ def test_expected_failure_harness_runs_the_negative_paths_routinely():
     assert (data.get("permissions") or {}).get("actions") == "write"
     job = data["jobs"]["negative-harness"]
     script = " ".join(str(s.get("run", "")) for s in job["steps"])
-    assert "failure_paths=true" in script, "harness must dispatch the negative selftest"
+    assert "selftest-guardrails.yml" in script, (
+        "the watchdog must dispatch the isolated guardrails suite"
+    )
+    assert "failure_paths" not in script, (
+        "the selftest failure_paths flag is gone - the watchdog dispatches "
+        "selftest-guardrails.yml directly"
+    )
     for job_name in (
         "enforced-failure",
         "input-validation",
@@ -703,22 +765,19 @@ def test_expected_failure_harness_runs_the_negative_paths_routinely():
         "input-validation-template-ref",
     ):
         assert f'"{job_name}"' in script, f"harness must assert {job_name} failed"
-    for job_name in ("happy-path", "select-subset", "verify"):
-        assert f'"{job_name}"' in script, f"harness must assert {job_name} succeeded"
+    assert '"verify"' in script, "harness must assert verify succeeded"
+    # the child run is the designed red: the watchdog requires conclusion
+    # == failure and treats any other outcome as a broken gate
     assert "conclusion" in script and '"failure"' in script, (
-        "harness must treat a red child run as the expected outcome"
+        "harness must require the designed red - a guardrails run that does "
+        "not fail means a guardrail is gone"
+    )
+    assert '"failure" not in inner' in script, (
+        "harness must still assert the designed inner jobs failed"
     )
     assert "--paginate" in script, (
         "the child run has 100+ jobs - the jobs endpoint must be paginated"
     )
-
-
-def test_selftest_negative_jobs_stay_gated_for_humans_only_when_direct():
-    """The manual gate remains in selftest.yml; the harness is the routine caller."""
-    text = (WF_DIR / "selftest.yml").read_text(encoding="utf-8")
-    for job in ("enforced-failure", "input-validation-stack-toggle", "input-validation-select"):
-        assert job in text
-        assert "failure_paths == 'true'" in text
 
 
 # ---------------------------------------------------------------------------

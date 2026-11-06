@@ -1,0 +1,155 @@
+# =============================================================================
+# Selftest Guardrails - the five designed-failure calls, isolated
+# =============================================================================
+# These calls (unreachable semgrep pack, traversal template_ref, typo'd
+# stack toggle, unknown select job, foreign helper with an empty
+# template_ref) are DESIGNED to fail. GitHub gives a reusable-workflow
+# caller job no continue-on-error, so a failing call reddens the calling
+# run no matter what - and red in CI may only ever mean broken. The
+# resolution is isolation: the designed failures live HERE and nowhere
+# else, in a dispatch-only workflow whose red runs are correct by
+# construction.
+#
+#   selftest.yml          -> the routine integration test, permanently green
+#   selftest-negative.yml -> the watchdog: dispatches THIS file, waits, and
+#                            asserts the red is exactly the designed red
+#                            (every guardrail fired, verify succeeded)
+#   selftest-guardrails.yml (this file) -> the five guardrail calls
+#
+# Trigger: workflow_dispatch ONLY. This workflow never runs on push or
+# schedule by itself - the watchdog is the routine caller (weekly slot plus
+# pushes that touch the test bed). Dispatching it by hand is safe: a red
+# run named "Selftest Guardrails" is the expected outcome, and `verify`
+# inside the run tells designed red (green verify, all five guardrails
+# fired) from broken red (a guardrail that did NOT fire).
+# =============================================================================
+
+name: Selftest Guardrails
+run-name: Selftest Guardrails (designed failures - red is the expected outcome)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # an unreachable semgrep pack must fail the security job of the standard
+  # profile - tooling failures are never silently swallowed
+  enforced-failure:
+    uses: ./.github/workflows/master-ci.yml # zizmor: ignore[self-repository]
+    with:
+      profile: standard
+      semgrep_config: 'p/definitely-not-a-real-pack'
+      scorecard_publish: false
+      concurrency_key: selftest-fail
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
+      id-token: write
+
+  # a traversal template_ref must fail meta - never fetch a foreign ref
+  input-validation:
+    uses: ./.github/workflows/master-ci.yml # zizmor: ignore[self-repository]
+    with:
+      template_ref: '../not-a-ref'
+      scorecard_publish: false
+      concurrency_key: selftest-valid
+    permissions:
+      contents: read
+      pull-requests: write
+      security-events: write
+      id-token: write
+
+  # a typo in a stack toggle must fail meta - never silently skip the stack
+  input-validation-stack-toggle:
+    uses: ./.github/workflows/master-ci.yml # zizmor: ignore[self-repository]
+    with:
+      run_python: 'ture'
+      scorecard_publish: false
+      concurrency_key: selftest-toggle
+    permissions:
+      contents: read
+      pull-requests: write
+      security-events: write
+      id-token: write
+
+  # an unknown select job must fail meta - never silently skip a check
+  input-validation-select:
+    uses: ./.github/workflows/master-ci.yml # zizmor: ignore[self-repository]
+    with:
+      select: 'secrets,bogus-job'
+      scorecard_publish: false
+      concurrency_key: selftest-select-bad
+    permissions:
+      contents: read
+      pull-requests: write
+      security-events: write
+      id-token: write
+
+  # a foreign helper repo with an empty template_ref must fail meta -
+  # helpers cannot be inferred safely for callers other than the template
+  input-validation-template-ref:
+    uses: ./.github/workflows/master-ci.yml # zizmor: ignore[self-repository]
+    with:
+      template_repo: 'octocat/not-a-real-helper-repo'
+      scorecard_publish: false
+      concurrency_key: selftest-tref
+    permissions:
+      contents: read
+      pull-requests: write
+      security-events: write
+      id-token: write
+
+  # green when every guardrail fired exactly as designed; the run reddens
+  # anyway (the five calls above are red - that is the point) - this job is
+  # the designed-vs-broken discriminator inside the run
+  verify:
+    needs: [enforced-failure, input-validation, input-validation-stack-toggle, input-validation-select, input-validation-template-ref]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      FAIL_RESULT: ${{ needs.enforced-failure.result }}
+      FAIL_VERDICT: ${{ needs.enforced-failure.outputs.verdict }}
+      VALID_RESULT: ${{ needs.input-validation.result }}
+      VALID_VERDICT: ${{ needs.input-validation.outputs.verdict }}
+      TOGGLE_RESULT: ${{ needs.input-validation-stack-toggle.result }}
+      TOGGLE_VERDICT: ${{ needs.input-validation-stack-toggle.outputs.verdict }}
+      BADSELECT_RESULT: ${{ needs.input-validation-select.result }}
+      BADSELECT_VERDICT: ${{ needs.input-validation-select.outputs.verdict }}
+      BADREF_RESULT: ${{ needs.input-validation-template-ref.result }}
+      BADREF_VERDICT: ${{ needs.input-validation-template-ref.outputs.verdict }}
+    steps:
+      - name: Assert every guardrail fired
+        run: |
+          fail=0
+          assert_eq() {
+            if [ "$2" != "$3" ]; then
+              echo "::error::$1: '$2' (expected '$3')"
+              fail=1
+            else
+              echo "ok: $1 = $2"
+            fi
+          }
+          assert_eq "enforced-failure job result" "$FAIL_RESULT" "failure"
+          assert_eq "enforced-failure verdict" "$FAIL_VERDICT" "failed"
+          assert_eq "input-validation job result" "$VALID_RESULT" "failure"
+          assert_eq "input-validation verdict" "$VALID_VERDICT" "failed"
+          assert_eq "stack-toggle validation result" "$TOGGLE_RESULT" "failure"
+          assert_eq "stack-toggle validation verdict" "$TOGGLE_VERDICT" "failed"
+          assert_eq "select validation result" "$BADSELECT_RESULT" "failure"
+          assert_eq "select validation verdict" "$BADSELECT_VERDICT" "failed"
+          assert_eq "template-ref validation result" "$BADREF_RESULT" "failure"
+          assert_eq "template-ref validation verdict" "$BADREF_VERDICT" "failed"
+          echo "guardrail summary: enforced=$FAIL_RESULT/$FAIL_VERDICT traversal=$VALID_RESULT/$VALID_VERDICT"
+          echo "  toggle=$TOGGLE_RESULT/$TOGGLE_VERDICT bad-select=$BADSELECT_RESULT/$BADSELECT_VERDICT bad-ref=$BADREF_RESULT/$BADREF_VERDICT"
+          {
+            echo "## Selftest Guardrails outcomes"
+            echo ""
+            echo "A red verify means a guardrail stopped firing - that is a"
+            echo "real defect, not the designed red. The watchdog"
+            echo "(selftest-negative.yml) asserts this run from the outside."
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $fail
