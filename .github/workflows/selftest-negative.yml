@@ -95,13 +95,21 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_ID: ${{ steps.wait.outputs.run_id }}
         run: |
-          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/jobs?per_page=100" \
-            --jq '.jobs | map({(.name): .conclusion}) | add' > jobs.json
-          cat jobs.json
+          # --paginate: a full child run has 100+ jobs (six reusable calls x
+          # their inner jobs); caller jobs may land on any page. Caller jobs
+          # are the only ones whose name has no " / " separator.
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/jobs?per_page=100" \
+            --jq '.jobs[] | select((.name | contains(" / ")) | not) | "\(.name)=\(.conclusion)"' > jobs.txt
+          cat jobs.txt
           python3 - <<'EOF'
-          import json, sys
+          import sys
 
-          jobs = json.load(open("jobs.json"))
+          jobs = {}
+          for line in open("jobs.txt"):
+              line = line.strip()
+              if line and "=" in line:
+                  name, _, conclusion = line.partition("=")
+                  jobs[name] = conclusion
           expected = {
               "happy-path": "success",
               "select-subset": "success",
@@ -116,8 +124,6 @@ jobs:
               got = jobs.get(name)
               if got != want:
                   problems.append(f"{name}: expected {want}, got {got}")
-          # inner jobs of the called reusable workflow appear as
-          # "happy-path / hygiene" etc - only exact top-level names matter here
           if problems:
               print("expected-failure harness FAILED:")
               for p in problems:

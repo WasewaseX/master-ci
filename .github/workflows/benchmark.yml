@@ -70,6 +70,7 @@ jobs:
           git config user.name "master-ci-bench"
           git config user.email "actions@users.noreply.github.com"
           cp benchmarks/history.jsonl /tmp/this-run.jsonl
+          rm -f benchmarks/history.jsonl # untracked copy blocks the branch checkout
           # main is protected (required ci-success check) - history goes to
           # the dedicated benchmarks branch instead
           if git ls-remote --exit-code --heads origin benchmarks >/dev/null 2>&1; then
