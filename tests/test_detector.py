@@ -193,6 +193,53 @@ def test_py_test_with_assert_clean(tmp_path):
     assert not [f for f in findings if f.check == "empty-test"]
 
 
+def test_py_raises_context_is_an_assertion(tmp_path):
+    code = (
+        "import pytest\n\n\ndef test_rejects():\n"
+        "    with pytest.raises(ValueError):\n        clamp(1, 10, 0)\n"
+    )
+    findings = scan(tmp_path, {"test_a.py": code})
+    assert not [f for f in findings if f.check == "empty-test"]
+
+
+def test_py_unittest_assertraises_context_clean(tmp_path):
+    code = (
+        "def test_rejects(self):\n"
+        "    with self.assertRaises(ValueError):\n        clamp(1, 10, 0)\n"
+    )
+    findings = scan(tmp_path, {"test_a.py": code})
+    assert not [f for f in findings if f.check == "empty-test"]
+
+
+def test_dependency_groups_declare_test_deps(tmp_path):
+    pyproject = (
+        '[project]\nname = "sample"\nversion = "0.1.0"\n\n'
+        '[dependency-groups]\ntest = ["pytest>=8"]\n'
+    )
+    findings = scan(
+        tmp_path,
+        {"pyproject.toml": pyproject, "test_a.py": "import pytest\n"},
+    )
+    assert not [f for f in findings if f.check == "undeclared-import"]
+
+
+def test_optional_dependencies_declare_test_deps(tmp_path):
+    pyproject = (
+        '[project]\nname = "sample"\nversion = "0.1.0"\n\n'
+        '[project.optional-dependencies]\ntest = ["pytest>=8"]\n'
+    )
+    findings = scan(
+        tmp_path,
+        {"pyproject.toml": pyproject, "test_a.py": "import pytest\n"},
+    )
+    assert not [f for f in findings if f.check == "undeclared-import"]
+
+
+def test_undeclared_import_still_flagged_without_table(tmp_path):
+    findings = scan(tmp_path, {"test_a.py": "import pytest\n"})
+    assert any(f.check == "undeclared-import" for f in findings)
+
+
 def test_go_ignored_error_detected(tmp_path):
     code = "func Save() error {\n    if err := write(); err != nil {\n        return nil\n    }\n    return nil\n}\n"
     findings = scan(tmp_path, {"a.go": code})

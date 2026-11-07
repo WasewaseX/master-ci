@@ -92,8 +92,11 @@ Profile presets (quick / standard / strict / custom) only change the
   bare/pass-only exception handlers, empty catches and rescues, ignored Go
   errors, committed debuggers, Rust `todo!()`, chatbot residue in comments.
   Advisory rules cover dependency hygiene (phantom and undeclared imports -
-  the slopsquatting guard), suppression abuse, code smells, placeholder
-  credentials, UI slop, prose style and provenance.
+  the slopsquatting guard; manifests read include `requirements*.txt`,
+  pyproject `[project] dependencies`, PEP 735 `[dependency-groups]` and
+  `[project.optional-dependencies]`, plus `package.json`), suppression
+  abuse, code smells, placeholder credentials, UI slop, prose style and
+  provenance.
 - **Does not inspect:** authorship, commit metadata, or anything outside
   tracked text files; it never claims code *is* machine-written.
 - **Reports:** a slop score 0-100 per run (0.6x worst file + 0.4x mean file
@@ -105,6 +108,8 @@ Profile presets (quick / standard / strict / custom) only change the
   content checks; everything stylistic is advisory.
 - **False positives:** domain vocabulary overlapping the phrase list;
   abstract methods that raise NotImplementedError; intentional emoji.
+  Tests asserting via a raises-style context (`with pytest.raises(...)`,
+  `self.assertRaises(...)`) count as assertions, not empty tests.
   Opt out per path or per check with a committed `.ai-integrity-ignore`
   (glob lines, `check:<id>` lines, `check:<id>:<glob>` for a scoped
   disable), or record existing findings with `--write-baseline` and run

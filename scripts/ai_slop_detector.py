@@ -956,8 +956,27 @@ def _py_stub_body(body: list[ast.stmt]) -> bool:
     return False
 
 
+# Context managers that assert behavior: a `with pytest.raises(ValueError):`
+# body fails when the exception is not raised, exactly like an `assert`.
+_RAISES_STYLE_NAMES = frozenset(
+    {"raises", "assertRaises", "assertWarns", "warns", "deprecated_call", "fail"}
+)
+
+
 def _py_has_assert(node: ast.AST) -> bool:
-    return any(isinstance(child, (ast.Assert, ast.Raise)) for child in ast.walk(node))
+    for child in ast.walk(node):
+        if isinstance(child, (ast.Assert, ast.Raise)):
+            return True
+        if isinstance(child, ast.withitem) and isinstance(child.context_expr, ast.Call):
+            func = child.context_expr.func
+            name = (
+                func.attr
+                if isinstance(func, ast.Attribute)
+                else (func.id if isinstance(func, ast.Name) else None)
+            )
+            if name in _RAISES_STYLE_NAMES:
+                return True
+    return False
 
 
 def _py_def_findings(path: Path, node) -> list[Finding]:
@@ -1743,6 +1762,25 @@ def _parse_py_manifest(manifest: Path, declared: set[str]) -> None:
     block = re.search(r"dependencies\s*=\s*\[(.*?)\]", content, re.DOTALL)
     if block:
         for match in re.finditer(r"[\"']([A-Za-z0-9_.\-]+)", block.group(1)):
+            declared.add(match.group(1).lower().replace("_", "-"))
+    _parse_py_dep_tables(content, declared)
+
+
+def _parse_py_dep_tables(content: str, declared: set[str]) -> None:
+    """Collect requirements from PEP 735 [dependency-groups] and
+    [project.optional-dependencies] tables (section-scoped line scan)."""
+    in_table = False
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("["):
+            header = stripped.strip("[]")
+            in_table = header.startswith("dependency-groups") or header.startswith(
+                "project.optional-dependencies"
+            )
+            continue
+        if not in_table or not stripped or stripped.startswith("#"):
+            continue
+        for match in re.finditer(r"[\"']([A-Za-z0-9_.\-]+)", stripped):
             declared.add(match.group(1).lower().replace("_", "-"))
 
 
