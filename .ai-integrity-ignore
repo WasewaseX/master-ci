@@ -2,11 +2,6 @@
 # emoji padding - they exist to exercise the detector in CI. Do not scan.
 fixtures/
 #
-# The integrity engine's own modules are knowingly long: the detector, the
-# fix engine and the MCP server each carry one coherent responsibility and
-# are split on their own schedule, not because a budget line said so. Scope
-# the file-length budget off for exactly those files - every other check
-# still applies to them.
-check:bloat-long-file:scripts/ai_slop_detector.py
-check:bloat-long-file:scripts/fix_engine.py
-check:bloat-long-file:scripts/mcp_server.py
+# The engine's own modules are split under the same budgets every consumer
+# gets (no scope-offs): scripts/ is a package of slop_*/mcp_*/fix_* modules,
+# each inside the 400-line file budget.

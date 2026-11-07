@@ -217,9 +217,10 @@ def _check_modern_era(client: Client) -> None:
             },
         }
     )
-    if bad.get("error", {}).get("code") != -32022:
+    error = bad.get("error") or {}
+    if error.get("code") != -32022:
         raise AssertionError(f"expected -32022 for unknown _meta version: {bad}")
-    if "2026-07-28" not in json.dumps(bad["error"].get("data", {})):
+    if "2026-07-28" not in json.dumps(error.get("data") or {}):
         raise AssertionError("-32022 payload must list supported versions")
     ok("meta protocol negotiation", "unknown version rejected with supported list")
 

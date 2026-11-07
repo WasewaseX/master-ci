@@ -6,6 +6,9 @@ extend-exclude = ["_ci"]
 select = ["E", "F", "W", "I"]
 ignore = ["E501"]
 
+[tool.ruff.lint.per-file-ignores]
+"scripts/ai_slop_detector.py" = ["E402"]
+
 [tool.mypy]
 exclude = "^_ci/"
 

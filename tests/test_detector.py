@@ -164,7 +164,7 @@ def test_py_stub_function_detected(tmp_path):
 
 def test_notimplemented_stub_detected_but_abstract_style_flagged_once(tmp_path):
     code = "class Base:\n    def run(self):\n        raise NotImplementedError\n"
-    findings = scan(tmp_path, {"a.py": code})
+    findings = scan_py(tmp_path, code)
     assert any(f.check == "stub-function" for f in findings)
 
 
@@ -172,13 +172,13 @@ def test_continue_only_handler_not_swallowed(tmp_path):
     code = (
         "for item in items:\n    try:\n        load(item)\n    except OSError:\n        continue\n"
     )
-    findings = scan(tmp_path, {"a.py": code})
+    findings = scan_py(tmp_path, code)
     assert not [f for f in findings if f.check == "swallowed-exception"]
 
 
 def test_bare_except_detected(tmp_path):
     code = "try:\n    risky()\nexcept:\n    pass\n"
-    findings = scan(tmp_path, {"a.py": code})
+    findings = scan_py(tmp_path, code)
     checks = {f.check for f in findings}
     assert "bare-except" in checks or "swallowed-exception" in checks
 
@@ -193,6 +193,11 @@ def test_py_test_with_assert_clean(tmp_path):
     assert not [f for f in findings if f.check == "empty-test"]
 
 
+def scan_py(tmp_path, code):
+    """Scan one Python snippet - the common shape of the AST-check tests."""
+    return scan(tmp_path, {"a.py": code})
+
+
 def test_py_raises_context_is_an_assertion(tmp_path):
     code = (
         "import pytest\n\n\ndef test_rejects():\n"
@@ -200,6 +205,98 @@ def test_py_raises_context_is_an_assertion(tmp_path):
     )
     findings = scan(tmp_path, {"test_a.py": code})
     assert not [f for f in findings if f.check == "empty-test"]
+
+
+def test_chained_dict_get_detected(tmp_path):
+    code = 'def walk(cfg):\n    return cfg.get("a", {}).get("b", {})\n'
+    findings = scan_py(tmp_path, code)
+    assert any(f.check == "chained-dict-get" for f in findings)
+
+
+def test_boundary_normalized_get_clean(tmp_path):
+    code = 'def walk(cfg):\n    a = cfg.get("a") or {}\n    return a.get("b") or {}\n'
+    findings = scan_py(tmp_path, code)
+    assert not [f for f in findings if f.check == "chained-dict-get"]
+
+
+def test_param_budget_is_six(tmp_path):
+    code = "def f(a, b, c, d, e, f_arg, g):\n    return a\n"
+    findings = scan_py(tmp_path, code)
+    assert any(f.check == "bloat-param-count" for f in findings)
+
+
+def test_six_params_pass_budget(tmp_path):
+    code = "def f(a, b, c, d, e, f_arg):\n    return a\n"
+    findings = scan_py(tmp_path, code)
+    assert not [f for f in findings if f.check == "bloat-param-count"]
+
+
+def test_ui_eyebrow_label_detected(tmp_path):
+    findings = scan(tmp_path, {"hero.tsx": '<div className="eyebrow">NEW</div>\n'})
+    assert any(f.check == "ui-eyebrow-label" for f in findings)
+
+
+def test_ui_italic_headline_detected(tmp_path):
+    findings = scan(tmp_path, {"hero.html": "<h1>Ship <em>faster</em></h1>\n"})
+    assert any(f.check == "ui-italic-serif-hero" for f in findings)
+
+
+def test_ui_fake_stats_detected(tmp_path):
+    findings = scan(tmp_path, {"landing.tsx": "<p>Trusted by 10,000+ customers worldwide</p>\n"})
+    assert any(f.check == "ui-fake-stats" for f in findings)
+
+
+def test_ui_generic_testimonial_detected(tmp_path):
+    findings = scan(tmp_path, {"social.tsx": '<p>"Amazing!" - Sarah, CEO</p>\n'})
+    assert any(f.check == "ui-generic-testimonial" for f in findings)
+
+
+def test_ui_not_just_x_detected(tmp_path):
+    findings = scan(
+        tmp_path,
+        {"landing.tsx": "<p>It's not just a tool, it's a partner.</p>\n"},
+    )
+    assert any(f.check == "ui-not-just-x" for f in findings)
+
+
+def test_ui_triple_slogan_detected(tmp_path):
+    findings = scan(tmp_path, {"landing.tsx": "<h2>Simple. Fast. Efficient.</h2>\n"})
+    assert any(f.check == "ui-triple-slogan" for f in findings)
+
+
+def test_ui_glass_glow_needs_two_or_more(tmp_path):
+    one = scan(tmp_path / "one", {"a.tsx": "<div className='backdrop-blur'>x</div>\n"})
+    two = scan(tmp_path / "two", {"a.tsx": "backdrop-filter: blur(8px)\nbackdrop-blur-lg\n"})
+    assert not [f for f in one if f.check == "ui-glass-glow"]
+    assert any(f.check == "ui-glass-glow" for f in two)
+
+
+def test_ui_decorative_numbering_detected(tmp_path):
+    findings = scan(
+        tmp_path,
+        {
+            "steps.tsx": "<li><span>01</span></li>\n<li><span>02</span></li>\n<li><span>03</span></li>\n"
+        },
+    )
+    assert any(f.check == "ui-decorative-numbering" for f in findings)
+
+
+def test_plain_ui_copy_stays_clean(tmp_path):
+    findings = scan(
+        tmp_path,
+        {"app.tsx": "<h1>Postgres replication lag, explained</h1>\n<p>Read the guide.</p>\n"},
+    )
+    ui_checks = {
+        "ui-eyebrow-label",
+        "ui-italic-serif-hero",
+        "ui-fake-stats",
+        "ui-generic-testimonial",
+        "ui-not-just-x",
+        "ui-triple-slogan",
+        "ui-glass-glow",
+        "ui-decorative-numbering",
+    }
+    assert not [f for f in findings if f.check in ui_checks]
 
 
 def test_py_unittest_assertraises_context_clean(tmp_path):
@@ -275,7 +372,7 @@ def test_console_log_advisory(tmp_path):
 
 def test_undeclared_py_import_flagged_without_manifest(tmp_path):
     code = "import notapackage\n\ndef main():\n    return notapackage.thing\n"
-    findings = scan(tmp_path, {"a.py": code})
+    findings = scan_py(tmp_path, code)
     hits = [f for f in findings if f.check == "undeclared-import"]
     assert hits and "slopsquatting" in hits[0].message
 
@@ -283,7 +380,7 @@ def test_undeclared_py_import_flagged_without_manifest(tmp_path):
 def test_declared_py_import_not_flagged(tmp_path):
     (tmp_path / "requirements.txt").write_text("boto3\n", encoding="utf-8")
     code = "import boto3\n\ndef client():\n    return boto3.client\n"
-    findings = scan(tmp_path, {"a.py": code})
+    findings = scan_py(tmp_path, code)
     assert not [f for f in findings if f.check == "undeclared-import"]
 
 
@@ -303,19 +400,19 @@ def test_js_declared_import_clean(tmp_path):
 
 def test_phantom_import_py(tmp_path):
     code = "import os\n\ndef main():\n    return 42\n"
-    findings = scan(tmp_path, {"a.py": code})
+    findings = scan_py(tmp_path, code)
     assert any(f.check == "phantom-import" for f in findings)
 
 
 def test_placeholder_credential_flagged(tmp_path):
     code = 'config = {"api_' + 'key": "your-' + 'api-key-here"}\n'
-    findings = scan(tmp_path, {"a.py": code})
+    findings = scan_py(tmp_path, code)
     assert any(f.check == "placeholder-credential" for f in findings)
 
 
 def test_placeholder_naming_needs_unquoted_hits(tmp_path):
     code = "\n".join(f"value_{i} = foo + bar" for i in range(4))
-    findings = scan(tmp_path, {"a.py": code})
+    findings = scan_py(tmp_path, code)
     assert any(f.check == "placeholder-naming" for f in findings)
 
 

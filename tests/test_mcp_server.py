@@ -28,6 +28,11 @@ assert spec is not None and spec.loader is not None
 mcp = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = mcp
 spec.loader.exec_module(mcp)
+# the split moved helpers into sibling modules; patch targets follow the code.
+# mcp_server's own bootstrap put scripts/ on sys.path, so these import cleanly
+# once the server module has executed.
+import mcp_meta  # noqa: E402
+import mcp_tools  # noqa: E402
 
 
 def _make_repo(tmp_path: Path, files: dict[str, str]) -> Path:
@@ -104,7 +109,7 @@ def test_snapshot_skips_git_and_vendored_dirs(tmp_path: Path) -> None:
     (root / ".git" / "HEAD").write_text("ref\n")
     (root / "node_modules").mkdir()
     (root / "node_modules" / "pkg.js").write_text("x\n")
-    snapshot = mcp._snapshot(root)
+    snapshot = mcp_tools._snapshot(root)
     assert snapshot == {"a.py": snapshot["a.py"]}
     assert len(snapshot) == 1
 
@@ -210,7 +215,7 @@ def test_diagnose_reports_path_lock(tmp_path: Path, monkeypatch) -> None:
 
 def test_check_updates_up_to_date_with_stub(monkeypatch) -> None:
     monkeypatch.setattr(
-        mcp, "_fetch_latest_tag", lambda slug, api, timeout: f"v{mcp.SERVER_VERSION}"
+        mcp_meta, "_fetch_latest_tag", lambda slug, api, timeout: f"v{mcp.SERVER_VERSION}"
     )
     result = mcp.tool_check_updates({})
     assert result["up_to_date"] is True
@@ -219,7 +224,7 @@ def test_check_updates_up_to_date_with_stub(monkeypatch) -> None:
 
 
 def test_check_updates_update_available_with_stub(monkeypatch) -> None:
-    monkeypatch.setattr(mcp, "_fetch_latest_tag", lambda slug, api, timeout: "v9.9.9")
+    monkeypatch.setattr(mcp_meta, "_fetch_latest_tag", lambda slug, api, timeout: "v9.9.9")
     result = mcp.tool_check_updates({})
     assert result["up_to_date"] is False
     assert result["latest_tag"] == "v9.9.9"
@@ -237,15 +242,15 @@ def test_check_updates_offline_is_graceful(monkeypatch) -> None:
 
 
 def test_newest_tag_picks_highest_semver() -> None:
-    assert mcp._newest_tag(["v1.0.0", "v1.10.0", "v1.9.0", "nonsense"]) == "v1.10.0"
-    assert mcp._newest_tag([]) is None
-    assert mcp._newest_tag(["docs"]) is None
+    assert mcp_meta._newest_tag(["v1.0.0", "v1.10.0", "v1.9.0", "nonsense"]) == "v1.10.0"
+    assert mcp_meta._newest_tag([]) is None
+    assert mcp_meta._newest_tag(["docs"]) is None
 
 
 def test_version_tuple_parses_and_stops() -> None:
-    assert mcp._version_tuple("v1.2.3") == (1, 2, 3)
-    assert mcp._version_tuple("1.2") == (1, 2)
-    assert mcp._version_tuple("weird") == ()
+    assert mcp_meta._version_tuple("v1.2.3") == (1, 2, 3)
+    assert mcp_meta._version_tuple("1.2") == (1, 2)
+    assert mcp_meta._version_tuple("weird") == ()
 
 
 # ---------------------------------------------------------------------------

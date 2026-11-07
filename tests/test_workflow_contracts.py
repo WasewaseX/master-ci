@@ -70,7 +70,8 @@ def iter_steps(jobs: dict):
 
 def uses_lines(workflow: Path) -> list[str]:
     data = load(workflow)
-    lines = [str(data.get("jobs", {}).get(j, {}).get("uses", "")) for j in data.get("jobs", {})]
+    jobs = data.get("jobs") or {}
+    lines = [str((jobs.get(j) or {}).get("uses") or "") for j in jobs]
     for _, step in iter_steps(data.get("jobs", {})):
         if "uses" in step:
             lines.append(str(step["uses"]))
@@ -880,7 +881,7 @@ def test_modern_mcp_protocol_is_supported():
 
 def test_apply_fixes_write_lock_is_enforced_in_source():
     """The mutating tool must require MASTER_CI_MCP_ROOT - not just document it."""
-    text = (ROOT / "scripts" / "mcp_server.py").read_text(encoding="utf-8")
+    text = (ROOT / "scripts" / "mcp_tools.py").read_text(encoding="utf-8")
     apply_body = text.split("def tool_apply_fixes", 1)[1].split("\ndef ", 1)[0]
     assert "_require_write_root" in apply_body, (
         "apply_fixes must call the mandatory write-root guard first"
@@ -889,7 +890,7 @@ def test_apply_fixes_write_lock_is_enforced_in_source():
 
 def test_scan_diff_discovers_untracked_files():
     """Untracked discovery is the whole point of the change-set scan."""
-    text = (ROOT / "scripts" / "mcp_server.py").read_text(encoding="utf-8")
+    text = (ROOT / "scripts" / "mcp_tools.py").read_text(encoding="utf-8")
     changed_body = text.split("def _changed_files", 1)[1].split("\ndef ", 1)[0]
     assert "ls-files" in changed_body and "--exclude-standard" in changed_body, (
         "_changed_files must run git ls-files --others --exclude-standard"
@@ -993,7 +994,8 @@ def test_docker_job_builds_and_scans_the_image_it_builds():
     condition = str(docker.get("if", ""))
     assert "needs.changes.outputs.docker" in condition, "docker must auto-detect"
     assert "inputs.run_docker" in condition, "docker must honor run_docker"
-    assert docker.get("permissions", {}).get("security-events") == "write"
+    docker_perms = docker.get("permissions") or {}
+    assert docker_perms.get("security-events") == "write"
     text = "\n".join(str(s.get("run", "")) for s in docker["steps"])
     assert "hadolint-linux-x86_64" in text, "hadolint must be downloaded from its release"
     assert "sha256sum -c -" in text, "the hadolint download must be checksum-verified"
@@ -1015,7 +1017,8 @@ def test_docker_job_builds_and_scans_the_image_it_builds():
         for s in docker["steps"]
         if str(s.get("uses", "")).startswith("github/codeql-action/upload-sarif")
     )
-    assert upload.get("with", {}).get("category") == "trivy-image"
+    upload_with = upload.get("with") or {}
+    assert upload_with.get("category") == "trivy-image"
 
 
 def test_release_docker_publishes_with_oidc_and_signing():
@@ -1052,8 +1055,10 @@ def test_release_docker_publishes_with_oidc_and_signing():
         "ECR must fail closed without an OIDC role"
     )
     scan = next(s for s in job["steps"] if str(s.get("uses", "")).startswith("aquasecurity"))
-    assert scan.get("with", {}).get("scan-type") == "image"
-    assert data.get("concurrency", {}).get("group"), "publishes must be serialized"
+    scan_with = scan.get("with") or {}
+    assert scan_with.get("scan-type") == "image"
+    publish_concurrency = data.get("concurrency") or {}
+    assert publish_concurrency.get("group"), "publishes must be serialized"
 
 
 def test_deploy_aws_is_oidc_first_and_fails_closed():
@@ -1086,8 +1091,10 @@ def test_deploy_aws_is_oidc_first_and_fails_closed():
         deploy_steps = [s for s in steps if f"env.TARGET == '{target}'" in str(s.get("if", ""))]
         assert deploy_steps, f"{target} must have a deploy step"
     configure = steps[cred_idx]
-    assert configure.get("with", {}).get("role-to-assume") == "${{ inputs.role_arn }}", (
+    configure_with = configure.get("with") or {}
+    assert configure_with.get("role-to-assume") == "${{ inputs.role_arn }}", (
         "credentials must come from role assumption, never from secrets"
     )
-    assert "verdict" in job.get("outputs", {}), "the deployment must report a verdict"
-    assert data.get("concurrency", {}).get("group"), "deploys must be serialized"
+    assert "verdict" in (job.get("outputs") or {}), "the deployment must report a verdict"
+    deploy_concurrency = data.get("concurrency") or {}
+    assert deploy_concurrency.get("group"), "deploys must be serialized"

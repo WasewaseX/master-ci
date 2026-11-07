@@ -115,17 +115,29 @@ Profile presets (quick / standard / strict / custom) only change the
   disable), or record existing findings with `--write-baseline` and run
   with `--baseline` so only new slop appears.
 - **Bloat budget (advisory):** the anti-bloatware guard for machine-written
-  padding - code that does 100 lines of work in 300. `bloat-long-file`
-  (over 400 non-blank lines, test files exempt), `god-function` (a function
-  over 100 lines, now enforced across every language family: Python through
-  its AST, brace languages through a conservative scanner, Ruby through
-  def/end pairing), `deep-nesting` (over 5 levels in every family),
-  `bloat-param-count` (over 7 parameters), `bloat-comment-ratio` (over
-  half the file is comments in substantial files) and `bloat-banner-comments`
-  (decorative banner blocks bunched together - spread-out section dividers
-  are navigation, not padding). Every bloat check is structurally advisory:
+  padding - code that does 100 lines of work in 300, aligned with
+  scanaislop.com's quality bar. `bloat-long-file` (over 400 non-blank
+  lines, test files exempt), `god-function` (a function over 80 lines,
+  enforced across every language family: Python through its AST, brace
+  languages through a conservative scanner, Ruby through def/end pairing),
+  `deep-nesting` (over 5 levels in every family), `bloat-param-count`
+  (over 6 parameters), `bloat-comment-ratio` (over half the file is
+  comments in substantial files) and `bloat-banner-comments` (decorative
+  banner blocks bunched together - spread-out section dividers are
+  navigation, not padding). Every bloat check is structurally advisory:
   `ADVISORY_ONLY_CHECKS` forces the flag, so no call site can make one
   fail a build.
+- **Agent-tell checks (advisory):** `chained-dict-get` flags chained
+  `.get(..., {})` lookups in Python - a brittle agent shortcut that hides
+  missing-data cases; normalize at the boundary instead. The design-sign
+  checks port tenex.studio's "8 signs of AI slop" and noqode's "design IA
+  générique" into deterministic rules for frontend files:
+  `ui-eyebrow-label` (eyebrow/overline/kicker labels), `ui-italic-serif-hero`
+  (italic word inside a headline), `ui-fake-stats` (unsourced 10,000+
+  figures), `ui-generic-testimonial` (first name + role only),
+  `ui-not-just-x` ("not just X, it's Y"), `ui-triple-slogan` ("Simple.
+  Fast. Efficient."), `ui-glass-glow` (2+ backdrop-blur effects per file)
+  and `ui-decorative-numbering` (3+ decorative 01/02/03 markers).
 - **Disable:** `fail_on_ai_slop` defaults to `false` - the job reports,
   annotates and uploads SARIF but never gates. Provenance and test
   inventory can be turned off with `--no-provenance`.
