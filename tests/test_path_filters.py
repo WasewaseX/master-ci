@@ -46,6 +46,13 @@ UnsupportedPatternError = _pf.UnsupportedPatternError
 _translate = _pf._translate
 FilterSet = _pf.FilterSet
 load_filters = _pf.load_filters
+
+
+def _on(data: dict) -> dict:
+    """The `on:` mapping - PyYAML 1.1 parses the key as boolean True."""
+    return data[True] if True in data else data["on"]
+
+
 FILTERS = _pf.FILTERS
 stacks_for = _pf.stacks_for
 
@@ -312,7 +319,7 @@ def test_job_conditions_reference_declared_outputs() -> None:
 
 def test_every_stack_filter_has_a_force_run_input() -> None:
     data = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-    trigger = data[True] if True in data else data["on"]
+    trigger = _on(data)
     inputs = trigger["workflow_call"]["inputs"]
     for stack in ("node", "python", "rust", "go"):
         assert stack in FILTERS, f"missing {stack} filter"

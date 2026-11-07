@@ -363,3 +363,113 @@ def test_blocking_classification_is_rule_based():
     assert "ai-prose" not in mod.BLOCKING_CHECKS
     finding = mod.Finding("x.py", 1, "elided-code", "m", 3, advisory=True)
     assert not finding.advisory, "blocking-grade rules cannot be advisory"
+
+
+# ---------------------------------------------------------------------------
+# Bloat budget: the "100 lines of work spread over 300 lines" guards
+# ---------------------------------------------------------------------------
+
+
+def test_java_god_function_and_clean_negative(tmp_path):
+    big = "\n".join(
+        ["public class Big {", "    public void huge(int a) {"]
+        + [f"        step{i} = a + {i};" for i in range(115)]
+        + ["    }", "}", ""]
+    )
+    findings = scan(tmp_path, {"Big.java": big})
+    god = [f for f in findings if f.check == "god-function"]
+    assert god and god[0].advisory, "cross-language god-function is advisory"
+
+    findings = scan(tmp_path / "clean", {"Small.java": "public class S {\n    int x;\n}\n"})
+    assert not findings
+
+
+def test_go_deep_nesting_flagged(tmp_path):
+    lines = ["package main", "", "func deep(x int) error {", "\tif x > 0 {"]
+    lines += ["\t".ljust(2 + i) + "for j := 0; j < 10; j++ {" for i in range(6)]
+    lines += ["\t".ljust(8 - i) + "}" for i in range(6)]
+    lines += ["\t\treturn nil", "\t}", "\treturn nil", "}", ""]
+    findings = scan(tmp_path, {"deep.go": "\n".join(lines)})
+    assert any(f.check == "deep-nesting" for f in findings)
+
+
+def test_param_count_flagged_across_families(tmp_path):
+    cs = (
+        "public class P {\n"
+        "    public void Many(int a1, int a2, int a3, int a4, int a5, int a6, int a7, int a8, int a9) {\n"
+        "        Do(a1);\n"
+        "    }\n"
+        "}\n"
+    )
+    py = "def f(a1, a2, a3, a4, a5, a6, a7, a8, a9):\n    return a1\n"
+    for name, text in (("P.cs", cs), ("f.py", py)):
+        findings = scan(tmp_path, {name: text})
+        assert any(f.check == "bloat-param-count" for f in findings), name
+
+
+def test_ruby_def_length(tmp_path):
+    lines = ["class Big", "  def huge(a)"]
+    lines += [f"    x{i} = a + {i}" for i in range(105)]
+    lines += ["  end", "end", ""]
+    findings = scan(tmp_path, {"big.rb": "\n".join(lines)})
+    assert any(f.check == "god-function" for f in findings)
+
+
+def test_comment_padding_flags_ratio_and_banners(tmp_path):
+    banner = "// ============================================"
+    lines = []
+    for i in range(15):
+        lines.append(banner)
+        lines.append(f"// section {i} narrative that pads the file out with talk")
+        lines += ["// more narration line", ""] * 3
+        lines.append(f"const v{i} = {i};")
+    findings = scan(tmp_path, {"padded.js": "\n".join(lines) + "\n"})
+    checks = {f.check for f in findings}
+    assert "bloat-comment-ratio" in checks
+    assert "bloat-banner-comments" in checks
+
+
+def test_spread_banners_are_navigation_not_padding(tmp_path):
+    banner = "# -----------------------------------------------------------"
+    lines = []
+    for i in range(5):
+        lines += [banner, f"# Section {i} title", banner, ""]
+        lines += [f"value_{j} = {j}" for j in range(i * 30, i * 30 + 30)]
+    findings = scan(tmp_path, {"spread.py": "\n".join(lines) + "\n"})
+    assert not any(f.check == "bloat-banner-comments" for f in findings)
+
+
+def test_long_file_budget_and_test_exemption(tmp_path):
+    code = "\n".join(f"const item{i} = {i};" for i in range(410)) + "\n"
+    findings = scan(tmp_path, {"long.js": code})
+    assert any(f.check == "bloat-long-file" for f in findings)
+    findings = scan(tmp_path / "tests", {"long.test.js": code})
+    assert not any(f.check == "bloat-long-file" for f in findings), (
+        "test files are exempt from the file-length budget"
+    )
+
+
+def test_scoped_ignore_check_path_glob(tmp_path):
+    code = "\n".join(f"const item{i} = {i};" for i in range(410)) + "\n"
+    files = {"long.js": code, "keep.js": code}
+    for name, text in files.items():
+        (tmp_path / name).write_text(text, encoding="utf-8")
+    (tmp_path / ".ai-integrity-ignore").write_text(
+        "check:bloat-long-file:long.js\n", encoding="utf-8"
+    )
+    findings = mod.scan(tmp_path, mod.load_phrases(), provenance=False)
+    flagged = {f.path for f in findings if f.check == "bloat-long-file"}
+    assert any(p.endswith("keep.js") for p in flagged)
+    assert not any(p.endswith("long.js") for p in flagged)
+
+
+def test_bloat_is_never_blocking():
+    for check in (
+        "bloat-long-file",
+        "bloat-param-count",
+        "bloat-comment-ratio",
+        "bloat-banner-comments",
+    ):
+        finding = mod.Finding("x.js", 1, check, "m", 1, advisory=False)
+        assert finding.advisory, f"{check} must stay advisory"
+        assert check not in mod.BLOCKING_CHECKS

@@ -1,3 +1,12 @@
 # Fixtures under fixtures/ deliberately contain slop, broken YAML and
 # emoji padding - they exist to exercise the detector in CI. Do not scan.
 fixtures/
+#
+# The integrity engine's own modules are knowingly long: the detector, the
+# fix engine and the MCP server each carry one coherent responsibility and
+# are split on their own schedule, not because a budget line said so. Scope
+# the file-length budget off for exactly those files - every other check
+# still applies to them.
+check:bloat-long-file:scripts/ai_slop_detector.py
+check:bloat-long-file:scripts/fix_engine.py
+check:bloat-long-file:scripts/mcp_server.py

@@ -326,6 +326,21 @@ REMEDIES = {
     "todo-density": "Resolve, ticket or delete the TODO/FIXME markers",
     "trivial-comments": "Delete comments that restate the code; explain why instead",
     "boilerplate-duplication": "Extract the repeated lines into a shared helper",
+    "bloat-long-file": (
+        "Split the file by responsibility; ask for the version that does "
+        "the same job in fewer lines"
+    ),
+    "bloat-param-count": (
+        "Group the parameters into an options object or struct; more than "
+        "seven parameters is unreadable at the call site"
+    ),
+    "bloat-comment-ratio": (
+        "Delete comments that narrate the code; keep only the ones that "
+        "explain intent or constraints"
+    ),
+    "bloat-banner-comments": (
+        "Remove decorative banner comments; section names belong to the structure, not to ASCII art"
+    ),
     "elided-code": "Restore the omitted code; elided edits silently delete working code",
     "placeholder-impl": "Implement the body or delete the function; stubs look done but are not",
     "placeholder-note": "Replace the template note with the real value or implementation",
@@ -403,6 +418,22 @@ BLOCKING_CHECKS = frozenset(
     }
 )
 
+# Structural-budget checks are judgment calls: a finding here can never
+# fail a build, no matter how a call site constructs the Finding.
+ADVISORY_ONLY_CHECKS = frozenset(
+    {
+        "god-function",
+        "deep-nesting",
+        "mutable-default",
+        "star-import",
+        "unwrap-density",
+        "bloat-long-file",
+        "bloat-param-count",
+        "bloat-comment-ratio",
+        "bloat-banner-comments",
+    }
+)
+
 
 @dataclass
 class Finding:
@@ -416,6 +447,8 @@ class Finding:
     def __post_init__(self) -> None:
         if self.check in BLOCKING_CHECKS:
             self.advisory = False
+        elif self.check in ADVISORY_ONLY_CHECKS:
+            self.advisory = True
 
     @property
     def remedy(self) -> str:
@@ -454,10 +487,17 @@ def iter_files(root: Path) -> list[Path]:
     return files
 
 
-def load_ignore_rules(root: Path) -> tuple[list[str], set[str]]:
-    """Read .ai-integrity-ignore: glob lines and `check:<id>` disable lines."""
+def load_ignore_rules(root: Path) -> tuple[list[str], set[str], dict[str, list[str]]]:
+    """Read .ai-integrity-ignore.
+
+    Grammar:
+    - `glob/line`            - skip the file entirely
+    - `check:<id>`           - disable the check everywhere
+    - `check:<id>:<glob>`    - disable the check only on matching paths
+    """
     globs: list[str] = []
     disabled: set[str] = set()
+    scoped: dict[str, list[str]] = {}
     ignore_path = root if root.is_dir() else root.parent
     ignore_path = ignore_path / IGNORE_FILE
     if ignore_path.is_file():
@@ -470,10 +510,29 @@ def load_ignore_rules(root: Path) -> tuple[list[str], set[str]]:
             if not line or line.startswith("#"):
                 continue
             if line.lower().startswith("check:"):
-                disabled.add(line.split(":", 1)[1].strip().lower())
+                parts = line.split(":", 2)
+                check_id = parts[1].strip().lower()
+                if len(parts) == 3 and parts[2].strip():
+                    scoped.setdefault(check_id, []).append(parts[2].strip())
+                else:
+                    disabled.add(check_id)
             else:
                 globs.append(line.rstrip("/"))
-    return globs, disabled
+    return globs, disabled, scoped
+
+
+def _scoped_out(finding: Finding, scoped: dict[str, list[str]]) -> bool:
+    """True when a scoped `check:<id>:<glob>` rule covers the finding."""
+    rules = scoped.get(finding.check.lower())
+    if not rules:
+        return False
+    name = PurePosixPath(finding.path.replace("\\", "/")).name
+    return any(
+        fnmatch.fnmatch(finding.path, g)
+        or fnmatch.fnmatch(name, g)
+        or fnmatch.fnmatch(finding.path, g.rstrip("/*") + "/*")
+        for g in rules
+    )
 
 
 def is_ignored(rel_path: str, globs: list[str]) -> bool:
@@ -744,6 +803,42 @@ def check_placeholder_impl(path: Path, text: str) -> list[Finding]:
 GOD_FUNCTION_LINES = 100
 MAX_NESTING = 5
 
+# ---------------------------------------------------------------------------
+# Bloat budget: the "AI writes 300 lines for 100 lines of work" guards.
+# All advisory - bloat is judgment, not a content defect. Budgets are
+# deliberately generous so normal, well-factored code never trips them.
+# ---------------------------------------------------------------------------
+BLOAT_FILE_LINES = 400  # non-blank lines before a source file is flagged
+BLOAT_MAX_PARAMS = 7  # parameters before a signature is unreadable
+BLOAT_COMMENT_RATIO = 0.5  # comment share of non-blank lines
+BLOAT_COMMENT_MIN_LINES = 60  # only judge the ratio in substantial files
+BLOAT_BANNER_MIN = 4  # decorative banner fences before judging their density
+BLOAT_BANNER_GAP = 20  # median gap under which banners are padding, not navigation
+MAX_PARAMS = BLOAT_MAX_PARAMS
+
+# Lines that may open a function block in a brace family. Conservative:
+# anything starting with a control, expression or declaration keyword is
+# out; what remains must carry a parameter list.
+BLOAT_HEADER_EXCLUDE = re.compile(
+    r"^\s*(?:if|else|for|while|switch|catch|do|try|with|match|case|default|"
+    r"namespace|class|struct|enum|union|interface|impl|trait|mod|extension|"
+    r"protocol|object|return|throw|new|import|package|using|require|include|"
+    r"typedef|operator|await|yield|print|echo|puts|elsif|elif|when|foreach|"
+    r"synchronized|loop)\b"
+)
+BLOAT_KW_FUNCS = re.compile(r"\b(?:function|fn|func|def|sub)\b")
+BLOAT_METHOD_STYLE = re.compile(
+    r"^\s*(?:@[\w.]+\s+)*(?:(?:public|private|protected|internal|static|"
+    r"final|abstract|override|virtual|sealed|async|unsafe|extern|inline|"
+    r"suspend|explicit|implicit|const|pub)\s+)*[\w<>\[\],:. ]*?\w+\s*\("
+)
+BLOAT_ARROW_STYLE = re.compile(r"=\s*(?:async\s*)?\([^)]*\)\s*=>\s*\{?\s*$")
+BANNER_DECO = re.compile(r"^[=\-_~+ ]{6,}$")
+RUBY_OPENER = re.compile(
+    r"^\s*(?:def|if|unless|while|until|case|begin|class|module)\b|do\s*(?:\|[^|]*\|)?\s*$"
+)
+RUBY_CLOSER = re.compile(r"^\s*end\b")
+
 
 def _finding(
     path: Path,
@@ -818,6 +913,26 @@ def _py_func_findings(path: Path, node) -> list[Finding]:
                 line=node.lineno,
                 check="mutable-default",
                 message=f"function {node.name!r} has a mutable default argument",
+                weight=1,
+                advisory=True,
+            )
+        )
+    params = (
+        len(node.args.posonlyargs)
+        + len(node.args.args)
+        + len(node.args.kwonlyargs)
+        + (1 if node.args.vararg else 0)
+        + (1 if node.args.kwarg else 0)
+    )
+    if params > BLOAT_MAX_PARAMS:
+        findings.append(
+            Finding(
+                path=str(path),
+                line=node.lineno,
+                check="bloat-param-count",
+                message=(
+                    f"function {node.name!r} takes {params} parameters (budget {BLOAT_MAX_PARAMS})"
+                ),
                 weight=1,
                 advisory=True,
             )
@@ -923,6 +1038,344 @@ def check_py_ast(path: Path, text: str, family: str) -> list[Finding]:
                         advisory=True,
                     )
                 )
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# Bloat budget: function, file and comment-pressure checks.
+# Python is measured through its AST; brace families through a conservative
+# line scanner; Ruby through def/end pairing. Every check is advisory and
+# reports at most one finding per file per rule (the worst offender wins).
+# ---------------------------------------------------------------------------
+
+
+def _code_lines(text: str, family: str) -> list[str]:
+    """Lines with strings and trailing comments blanked for brace counting."""
+    prefixes: tuple[str, ...] = ("//", "#") if family == "php" else ("//",)
+    if family == "ruby":
+        prefixes = ("#",)
+    out: list[str] = []
+    for raw in text.splitlines():
+        line = _strip_strings(raw)
+        for prefix in prefixes:
+            pos = line.find(prefix)
+            if pos != -1:
+                line = line[:pos]
+        out.append(line)
+    return out
+
+
+def _brace_depths(code_lines: list[str]) -> tuple[list[int], list[int], list[int]]:
+    """Per-line brace bookkeeping.
+
+    Returns (depth_end, max_depth, max_control_depth) where max_depth is the
+    highest brace depth reached on the line and max_control_depth counts
+    only braces that open control blocks or closures (`) {`, `else {`,
+    `do {`, `try {`) - the nesting a reader actually has to track.
+    """
+    n = len(code_lines)
+    depth_end = [0] * n
+    max_depth = [0] * n
+    max_control = [0] * n
+    depth = 0
+    for idx, code in enumerate(code_lines):
+        line_max = depth
+        line_ctl = depth
+        for ch in code:
+            if ch == "{":
+                depth += 1
+                line_max = max(line_max, depth)
+            elif ch == "}":
+                depth = max(0, depth - 1)
+        tail = code.rstrip()
+        if tail.endswith("{"):
+            head = tail[:-1].rstrip()
+            if head.endswith(")") or re.search(r"\b(?:else|do|try)\s*$", head):
+                line_ctl = max(line_ctl, depth)
+        depth_end[idx] = depth
+        max_depth[idx] = line_max
+        max_control[idx] = line_ctl
+    return depth_end, max_depth, max_control
+
+
+def _last_param_group(header: str) -> str | None:
+    """The last balanced (...) group of a signature line."""
+    best: str | None = None
+    start = -1
+    nested = 0
+    for pos, ch in enumerate(header):
+        if ch == "(":
+            if nested == 0:
+                start = pos
+            nested += 1
+        elif ch == ")" and nested > 0:
+            nested -= 1
+            if nested == 0 and start != -1:
+                best = header[start + 1 : pos]
+                start = -1
+    return best
+
+
+def _param_count(header: str) -> int:
+    group = _last_param_group(header)
+    if group is None or not group.strip():
+        return 0
+    depth = 0
+    params = 1
+    for ch in group:
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth = max(0, depth - 1)
+        elif ch == "," and depth == 0:
+            params += 1
+    return params
+
+
+def _header_openers(code_lines: list[str]) -> list[tuple[int, str]]:
+    """Lines that may open a function block: (index, header_text).
+
+    A header is a signature line that carries its own `{` or is followed by
+    a line whose first token is `{` (Allman style). Control, expression and
+    declaration keywords never open blocks.
+    """
+    n = len(code_lines)
+    headers: list[tuple[int, str]] = []
+    for idx, code in enumerate(code_lines):
+        stripped = code.strip()
+        if not stripped or BLOAT_HEADER_EXCLUDE.match(stripped):
+            continue
+        has_parens = "(" in code and ")" in code
+        is_kw = bool(BLOAT_KW_FUNCS.search(code))
+        is_method = bool(BLOAT_METHOD_STYLE.match(code))
+        is_arrow = bool(BLOAT_ARROW_STYLE.search(code))
+        if not (has_parens and (is_kw or is_method or is_arrow)):
+            continue
+        if "{" in code:
+            headers.append((idx, code))
+            continue
+        for nxt in range(idx + 1, min(idx + 3, n)):
+            nxt_stripped = code_lines[nxt].strip()
+            if not nxt_stripped:
+                continue
+            if nxt_stripped.startswith("{"):
+                headers.append((idx, code))
+            break
+    return headers
+
+
+def _brace_blocks(code_lines: list[str]) -> list[dict]:
+    """Function-ish brace blocks with length and control-nesting depth."""
+    depth_end, max_depth, max_control = _brace_depths(code_lines)
+    blocks: list[dict] = []
+    for idx, header in _header_openers(code_lines):
+        if "{" in code_lines[idx]:
+            open_idx = idx
+        else:
+            open_idx = None
+            for nxt in range(idx + 1, min(idx + 3, len(code_lines))):
+                if code_lines[nxt].strip().startswith("{"):
+                    open_idx = nxt
+                    break
+            if open_idx is None:
+                continue
+        open_depth = depth_end[open_idx] - 1
+        if open_depth < 0:
+            open_depth = 0
+        close_idx = None
+        for j in range(open_idx, len(code_lines)):
+            if depth_end[j] <= open_depth and j >= open_idx:
+                close_idx = j
+                break
+        if close_idx is None:
+            continue
+        inner_ctl = max(max_control[open_idx : close_idx + 1]) - (open_depth + 1)
+        blocks.append(
+            {
+                "header": idx,
+                "open": open_idx,
+                "close": close_idx,
+                "length": close_idx - idx + 1,
+                "depth": max(0, inner_ctl),
+                "header_text": header,
+            }
+        )
+    return blocks
+
+
+def _ruby_def_blocks(code_lines: list[str]) -> list[dict]:
+    """def/end blocks with length and nesting via keyword pairing."""
+    blocks: list[dict] = []
+    n = len(code_lines)
+    idx = 0
+    while idx < n:
+        if re.match(r"^\s*def\s", code_lines[idx]):
+            depth = 0
+            max_depth = 0
+            close = None
+            for j in range(idx, n):
+                if j > idx and RUBY_OPENER.match(code_lines[j]):
+                    depth += 1
+                    max_depth = max(max_depth, depth)
+                if RUBY_CLOSER.match(code_lines[j]):
+                    if depth == 0:
+                        close = j
+                        break
+                    depth -= 1
+            if close is not None:
+                blocks.append(
+                    {
+                        "header": idx,
+                        "close": close,
+                        "length": close - idx + 1,
+                        "depth": max_depth,
+                        "header_text": code_lines[idx],
+                    }
+                )
+                idx = close + 1
+                continue
+        idx += 1
+    return blocks
+
+
+def _is_banner(comment: Comment) -> bool:
+    core = re.sub(r"^(?:#|//|/\*|\*)+\s*", "", comment.text.strip())
+    core = core.rstrip("*/").strip()
+    if not core:
+        return False
+    return bool(BANNER_DECO.match(core))
+
+
+def _file_bloat_findings(
+    path: Path,
+    text: str,
+    comments: list[Comment],
+    rel: str,
+) -> list[Finding]:
+    """File-level budgets: length, comment pressure, banner padding."""
+    findings: list[Finding] = []
+    lines = text.splitlines()
+    non_blank = sum(1 for line in lines if line.strip())
+    if non_blank > BLOAT_FILE_LINES and not is_test_path(rel):
+        findings.append(
+            Finding(
+                path=str(path),
+                line=1,
+                check="bloat-long-file",
+                message=f"file spans {non_blank} non-blank lines (budget {BLOAT_FILE_LINES})",
+                weight=1,
+                advisory=True,
+            )
+        )
+    comment_lines = {c.line for c in comments}
+    if non_blank >= BLOAT_COMMENT_MIN_LINES:
+        ratio = len(comment_lines) / non_blank
+        if ratio > BLOAT_COMMENT_RATIO:
+            findings.append(
+                Finding(
+                    path=str(path),
+                    line=1,
+                    check="bloat-comment-ratio",
+                    message=(
+                        f"{len(comment_lines)}/{non_blank} lines are comments "
+                        f"({ratio:.0%} - budget {BLOAT_COMMENT_RATIO:.0%})"
+                    ),
+                    weight=1,
+                    advisory=True,
+                )
+            )
+    banner_lines = [c.line for c in comments if _is_banner(c)]
+    # Banners that sit far apart are section navigation; banners bunched
+    # together are padding. A titled section block (divider, title, divider)
+    # is one decoration unit: measure the gaps between clusters, not between
+    # the lines inside a block.
+    cluster_starts: list[int] = []
+    prev = banner_lines[0] - 10 if banner_lines else 0
+    for line in banner_lines:
+        if line - prev > 2:
+            cluster_starts.append(line)
+        prev = line
+    if len(cluster_starts) >= BLOAT_BANNER_MIN:
+        gaps = sorted(b - a for a, b in zip(cluster_starts, cluster_starts[1:]))
+        median_gap = gaps[len(gaps) // 2] if gaps else non_blank
+        if median_gap < BLOAT_BANNER_GAP:
+            findings.append(
+                Finding(
+                    path=str(path),
+                    line=cluster_starts[0],
+                    check="bloat-banner-comments",
+                    message=(
+                        f"{len(cluster_starts)} decorative banner blocks pad the "
+                        "file; structure should carry the sections"
+                    ),
+                    weight=1,
+                    advisory=True,
+                )
+            )
+    return findings
+
+
+def _worst_block_findings(path: Path, blocks: list[dict]) -> list[Finding]:
+    """One finding per rule for the worst function block in the file."""
+    findings: list[Finding] = []
+    worst_len = max(blocks, key=lambda b: b["length"])
+    worst_depth = max(blocks, key=lambda b: b["depth"])
+    worst_params = max(blocks, key=lambda b: _param_count(b["header_text"]))
+    if worst_len["length"] > GOD_FUNCTION_LINES:
+        findings.append(
+            Finding(
+                path=str(path),
+                line=worst_len["header"] + 1,
+                check="god-function",
+                message=f"function block spans {worst_len['length']} lines",
+                weight=1,
+                advisory=True,
+            )
+        )
+    if worst_depth["depth"] > MAX_NESTING:
+        findings.append(
+            Finding(
+                path=str(path),
+                line=worst_depth["header"] + 1,
+                check="deep-nesting",
+                message=f"nests more than {MAX_NESTING} levels",
+                weight=1,
+                advisory=True,
+            )
+        )
+    params = _param_count(worst_params["header_text"])
+    if params > BLOAT_MAX_PARAMS:
+        findings.append(
+            Finding(
+                path=str(path),
+                line=worst_params["header"] + 1,
+                check="bloat-param-count",
+                message=f"{params} parameters (budget {BLOAT_MAX_PARAMS})",
+                weight=1,
+                advisory=True,
+            )
+        )
+    return findings
+
+
+def check_bloat(
+    path: Path,
+    text: str,
+    family: str,
+    rel: str,
+    comments: list[Comment],
+) -> list[Finding]:
+    """File-level and function-level bloat budget checks (all advisory)."""
+    findings = _file_bloat_findings(path, text, comments, rel)
+    if family == "py":
+        return findings
+    blocks = (
+        _ruby_def_blocks(_code_lines(text, family))
+        if family == "ruby"
+        else _brace_blocks(_code_lines(text, family))
+    )
+    if blocks:
+        findings.extend(_worst_block_findings(path, blocks))
     return findings
 
 
@@ -1623,6 +2076,7 @@ def scan_code_file(
     findings.extend(check_elided_code(path, text))
     findings.extend(check_placeholder_impl(path, text))
     findings.extend(check_py_ast(path, text, family))
+    findings.extend(check_bloat(path, text, family, rel, comments))
     findings.extend(check_exceptions_js_family(path, text, family))
     findings.extend(check_go(path, text, family, rel))
     findings.extend(check_rust(path, text, family))
@@ -1881,7 +2335,7 @@ def scan(
     provenance: bool = True,
 ) -> list[Finding]:
     files = iter_files(root)
-    globs, disabled = load_ignore_rules(root)
+    globs, disabled, scoped = load_ignore_rules(root)
     globs = globs + list(extra_globs or [])
     py_manifests = collect_py_dependencies(root if root.is_dir() else root.parent)
     js_deps = collect_js_dependencies(root if root.is_dir() else root.parent)
@@ -1909,6 +2363,8 @@ def scan(
         findings.extend(inventory_findings(root, files, globs))
     if disabled:
         findings = [f for f in findings if f.check.lower() not in disabled]
+    if scoped:
+        findings = [f for f in findings if not _scoped_out(f, scoped)]
     return findings
 
 

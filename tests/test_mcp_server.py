@@ -371,14 +371,20 @@ def test_scan_diff_untracked_visible_against_base(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _capture_write(monkeypatch) -> list:
+    """Patch _write to collect outgoing JSON-RPC messages; returns the list."""
+    captured: list = []
+    monkeypatch.setattr(mcp, "_write", lambda m: captured.append(m))
+    return captured
+
+
 def _dispatch(msg: dict, captured: list) -> None:
     """Capture mode for _write: collect messages instead of printing."""
     captured.append(msg)
 
 
 def test_initialize_echoes_supported_protocol(monkeypatch) -> None:
-    captured: list = []
-    monkeypatch.setattr(mcp, "_write", lambda m: captured.append(m))
+    captured = _capture_write(monkeypatch)
     mcp.handle_request(
         {
             "jsonrpc": "2.0",
@@ -394,8 +400,7 @@ def test_initialize_echoes_supported_protocol(monkeypatch) -> None:
 
 
 def test_initialize_falls_back_on_unknown_protocol(monkeypatch) -> None:
-    captured: list = []
-    monkeypatch.setattr(mcp, "_write", lambda m: captured.append(m))
+    captured = _capture_write(monkeypatch)
     mcp.handle_request(
         {
             "jsonrpc": "2.0",
@@ -409,8 +414,7 @@ def test_initialize_falls_back_on_unknown_protocol(monkeypatch) -> None:
 
 def test_initialize_accepts_2025_11_25_and_modern(monkeypatch) -> None:
     """Both newer revisions negotiate over the legacy handshake for hybrid clients."""
-    captured: list = []
-    monkeypatch.setattr(mcp, "_write", lambda m: captured.append(m))
+    captured = _capture_write(monkeypatch)
     for idx, version in enumerate(("2025-11-25", mcp.MODERN_PROTOCOL_VERSION), start=20):
         mcp.handle_request(
             {
@@ -425,8 +429,7 @@ def test_initialize_accepts_2025_11_25_and_modern(monkeypatch) -> None:
 
 def test_server_discover_is_the_modern_handshake(monkeypatch) -> None:
     """2026-07-28: server/discover returns identity, versions, capabilities."""
-    captured: list = []
-    monkeypatch.setattr(mcp, "_write", lambda m: captured.append(m))
+    captured = _capture_write(monkeypatch)
     mcp.handle_request(
         {
             "jsonrpc": "2.0",
@@ -452,8 +455,7 @@ def test_server_discover_is_the_modern_handshake(monkeypatch) -> None:
 
 def test_meta_protocol_version_supported_passes_through(monkeypatch) -> None:
     """Stateless calls carrying a known _meta version just work - no handshake."""
-    captured: list = []
-    monkeypatch.setattr(mcp, "_write", lambda m: captured.append(m))
+    captured = _capture_write(monkeypatch)
     mcp.handle_request(
         {
             "jsonrpc": "2.0",
@@ -471,8 +473,7 @@ def test_meta_protocol_version_supported_passes_through(monkeypatch) -> None:
 
 def test_meta_protocol_version_unknown_is_32022(monkeypatch) -> None:
     """Unknown per-request version: -32022 with the supported list, per spec."""
-    captured: list = []
-    monkeypatch.setattr(mcp, "_write", lambda m: captured.append(m))
+    captured = _capture_write(monkeypatch)
     mcp.handle_request(
         {
             "jsonrpc": "2.0",
@@ -494,8 +495,7 @@ def test_meta_protocol_version_unknown_is_32022(monkeypatch) -> None:
 
 def test_meta_without_protocol_key_is_ignored(monkeypatch) -> None:
     """_meta objects that carry other data but no version key stay harmless."""
-    captured: list = []
-    monkeypatch.setattr(mcp, "_write", lambda m: captured.append(m))
+    captured = _capture_write(monkeypatch)
     mcp.handle_request(
         {
             "jsonrpc": "2.0",
@@ -512,23 +512,20 @@ def test_meta_without_protocol_key_is_ignored(monkeypatch) -> None:
 
 
 def test_unknown_method_is_32601(monkeypatch) -> None:
-    captured: list = []
-    monkeypatch.setattr(mcp, "_write", lambda m: captured.append(m))
+    captured = _capture_write(monkeypatch)
     mcp.handle_request({"jsonrpc": "2.0", "id": 7, "method": "x/y/z"})
     assert captured[0]["error"]["code"] == -32601
 
 
 def test_notifications_get_no_response(monkeypatch) -> None:
-    captured: list = []
-    monkeypatch.setattr(mcp, "_write", lambda m: captured.append(m))
+    captured = _capture_write(monkeypatch)
     mcp.handle_request({"jsonrpc": "2.0", "method": "notifications/initialized"})
     mcp.handle_request({"jsonrpc": "2.0", "method": "notifications/cancelled"})
     assert captured == []
 
 
 def test_tool_call_error_is_isError_payload(monkeypatch, tmp_path: Path) -> None:
-    captured: list = []
-    monkeypatch.setattr(mcp, "_write", lambda m: captured.append(m))
+    captured = _capture_write(monkeypatch)
     mcp.handle_request(
         {
             "jsonrpc": "2.0",
@@ -543,8 +540,7 @@ def test_tool_call_error_is_isError_payload(monkeypatch, tmp_path: Path) -> None
 
 
 def test_unknown_tool_is_32602(monkeypatch) -> None:
-    captured: list = []
-    monkeypatch.setattr(mcp, "_write", lambda m: captured.append(m))
+    captured = _capture_write(monkeypatch)
     mcp.handle_request(
         {"jsonrpc": "2.0", "id": 8, "method": "tools/call", "params": {"name": "nope"}}
     )
@@ -552,8 +548,7 @@ def test_unknown_tool_is_32602(monkeypatch) -> None:
 
 
 def test_prompts_list_and_get(monkeypatch, tmp_path: Path) -> None:
-    captured: list = []
-    monkeypatch.setattr(mcp, "_write", lambda m: captured.append(m))
+    captured = _capture_write(monkeypatch)
     mcp.handle_request({"jsonrpc": "2.0", "id": 9, "method": "prompts/list"})
     names = [p["name"] for p in captured[0]["result"]["prompts"]]
     assert names == ["fix-my-repo", "explain-findings", "pre-flight"]
@@ -572,8 +567,7 @@ def test_prompts_list_and_get(monkeypatch, tmp_path: Path) -> None:
 
 
 def test_prompts_get_unknown_and_invalid(monkeypatch) -> None:
-    captured: list = []
-    monkeypatch.setattr(mcp, "_write", lambda m: captured.append(m))
+    captured = _capture_write(monkeypatch)
     mcp.handle_request(
         {"jsonrpc": "2.0", "id": 11, "method": "prompts/get", "params": {"name": "nope"}}
     )

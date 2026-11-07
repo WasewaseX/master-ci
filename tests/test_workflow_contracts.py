@@ -36,6 +36,13 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 WF_DIR = ROOT / ".github" / "workflows"
+
+
+def _on(data: dict) -> dict:
+    """The `on:` mapping - PyYAML 1.1 parses the key as boolean True."""
+    return data[True] if True in data else data["on"]
+
+
 WORKFLOWS = sorted(list(WF_DIR.glob("*.yml")) + list(WF_DIR.glob("*.yaml")))
 SHA_RE = re.compile(r"^(?P<action>[\w./-]+)@(?P<ref>[0-9a-f]{40})(?:\s*#\s*(?P<comment>\S.*))?$")
 REUSABLE_TAG_RE = re.compile(r"^[\w.-]+/[\w.-]+/\.github/workflows/[\w.-]+@v[\d.]+$")
@@ -207,7 +214,7 @@ def test_security_events_only_where_sarif_is_uploaded():
 
 def test_ai_detector_is_advisory_by_default():
     data = load(WF_DIR / "master-ci.yml")
-    trigger = data[True] if True in data else data["on"]
+    trigger = _on(data)
     inputs = trigger["workflow_call"]["inputs"]
     assert inputs["fail_on_ai_slop"]["default"] is False
     assert inputs["fail_on_ai_slop"]["type"] == "boolean"
@@ -467,7 +474,7 @@ def test_default_biome_policy_excludes_the_helper_checkout():
 def test_check_jobs_can_be_selected_individually():
     """Every check job carries a select clause so callers can run subsets."""
     data = load(WF_DIR / "master-ci.yml")
-    trigger = data[True] if True in data else data["on"]
+    trigger = _on(data)
     inputs = trigger["workflow_call"]["inputs"]
     assert inputs["select"]["default"] == "", "select must default to all jobs"
     gated = [
@@ -594,7 +601,7 @@ def test_selftest_guardrails_isolate_the_designed_failures():
     guardrail fired - so the watchdog can tell designed red from broken red.
     """
     data = load(WF_DIR / "selftest-guardrails.yml")
-    trigger = data[True] if True in data else data["on"]
+    trigger = _on(data)
     assert set(trigger) == {"workflow_dispatch"}, (
         "the guardrails suite must be dispatch-only - it must never run on "
         "push or schedule and redden a routine run"
@@ -650,7 +657,7 @@ def test_selftest_guardrails_isolate_the_designed_failures():
 
 def test_master_ci_exposes_verdict_output():
     data = load(WF_DIR / "master-ci.yml")
-    trigger = data[True] if True in data else data["on"]
+    trigger = _on(data)
     call = trigger["workflow_call"]
     assert "verdict" in call.get("outputs", {}), (
         "master-ci.yml must expose a verdict output for selftest assertions"
@@ -710,7 +717,7 @@ def test_heal_and_autofix_share_the_fix_engine():
 
 def test_deep_audit_runs_on_a_clock_never_on_push():
     data = load(WF_DIR / "audit.yml")
-    trigger = data[True] if True in data else data["on"]
+    trigger = _on(data)
     assert set(trigger) == {"schedule", "workflow_dispatch"}, (
         "the deep audit is a scheduled/manual sweep, not a push or PR gate"
     )
@@ -735,7 +742,7 @@ def test_deep_audit_never_gates_ci_and_never_fails_on_findings():
 
 def test_benchmark_is_scheduled_report_only_and_uploads_results():
     data = load(WF_DIR / "benchmark.yml")
-    trigger = data[True] if True in data else data["on"]
+    trigger = _on(data)
     assert set(trigger) == {"schedule", "workflow_dispatch"}, (
         "benchmark is a scheduled/manual report, not a push or PR gate"
     )
@@ -785,7 +792,7 @@ def test_benchmark_history_lines_parse_when_present():
 
 def test_expected_failure_harness_runs_the_negative_paths_routinely():
     data = load(WF_DIR / "selftest-negative.yml")
-    trigger = data[True] if True in data else data["on"]
+    trigger = _on(data)
     assert {"push", "schedule", "workflow_dispatch"} <= set(trigger), (
         "negative paths must run routinely, not only on manual dispatch"
     )
@@ -940,7 +947,7 @@ def test_self_loop_workflows_push_target_main():
     """The self-loop workflows must explicitly push-target [main] and nothing else."""
     for name in ("ci.yml", "selftest.yml", "selftest-negative.yml"):
         data = load(WF_DIR / name)
-        trigger = data[True] if True in data else data["on"]
+        trigger = _on(data)
         assert trigger["push"]["branches"] == ["main"], (
             f"{name}: push.branches must be exactly ['main'], got {trigger['push']['branches']!r}"
         )
@@ -1016,7 +1023,7 @@ def test_release_docker_publishes_with_oidc_and_signing():
     credentials (GHCR token, Docker Hub secrets, AWS OIDC), sign keylessly
     with cosign, and verify the signature before reporting success."""
     data = load(WF_DIR / "release-docker.yml")
-    trigger = data[True] if True in data else data["on"]
+    trigger = _on(data)
     inputs = trigger["workflow_call"]["inputs"]
     assert inputs["registry"]["required"] is True
     assert inputs["image_name"]["required"] is True
@@ -1054,7 +1061,7 @@ def test_deploy_aws_is_oidc_first_and_fails_closed():
     secret for a static access key - and must validate the deployment
     contract before any credentials are assumed."""
     data = load(WF_DIR / "deploy-aws.yml")
-    trigger = data[True] if True in data else data["on"]
+    trigger = _on(data)
     inputs = trigger["workflow_call"]["inputs"]
     assert inputs["role_arn"]["required"] is True, "OIDC role is the only auth path"
     assert inputs["target"]["required"] is True
