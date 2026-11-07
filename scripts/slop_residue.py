@@ -4,15 +4,15 @@ Patterns catalogued by scanaislop.com's 58-pattern research, ported to
 the detector's registry model (Python AST family):
 
 - dead residue: unreachable code, constant conditions, duplicate imports
-  (scanaislop ``ai-slop/unreachable-code``, ``constant-condition``,
-  ``duplicate-import``)
+    (scanaislop ``ai-slop/unreachable-code``, ``constant-condition``,
+    ``duplicate-import``)
 - pythonic-shape debts: ``for i in range(len(x))`` loops, isinstance
-  ladders and longhand string dispatch (four-plus branches on one
-  subject), catch blocks that only rethrow, catch blocks that log
-  without the caught error and carry on
+    ladders and longhand string dispatch (four-plus branches on one
+    subject), catch blocks that only rethrow, catch blocks that log
+    without the caught error and carry on
 - test integrity: assertions that cannot fail (``assert True``, ``x == x``)
 - naming: module-level identifiers and functions named data/result/
-  value/temp/obj/info/item/... - nouns that say "this is a noun"
+    value/temp/obj/info/item/... - nouns that say "this is a noun"
 
 Commentary-side checks (meta comments, prose blocks, hardcoded URLs,
 brace-family residue) live in slop_commentary; this module calls them

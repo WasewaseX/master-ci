@@ -4,11 +4,11 @@ The comment doctrine from scanaislop.com's writing-comments guide,
 deterministically enforced:
 
 - meta comments record the conversation instead of the code
-  (task-history narration: requirement references, stale call notes)
+    (task-history narration: requirement references, stale call notes)
 - prose blocks are five-plus consecutive narrating comments; the code
-  already shows the what, so keep only the non-obvious why
+    already shows the what, so keep only the non-obvious why
 - hardcoded URLs bake one environment (localhost, staging, internal
-  hosts) into source that runs in all the others
+    hosts) into source that runs in all the others
 - brace-family dead residue: constant conditions in if/while heads
 
 All findings are advisory; aggregate pressure is enforced through the
