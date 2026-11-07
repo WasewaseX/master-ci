@@ -1,8 +1,9 @@
 # One-line CI for any project.
 #
 # Copy this file to .github/workflows/ci.yml in your repository and commit.
-# That is the whole setup: master-ci auto-detects Rust / Node / Python and
-# skips whatever did not change. The `uses:` line below is the one-liner.
+# That is the whole setup: master-ci auto-detects Rust, Node/TypeScript,
+# Python, Go, JVM (Java/Kotlin), C/C++, .NET (C#/F#), Ruby, PHP and Docker,
+# and skips whatever did not change. The `uses:` line below is the one-liner.
 #
 # Supply-chain notes:
 # - `@v1` tracks the latest v1.x release of the template (see the repo's
@@ -11,6 +12,25 @@
 # - No `secrets: inherit`: master-ci only uses the automatic GITHUB_TOKEN.
 # - `id-token: write` exists solely for OSSF Scorecard result publishing.
 #   Set `scorecard_publish: false` and drop that line to run without OIDC.
+#
+# Deployments and container releases are sibling reusable workflows
+# (enable what you need):
+#
+#   publish:
+#     needs: master
+#     uses: WasewaseX/master-ci/.github/workflows/release-docker.yml@v1
+#     with: { registry: ghcr, image_name: owner/app }
+#     permissions: { contents: read, packages: write, security-events: write, id-token: write }
+#
+#   deploy:
+#     needs: publish
+#     uses: WasewaseX/master-ci/.github/workflows/deploy-aws.yml@v1
+#     with:
+#       role_arn: arn:aws:iam::123456789012:role/ci-deploy
+#       target: s3
+#       s3_bucket: my-bucket
+#       s3_source_dir: dist
+#     permissions: { contents: read, id-token: write }
 
 name: CI
 

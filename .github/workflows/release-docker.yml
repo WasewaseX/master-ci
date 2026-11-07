@@ -1,0 +1,297 @@
+# =============================================================================
+# Master CI - Docker Release: build, push, scan, sign container images
+# =============================================================================
+# A reusable workflow for publishing container images with the same
+# supply-chain discipline Master CI enforces on code:
+#
+#   - multi-arch buildx builds (QEMU + buildx, push or load-only)
+#   - three registry targets: ghcr | dockerhub | ecr
+#       ghcr      - authenticates with the automatic GITHUB_TOKEN
+#       dockerhub - authenticates with the dockerhub_username /
+#                   dockerhub_token secrets
+#       ecr       - authenticates with AWS OIDC (role_arn), never static keys
+#   - SHA-tagged plus configurable tags, OCI provenance + SBOM attestations
+#   - Trivy image scan uploaded to the Security tab
+#   - cosign keyless signature (Sigstore, OIDC-based, no key management)
+#
+# Call it after your CI is green:
+#
+#   jobs:
+#     publish:
+#       needs: ci
+#       uses: WasewaseX/master-ci/.github/workflows/release-docker.yml@v1
+#       with:
+#         registry: ghcr
+#         image_name: owner/app        # GHCR package name
+#       permissions:
+#         contents: read
+#         packages: write
+#         security-events: write
+#         id-token: write              # cosign keyless signing
+#
+# permissions are least-privilege per job; the caller grants the union once.
+# =============================================================================
+
+name: Master CI - Docker Release
+
+on:
+  workflow_call:
+    inputs:
+      registry:
+        description: 'ghcr | dockerhub | ecr - where the image is published'
+        required: true
+        type: string
+      image_name:
+        description: 'Namespaced repository path without the registry host (e.g. owner/app)'
+        required: true
+        type: string
+      platforms:
+        description: 'Comma-separated buildx platforms'
+        required: false
+        type: string
+        default: linux/amd64
+      dockerfile:
+        description: 'Path to the Dockerfile'
+        required: false
+        type: string
+        default: Dockerfile
+      context:
+        description: 'Build context path'
+        required: false
+        type: string
+        default: .
+      build_args:
+        description: 'Newline-separated KEY=VALUE build arguments'
+        required: false
+        type: string
+        default: ''
+      extra_tags:
+        description: 'Newline-separated extra tags (e.g. v1.2.3); a sha tag and latest are always added'
+        required: false
+        type: string
+        default: ''
+      push:
+        description: 'false builds only (validates the image), true publishes'
+        required: false
+        type: boolean
+        default: true
+      sign:
+        description: 'cosign keyless-sign the pushed image (needs push: true)'
+        required: false
+        type: boolean
+        default: true
+      aws_region:
+        description: AWS region for the ECR target
+        required: false
+        type: string
+        default: us-east-1
+      role_arn:
+        description: IAM role ARN for AWS OIDC (required for the ecr target)
+        required: false
+        type: string
+        default: ''
+    secrets:
+      dockerhub_username:
+        description: Docker Hub username (dockerhub target only)
+        required: false
+      dockerhub_token:
+        description: Docker Hub access token (dockerhub target only)
+        required: false
+    outputs:
+      image:
+        description: 'Fully qualified image reference (name@digest) that was built'
+        value: ${{ jobs.publish.outputs.image }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: master-ci-release-docker-${{ inputs.registry }}-${{ inputs.image_name }}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+      id-token: write
+    outputs:
+      image: ${{ steps.image-ref.outputs.fqn }}
+    env:
+      REGISTRY: ${{ inputs.registry }}
+      IMAGE_NAME: ${{ inputs.image_name }}
+      ROLE_ARN: ${{ inputs.role_arn }}
+      AWS_REGION: ${{ inputs.aws_region }}
+      PUSH: ${{ inputs.push }}
+      SIGN: ${{ inputs.sign }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate release inputs
+        run: |
+          die() { echo "::error::$1"; exit 1; }
+          case "$REGISTRY" in
+            ghcr|dockerhub|ecr) ;;
+            *) die "registry must be one of: ghcr, dockerhub, ecr (got '$REGISTRY')" ;;
+          esac
+          case "$IMAGE_NAME" in
+            ''|*[!A-Za-z0-9._/-]*)
+              die "image_name must be a repository path of letters, digits, dot, dash, underscore (got '$IMAGE_NAME')" ;;
+          esac
+          case "$IMAGE_NAME" in
+            */*) ;;
+            *) die "image_name must be namespaced (owner/app, user/app, or ecr repo path)" ;;
+          esac
+          if [ "$PUSH" != "true" ] && [ "$PUSH" != "false" ]; then
+            die "push must be true or false"
+          fi
+          if [ "$SIGN" != "true" ] && [ "$SIGN" != "false" ]; then
+            die "sign must be true or false"
+          fi
+          if [ "$SIGN" = "true" ] && [ "$PUSH" != "true" ]; then
+            die "sign requires push: true - there is nothing to sign without publishing"
+          fi
+          if [ "$REGISTRY" = "ecr" ]; then
+            [ -n "$ROLE_ARN" ] || die "role_arn is required for the ecr target (OIDC-first: no static keys)"
+            case "$ROLE_ARN" in
+              arn:aws*:iam::*:role/*) ;;
+              *) die "role_arn must look like arn:aws:iam::<account-id>:role/<name>" ;;
+            esac
+          fi
+          echo "release inputs validated (registry=$REGISTRY image=$IMAGE_NAME)"
+
+      # OIDC credentials come first so every later AWS call (registry
+      # resolution, ECR login) runs under the same short-lived session
+      - name: Configure AWS credentials (OIDC)
+        if: env.REGISTRY == 'ecr'
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ inputs.role_arn }}
+          aws-region: ${{ inputs.aws_region }}
+
+      - name: Compute image refs and tags
+        id: image
+        env:
+          EXTRA_TAGS: ${{ inputs.extra_tags }}
+        run: |
+          sha_tag="$(printf '%s' "$GITHUB_SHA" | cut -c1-12)"
+          case "$REGISTRY" in
+            ghcr)      host="ghcr.io" ;;
+            dockerhub) host="docker.io" ;;
+            ecr)
+              account=$(aws sts get-caller-identity --query Account --output text)
+              [ -n "$account" ] || { echo "::error::could not resolve the ECR account id"; exit 1; }
+              host="${account}.dkr.ecr.${AWS_REGION}.amazonaws.com" ;;
+          esac
+          fqn="${host}/${IMAGE_NAME}"
+          tags="${fqn}:${sha_tag}
+          ${fqn}:latest"
+          while IFS= read -r tag; do
+            tag=$(printf '%s' "$tag" | tr -d '[:space:]')
+            [ -z "$tag" ] && continue
+            case "$tag" in
+              ''|*[!A-Za-z0-9._/-]*)
+                echo "::error::extra tag contains unsafe characters: $tag"; exit 1 ;;
+            esac
+            tags="${tags}
+          ${fqn}:${tag}"
+          done <<< "$EXTRA_TAGS"
+          {
+            echo "fqn=${fqn}"
+            echo "ecr_host=${host}"
+            echo "tags<<EOF"
+            printf '%s\n' "$tags"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "image: ${fqn} (tags: $(printf '%s' "$tags" | tr '\n' ' '))"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GHCR
+        if: env.REGISTRY == 'ghcr'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Log in to Docker Hub
+        if: env.REGISTRY == 'dockerhub'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          username: ${{ secrets.dockerhub_username }}
+          password: ${{ secrets.dockerhub_token }}
+      - name: Log in to Amazon ECR
+        if: env.REGISTRY == 'ecr'
+        run: |
+          password=$(aws ecr get-login-password --region "$AWS_REGION")
+          echo "$password" | docker login --username AWS --password-stdin "$ECR_HOST"
+        env:
+          ECR_HOST: ${{ steps.image.outputs.ecr_host }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          platforms: ${{ inputs.platforms }}
+          push: ${{ inputs.push }}
+          tags: ${{ steps.image.outputs.tags }}
+          build-args: ${{ inputs.build_args }}
+          # OCI attestations attach to every pushed image; a load-only build
+          # has no registry to attach them to, so they are skipped there
+          provenance: ${{ inputs.push && 'mode=max' || false }}
+          sbom: ${{ inputs.push }}
+
+      - name: Export image reference
+        if: inputs.push
+        id: image-ref
+        env:
+          IMAGE_FQN: ${{ steps.image.outputs.fqn }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          [ -n "$DIGEST" ] || { echo "::error::no digest - the image was not pushed"; exit 1; }
+          echo "fqn=${IMAGE_FQN}@${DIGEST}" >> "$GITHUB_OUTPUT"
+
+      - name: Scan the pushed image (Trivy)
+        if: inputs.push
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ steps.image.outputs.fqn }}@${{ steps.build.outputs.digest }}
+          scanners: vuln,secret
+          format: sarif
+          output: trivy-release.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+      - name: Upload image-scan SARIF
+        if: inputs.push && always() && hashFiles('trivy-release.sarif') != ''
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: trivy-release.sarif
+          category: trivy-release
+
+      - name: Install cosign
+        if: inputs.sign && inputs.push
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+      - name: Sign and verify the image (cosign keyless)
+        # keyless signing: the signature references the GitHub OIDC identity
+        # of this run - there are no signing keys to store, rotate or leak.
+        # The verify step proves the signature before the workflow reports
+        # success; a signature nobody verified is decoration.
+        if: inputs.sign && inputs.push
+        run: |
+          cosign sign --yes "${IMAGE}@${DIGEST}"
+          cosign verify "${IMAGE}@${DIGEST}" \
+            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+        env:
+          IMAGE: ${{ steps.image.outputs.fqn }}
+          DIGEST: ${{ steps.build.outputs.digest }}

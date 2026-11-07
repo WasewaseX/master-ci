@@ -32,21 +32,23 @@ Profile presets (quick / standard / strict / custom) only change the
 ## `changes` - path filtering
 
 - **Inspects:** the git diff of the triggering event against a filter table
-  (code, node, python, rust, docs, workflows, docker globs). Generated and
-  vendored trees (`dist`, `build`, `target`, `vendor`, `coverage`,
-  `node_modules`) are excluded, so rebuilding an artifact never triggers a
-  stack run; `fixtures/` is excluded from the Node stack only.
+  (code, node, python, rust, go, java, cpp, csharp, ruby, php, docs,
+  workflows, docker globs). Generated and vendored trees (`dist`, `build`,
+  `target`, `vendor`, `coverage`, `node_modules`, `bin`, `obj`) are
+  excluded, so rebuilding an artifact never triggers a stack run;
+  `fixtures/` is excluded from the Node stack only.
 - **Does not inspect:** file contents beyond paths; symlink-heavy trees can
   over-match globs.
 - **Fails when:** git operations fail (broken repository).
 - **False positives:** rename/delete detection needs full history
   (`fetch-depth: 0`, already set).
 - **Tested:** `tests/test_path_filters.py` extracts the live filter table
-  from the workflow and pins 85+ synthetic layouts with exact expected
+  from the workflow and pins 140+ synthetic layouts with exact expected
   stacks, plus picomatch-semantics translator checks and output wiring.
 - **Disable:** force every stack on with `run_node/run_python/run_rust/
-  run_go: 'true'`, or pick individual jobs with `select`; the `changes` job
-  itself always runs (downstream gating depends on it).
+  run_go/run_java/run_cpp/run_csharp/run_ruby/run_php/run_docker: 'true'`,
+  or pick individual jobs with `select`; the `changes` job itself always
+  runs (downstream gating depends on it).
 - **Time:** 5-20 seconds (dominated by full checkout).
 
 ## `hygiene` - workflows, YAML, shell, whitespace, duplication
@@ -178,6 +180,111 @@ Profile presets (quick / standard / strict / custom) only change the
 - **Disable:** `run_go: 'false'`; force with `run_go: 'true'`, pin the
   toolchain with `go_version` (default `stable`).
 - **Time:** 1-5 minutes warm (module cache), 5-10 cold.
+
+## `java` - JVM stack (Java, Kotlin, Scala via Maven or Gradle)
+
+- **Inspects:** the root build (`pom.xml`/`mvnw` or `build.gradle*`/
+  `settings.gradle*`): Gradle wrapper checksums are validated against the
+  recorded distributions before any code runs; Maven projects run the full
+  `mvn verify` lifecycle (compile, unit + integration tests, packaging),
+  Gradle projects run `gradle build` (compile + test).
+- **Does not inspect:** nested modules (root build only), `build/` and
+  `target/` outputs (excluded from path filtering).
+- **Fails when:** wrapper checksum mismatch, compile, test, or packaging
+  failures - whatever the build tool's own lifecycle fails on.
+- **False positives:** none beyond the build tool itself; lint plugins
+  (Checkstyle, SpotBugs, ktlint) ride the lifecycle you already configured.
+- **Disable:** `run_java: 'false'`; force with `run_java: 'true'`, pin the
+  JDK with `java_version` (default `21`, Temurin).
+- **Time:** 3-8 minutes warm (dependency cache), 10+ cold.
+
+## `cpp` - C/C++ stack
+
+- **Inspects:** C/C++ sources with cppcheck (warning, style, performance -
+  advisory in every profile), formatting with clang-format (enforced only
+  when the repo commits a `.clang-format`), then builds with CMake
+  (`-DCMAKE_BUILD_TYPE=Release`) and runs CTest when tests are registered,
+  or `make` for Makefile projects.
+- **Does not inspect:** vendored trees; a bare `Makefile` without C/C++
+  sources does not trigger this stack (non-C Makefile projects stay
+  untouched).
+- **Fails when:** clang-format drift (only with `.clang-format`), build or
+  ctest failures. cppcheck findings are reported, never enforced.
+- **False positives:** cppcheck style rules on legacy code - tune with
+  inline suppressions (`--inline-suppr` is enabled).
+- **Disable:** `run_cpp: 'false'`; force with `run_cpp: 'true'`.
+- **Time:** 2-10 minutes depending on project size.
+
+## `csharp` - .NET stack (C#, F#)
+
+- **Inspects:** the root solution or project (`*.sln`, `*.slnx`,
+  `*.csproj`, `*.fsproj`): `dotnet build -c Release` (implicit restore),
+  `dotnet test -c Release --no-build`, and `dotnet format
+  --verify-no-changes` when the repo commits an `.editorconfig` (advisory
+  in every profile).
+- **Does not inspect:** `bin/` and `obj/` outputs (excluded), private
+  NuGet feeds (no feed credentials are configured).
+- **Fails when:** build or test failures.
+- **False positives:** `dotnet format` on repos whose `.editorconfig`
+  predates their formatting habits - it is advisory, tune by fixing or
+  updating `.editorconfig`.
+- **Disable:** `run_csharp: 'false'`; force with `run_csharp: 'true'`,
+  pin the SDK with `dotnet_version` (default `10.0`; a committed
+  `global.json` always wins).
+- **Time:** 2-6 minutes.
+
+## `ruby` - Ruby stack
+
+- **Inspects:** the root project (`Gemfile`, `*.gemspec`, `Rakefile`):
+  bundle install with dependency caching (Gemfile projects), RuboCop
+  (advisory), bundler-audit against the Ruby Advisory Database (advisory),
+  and the test suite - `rspec` when `spec/` exists, `rake test` when
+  `test/` exists.
+- **Does not inspect:** vendored gems (`vendor/` excluded), gems without a
+  `Gemfile.lock` (bundler-audit needs one).
+- **Fails when:** rspec or rake test failures.
+- **False positives:** RuboCop defaults on legacy code (advisory); rake
+  projects whose `test` task name differs - the task is looked up, not
+  assumed.
+- **Disable:** `run_ruby: 'false'`; force with `run_ruby: 'true'`, pin the
+  interpreter with `ruby_version` (default `3.4`).
+- **Time:** 2-5 minutes.
+
+## `php` - PHP stack
+
+- **Inspects:** the root `composer.json`: `composer install`
+  (lockfile-faithful - it never rewrites `composer.lock`), `php -l` over
+  every tracked PHP file, PHPStan (enforced only when the repo commits a
+  `phpstan.neon`), and tests via the `composer test` script or PHPUnit
+  (`phpunit.xml`).
+- **Does not inspect:** `vendor/` (excluded from path filtering and from
+  the syntax sweep).
+- **Fails when:** syntax errors, install failures, PHPStan (when opted
+  in), PHPUnit failures.
+- **False positives:** PHPStan on untyped legacy code - the analysis runs
+  only when the project itself ships a config, at the level the project
+  chose.
+- **Disable:** `run_php: 'false'`; force with `run_php: 'true'`, pin the
+  runtime with `php_version` (default `8.4`).
+- **Time:** 2-5 minutes.
+
+## `docker` - Docker stack
+
+- **Inspects:** every tracked `Dockerfile*` with hadolint (advisory; the
+  binary is checksum-verified at download; commit `.hadolint.yaml` to
+  tune), builds the first tracked Dockerfile (the root one in the standard
+  layout) with plain `docker build`, then scans that exact image with
+  Trivy (vulns + secrets, HIGH/CRITICAL, SARIF to the Security tab under
+  `trivy-image`).
+- **Does not inspect:** docker-compose files beyond path detection; image
+  push (that is release-docker.yml's job).
+- **Fails when:** the build fails; Trivy HIGH/CRITICAL only when enforced
+  (strict profile, same flag as the filesystem scan).
+- **False positives:** hadolint DL rules on legacy Dockerfiles (advisory);
+  unfixed-vuln noise (ignored).
+- **Disable:** `run_docker: 'false'`; force with `run_docker: 'true'`.
+- **Time:** 2-15 minutes depending on base images (Docker layer cache
+  helps).
 
 ## `security` - Semgrep, Trivy, OSV
 

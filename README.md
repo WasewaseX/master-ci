@@ -1,10 +1,11 @@
 # master-ci
 
-Reusable GitHub Actions CI for **Rust**, **Node/TypeScript** and **Python**
-projects, with structural AI-slop detection for **13+ languages**. One file
-per project gives you 80+ checks, path-aware skipping, aggressive caching,
-pretty reporting and a set of automation loops that keep the whole thing
-updated.
+Reusable GitHub Actions CI for **Rust, Node/TypeScript, Python, Go, JVM
+(Java/Kotlin), C/C++, .NET (C#/F#), Ruby, PHP and Docker**, with structural
+AI-slop detection for **13+ languages**, OIDC-first AWS deployments and a
+cosign-signed container release pipeline. One file per project gives you
+100+ checks, path-aware skipping, aggressive caching, pretty reporting and
+a set of automation loops that keep the whole thing updated.
 
 ![CI](https://github.com/WasewaseX/master-ci/actions/workflows/ci.yml/badge.svg)
 ![Selftest](https://github.com/WasewaseX/master-ci/actions/workflows/selftest.yml/badge.svg)
@@ -80,7 +81,7 @@ which keeps its baseline reproducible across template releases:
 ```yaml
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v1.8.7
+      template_ref: v1.9.0
 ```
 
 ### Required check
@@ -119,13 +120,19 @@ works for consumers too.
 | `rust` | Rust changed | Format, clippy, advisories, licenses, tests |
 | `go-lint` | Go changed | gofmt, go vet, golangci-lint |
 | `go-test` | Go changed | Build + race-tested, shuffled test suite |
+| `java` | JVM changed | Gradle wrapper validation, Maven/Gradle build + verify (Java, Kotlin, Scala) |
+| `cpp` | C/C++ changed | cppcheck, opt-in clang-format, CMake/Make build + ctest |
+| `csharp` | .NET changed | Release build, tests, advisory `dotnet format` (C#, F#) |
+| `ruby` | Ruby changed | bundler install, advisory RuboCop + bundler-audit, rake/rspec tests |
+| `php` | PHP changed | composer install, `php -l`, opt-in PHPStan, PHPUnit/composer tests |
+| `docker` | Docker changed | hadolint, image build, image-level Trivy scan |
 | `security` | meta ok | Semgrep, Trivy, OSV scanning |
 | `deps-review` | PRs | Dependency and license review |
 | `scorecard` | pushes to default branch, unless `scorecard_publish: false` | OSSF Scorecard |
 | `dashboard` | PRs | Results table comment on the PR |
 | `ci-success` | always | Aggregate gate (exposes a `verdict` output) |
 
-## The check catalog (80+ checks)
+## The check catalog (100+ checks)
 
 Repo hygiene:
 
@@ -201,6 +208,54 @@ Go:
 | 38 | Lint gate | golangci-lint |
 | 39 | Build | go build ./... |
 | 40 | Test suite (race detector, shuffled) | go test -race |
+
+JVM (Java, Kotlin, Scala via Maven or Gradle):
+
+| # | Check | Tool |
+|---|---|---|
+| 41 | Gradle wrapper checksum validation | gradle/actions/wrapper-validation |
+| 42 | Full Maven lifecycle (compile, test, package) | `mvn verify` |
+| 43 | Gradle build (compile + test) | `gradle build` |
+
+C/C++:
+
+| # | Check | Tool |
+|---|---|---|
+| 44 | Static analysis | cppcheck (advisory) |
+| 45 | Format drift (only when `.clang-format` exists) | clang-format --dry-run -Werror |
+| 46 | Build + test suite | CMake + CTest, or Make |
+
+.NET (C#, F#):
+
+| # | Check | Tool |
+|---|---|---|
+| 47 | Release build | dotnet build -c Release |
+| 48 | Test suite | dotnet test |
+| 49 | Format drift (only when `.editorconfig` exists) | dotnet format (advisory) |
+
+Ruby:
+
+| # | Check | Tool |
+|---|---|---|
+| 50 | Lint | RuboCop (advisory) |
+| 51 | Dependency advisories | bundler-audit (advisory) |
+| 52 | Test suite | rspec or `rake test` |
+
+PHP:
+
+| # | Check | Tool |
+|---|---|---|
+| 53 | Syntax check over every tracked file | php -l |
+| 54 | Static analysis (only when `phpstan.neon` exists) | PHPStan |
+| 55 | Test suite | composer test script or PHPUnit |
+
+Docker:
+
+| # | Check | Tool |
+|---|---|---|
+| 56 | Dockerfile lint | hadolint (advisory, checksum-verified binary) |
+| 57 | Image build | docker build |
+| 58 | Image vulnerabilities + secrets | Trivy image scan (SARIF to the Security tab) |
 
 Integrity engine (the detector in this repo, `scripts/ai_slop_detector.py`).
 It checks code, documents and frontend files for machine-written filler and
@@ -318,9 +373,10 @@ with:
 Unknown names fail the run in `meta` with the valid list - a typo can
 never silently skip a check. Valid names: `hygiene`, `secrets`,
 `ai-integrity`, `docs`, `node-lint`, `node-test`, `python`, `rust`,
-`go-lint`, `go-test`, `security`, `deps-review`, `scorecard`. The
-aggregate gate still passes when jobs are skipped by design, so branch
-protection keeps a single required check.
+`go-lint`, `go-test`, `java`, `cpp`, `csharp`, `ruby`, `php`, `docker`,
+`security`, `deps-review`, `scorecard`. The aggregate gate still passes
+when jobs are skipped by design, so branch protection keeps a single
+required check.
 
 Full semantics per check (what is inspected, what fails, false positives,
 how to disable, added time) live in [docs/checks.md](docs/checks.md).
@@ -334,8 +390,13 @@ how to disable, added time) live in [docs/checks.md](docs/checks.md).
 | `python_version` | `3.13` | Python for the Python stack |
 | `rust_toolchain` | `stable` | Rust toolchain |
 | `go_version` | `stable` | Go toolchain |
+| `java_version` | `21` | JDK (Temurin) for the JVM stack |
+| `dotnet_version` | `10.0` | .NET SDK (ignored when `global.json` pins one) |
+| `ruby_version` | `3.4` | Ruby for the Ruby stack |
+| `php_version` | `8.4` | PHP for the PHP stack |
 | `runs_on` | `ubuntu-latest` | Runner label for every job (e.g. `macos-latest`) |
 | `run_node` / `run_python` / `run_rust` / `run_go` | `auto` | Force a stack `true` / `false`, or auto-detect |
+| `run_java` / `run_cpp` / `run_csharp` / `run_ruby` / `run_php` / `run_docker` | `auto` | Force a stack `true` / `false`, or auto-detect |
 | `select` | `''` | Comma-separated job names to run (empty = all). Unknown names fail in `meta` |
 | `semgrep_config` | `p/default p/security-audit p/secrets` | Semgrep packs (standard/strict/custom) |
 | `fail_on_ai_slop` | `false` | Fail on AI-integrity **blocking** score (advisory by default) |
@@ -355,9 +416,10 @@ with `contents: read` only. The caller grants the union once:
 | Scope | Why | Which job uses it |
 |---|---|---|
 | `contents: read` | checkout | everything |
-| `security-events: write` | SARIF upload to code scanning | security, scorecard |
+| `security-events: write` | SARIF upload to code scanning | security, scorecard, docker |
 | `pull-requests: write` | dashboard comment, dependency review comment | dashboard, deps-review |
 | `id-token: write` | OSSF Scorecard result publishing (OIDC) | scorecard only |
+| `packages: write` | GHCR image push (release-docker.yml only) | release-docker publish |
 
 No `secrets: inherit` is needed anywhere: the workflows only use the
 automatic `GITHUB_TOKEN`. To drop `id-token` entirely, set
@@ -380,8 +442,12 @@ The `languages:` input of `codeql.yml` accepts `javascript-typescript`,
 `python`, `go`, `java-kotlin`, `c-cpp`, `ruby`, `rust` and `swift`. That is
 **CodeQL deep security analysis** for those languages only. The full stack
 coverage - auto-detection, lint, format, types, tests, dependency policy -
-is built for **Rust, Node/TypeScript, Python and Go**. Java/Kotlin,
-C/C++, Ruby and Swift get security scanning, not stack checks.
+now covers Rust, Node/TypeScript, Python, Go, JVM (Java/Kotlin), C/C++, .NET (C#/F#), Ruby, PHP and Docker.
+
+CodeQL and Master CI's own stacks are complementary: enable the CodeQL job
+for the deep data-flow queries, keep the stacks for the fast, deterministic
+per-commit gates. Kotlin compiles through the JVM stack (Maven/Gradle);
+Scala projects riding Maven or Gradle are covered by the same job.
 
 Dependency installs are lockfile-strict: when a lockfile exists
 (`pnpm-lock.yaml`, `yarn.lock`, `package-lock.json`), the install runs
@@ -393,6 +459,82 @@ an environment the packaging step could not build.
 If your repo has the default CodeQL setup enabled, switch it off
 (Settings > Code security > Code scanning) to avoid a conflict with this
 workflow.
+
+## Container releases: release-docker.yml
+
+Building and pushing images is a separate reusable workflow, so a release
+never waits on CI and CI never holds registry credentials. It supports
+three registries - `ghcr` (automatic `GITHUB_TOKEN`), `dockerhub`
+(`dockerhub_username` / `dockerhub_token` secrets) and `ecr` (AWS OIDC,
+see below) - and gives every published image:
+
+- multi-arch buildx build (`platforms` input, QEMU set up automatically)
+- a commit-SHA tag, `latest`, and any `extra_tags` you pass
+- OCI provenance + SBOM attestations on every push
+- a Trivy image scan uploaded to the Security tab
+- a cosign **keyless** signature (Sigstore OIDC - no signing keys exist to
+  store, rotate or leak) that is verified before the workflow reports
+  success
+
+```yaml
+  publish:
+    needs: ci          # release only from a green pipeline
+    uses: WasewaseX/master-ci/.github/workflows/release-docker.yml@v1
+    with:
+      registry: ghcr
+      image_name: owner/app
+      platforms: linux/amd64,linux/arm64
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+      id-token: write
+```
+
+`push: false` runs the same build load-only - a smoke release that proves
+the image builds and scans without publishing.
+
+## AWS deployments: deploy-aws.yml
+
+Deployments authenticate with **AWS OIDC federation only**: the caller
+passes an IAM `role_arn` that trusts GitHub's OIDC provider, and the
+workflow assumes it for short-lived credentials. There is no input, no
+secret and no code path for a static access key. The deployment contract
+is validated (target allowlist, required inputs per target, path safety)
+*before* any role is assumed.
+
+| Target | Required inputs | Behavior |
+|---|---|---|
+| `s3` | `s3_bucket`, `s3_source_dir` | `aws s3 sync` (optional `s3_delete`), optional CloudFront invalidation |
+| `lambda` | `lambda_function_name`, `lambda_zip_path` | zip (if a directory) + `update-function-code`, waits for `function-updated` |
+| `ecs` | `ecs_cluster`, `ecs_service`, `ecs_task_definition_family`, `ecs_container_name`, `ecs_image` | renders the new image into the current task definition, updates the service, optionally waits for stability |
+| `cloudformation` | `cf_stack_name`, `cf_template_file` | `aws cloudformation deploy` with `cf_capabilities` + `cf_parameters` (`Key=Value`, comma-separated) |
+
+```yaml
+  deploy:
+    needs: ci
+    uses: WasewaseX/master-ci/.github/workflows/deploy-aws.yml@v1
+    with:
+      role_arn: arn:aws:iam::123456789012:role/ci-deploy
+      aws_region: eu-central-1
+      target: ecs
+      ecs_cluster: prod
+      ecs_service: api
+      ecs_task_definition_family: api
+      ecs_container_name: api
+      ecs_image: 123456789012.dkr.ecr.eu-central-1.amazonaws.com/api:v1.2.3
+    permissions:
+      contents: read
+      id-token: write
+```
+
+One-time AWS setup (per AWS account): create the IAM role with a trust
+policy for `arn:aws:iam::*:oidc-provider/token.actions.githubusercontent.com`,
+scope its permissions to the deployment actions you need, and restrict
+`StringEquals` on the sub/aud claims to your repo and audience
+(`sts.amazonaws.com`). A typical ECR-based loop is
+`release-docker.yml` with `registry: ecr` followed by `deploy-aws.yml`
+with `target: ecs`.
 
 ## Automation and self loops
 
@@ -455,7 +597,7 @@ carries a `SKILL.md`, so assistants with a skills directory can load it
 with one command:
 
 ```bash
-git clone --depth 1 --branch v1.8.7 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+git clone --depth 1 --branch v1.9.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
 ```
 
 MCP clients configure the same install like this:
@@ -502,10 +644,10 @@ python3 scripts/mcp_ping.py --online   # plus the update check
 The template ships four layers of self-tests, all runnable locally:
 
 ```bash
-python -m pytest -q          # 173 tests:
+python -m pytest -q          # 183 tests:
                              # - detector contracts (43): every rule family,
                              #   slop pairs, scoring, SARIF, baseline
-                             # - path-filter regression (12): 100 synthetic
+                             # - path-filter regression (12): 140 synthetic
                              #   repo layouts with exact expected stacks,
                              #   picomatch-semantics translator, output wiring
                              # - fix engine (24): stack gating, safe/lint
@@ -515,12 +657,13 @@ python -m pytest -q          # 173 tests:
                              #   ready prompts, docs parity, and a real
                              #   subprocess stdio session plus the standalone
                              #   mcp_ping self test
-                             # - workflow contracts (40): SHA pins, no
+                             # - workflow contracts (44): SHA pins, no
                              #   secrets:inherit, no template injection in
                              #   run blocks, timeouts, permissions, helper
                              #   configs, automation safety, selftest wiring,
                              #   self-heal circuit breakers, deep-audit
-                             #   schedule/no-gate guarantees
+                             #   schedule/no-gate guarantees, Docker stack,
+                             #   OIDC-only AWS deploys, cosign-signed releases
                              # - benchmark + meta validation (8): report
                              #   schema, select/stack allowlists
 .github/workflows/selftest.yml  # in CI: the routine integration test,

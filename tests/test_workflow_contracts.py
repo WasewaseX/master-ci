@@ -46,6 +46,7 @@ _ALLOWED_PERMISSIONS = {
     "pull-requests",
     "issues",
     "id-token",
+    "packages",  # release-docker.yml pushes images to GHCR
     "actions",  # the expected-failure harness dispatches selftest and reads its runs
 }
 
@@ -188,7 +189,8 @@ def test_id_token_only_on_scorecard():
 
 def test_security_events_only_where_sarif_is_uploaded():
     expected = {
-        "master-ci.yml": {"security", "scorecard", "ai-integrity"},
+        "master-ci.yml": {"security", "scorecard", "ai-integrity", "docker"},
+        "release-docker.yml": {"publish"},
         "codeql.yml": {"analyze"},
         "nightly.yml": {"codeql"},
     }
@@ -314,7 +316,19 @@ def test_meta_validates_stack_toggles_and_select():
     """Invalid run_* toggles or select tokens must fail the run, not skip."""
     text = (WF_DIR / "master-ci.yml").read_text(encoding="utf-8")
     meta = text.split("meta:")[1].split("\n  changes:")[0]
-    for needle in ("RUN_NODE", "RUN_PYTHON", "RUN_RUST", "RUN_GO", "SELECT"):
+    for needle in (
+        "RUN_NODE",
+        "RUN_PYTHON",
+        "RUN_RUST",
+        "RUN_GO",
+        "RUN_JAVA",
+        "RUN_CPP",
+        "RUN_CSHARP",
+        "RUN_RUBY",
+        "RUN_PHP",
+        "RUN_DOCKER",
+        "SELECT",
+    ):
         assert needle in meta, f"meta must validate {needle}"
     assert "auto|true|false) ;;" in meta, "stack toggles must be auto/true/false"
     # select tokens are checked against the full known job list
@@ -329,6 +343,12 @@ def test_meta_validates_stack_toggles_and_select():
         "rust",
         "go-lint",
         "go-test",
+        "java",
+        "cpp",
+        "csharp",
+        "ruby",
+        "php",
+        "docker",
         "security",
         "deps-review",
         "scorecard",
@@ -461,6 +481,12 @@ def test_check_jobs_can_be_selected_individually():
         "rust",
         "go-lint",
         "go-test",
+        "java",
+        "cpp",
+        "csharp",
+        "ruby",
+        "php",
+        "docker",
         "security",
         "deps-review",
         "scorecard",
@@ -477,11 +503,27 @@ def test_check_jobs_can_be_selected_individually():
 def test_readme_documents_current_inputs():
     """Documentation must describe the actual implementation, not lag it."""
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    for needle in ("run_go", "go_version", "`select`", "template_ref"):
+    for needle in (
+        "run_go",
+        "run_java",
+        "run_cpp",
+        "run_csharp",
+        "run_ruby",
+        "run_php",
+        "run_docker",
+        "go_version",
+        "java_version",
+        "dotnet_version",
+        "ruby_version",
+        "php_version",
+        "`select`",
+        "template_ref",
+    ):
         assert needle in readme, f"README config table must document {needle}"
-    assert "Rust, Node/TypeScript, Python and Go" in readme, (
-        "README must list Go as a full CI stack"
-    )
+    assert (
+        "Rust, Node/TypeScript, Python, Go, JVM (Java/Kotlin), C/C++, "
+        ".NET (C#/F#), Ruby, PHP and Docker"
+    ) in readme, "README must list every full CI stack"
 
 
 def test_master_ci_jobs_gate_on_meta_success():
@@ -902,3 +944,143 @@ def test_self_loop_workflows_push_target_main():
         assert trigger["push"]["branches"] == ["main"], (
             f"{name}: push.branches must be exactly ['main'], got {trigger['push']['branches']!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Language stacks, Docker and AWS (v1.9.0)
+# ---------------------------------------------------------------------------
+
+
+def test_new_language_stacks_are_wired_like_the_existing_ones():
+    """java/cpp/csharp/ruby/php must behave exactly like the older stacks:
+    gated on meta success, honored by select, auto-detected through the
+    changes filter, timeout-declared - and never fetching helpers (the
+    helper-ref contract test pins the checkout count below)."""
+    data = load(WF_DIR / "master-ci.yml")
+    jobs = data["jobs"]
+    for job_id in ("java", "cpp", "csharp", "ruby", "php"):
+        job = jobs[job_id]
+        condition = str(job.get("if", ""))
+        assert "needs.meta.result == 'success'" in condition, f"{job_id} must gate on meta"
+        assert f"inputs.run_{job_id}" in condition, f"{job_id} must honor its run_ toggle"
+        assert f"needs.changes.outputs.{job_id}" in condition, (
+            f"{job_id} must auto-detect through the changes filter"
+        )
+        assert isinstance(job.get("timeout-minutes"), int), f"{job_id} needs a timeout"
+        detect = [s for s in job["steps"] if s.get("id") == "detect"]
+        assert detect, f"{job_id} must detect its stack before running tools"
+        fetchers = [
+            s for s in job["steps"] if isinstance(s.get("with"), dict) and "repository" in s["with"]
+        ]
+        assert not fetchers, f"{job_id} must not fetch helpers (zero-config detection)"
+
+
+def test_docker_job_builds_and_scans_the_image_it_builds():
+    """The Docker stack must do three real things: lint the Dockerfile
+    (checksum-verified hadolint), build the image, and scan that exact
+    image with the same enforce_trivy profile flag the filesystem scan
+    uses - a scan of some other tag would be theater."""
+    data = load(WF_DIR / "master-ci.yml")
+    jobs = data["jobs"]
+    docker = jobs["docker"]
+    condition = str(docker.get("if", ""))
+    assert "needs.changes.outputs.docker" in condition, "docker must auto-detect"
+    assert "inputs.run_docker" in condition, "docker must honor run_docker"
+    assert docker.get("permissions", {}).get("security-events") == "write"
+    text = "\n".join(str(s.get("run", "")) for s in docker["steps"])
+    assert "hadolint-linux-x86_64" in text, "hadolint must be downloaded from its release"
+    assert "sha256sum -c -" in text, "the hadolint download must be checksum-verified"
+    build = next(s for s in docker["steps"] if s.get("name", "").startswith("Build image"))
+    assert build["env"]["IMAGE_TAG"] == "${{ github.sha }}", (
+        "the built image must be tagged with the commit SHA"
+    )
+    scan = next(s for s in docker["steps"] if str(s.get("uses", "")).startswith("aquasecurity"))
+    with_block = scan.get("with", {})
+    assert with_block.get("scan-type") == "image"
+    assert with_block.get("image-ref") == "master-ci-ci:${{ github.sha }}", (
+        "trivy must scan exactly the image the build step produced"
+    )
+    assert with_block.get("exit-code") == "${{ env.TRIVY_EXIT }}", (
+        "image scan enforcement must follow the profile's enforce_trivy flag"
+    )
+    upload = next(
+        s
+        for s in docker["steps"]
+        if str(s.get("uses", "")).startswith("github/codeql-action/upload-sarif")
+    )
+    assert upload.get("with", {}).get("category") == "trivy-image"
+
+
+def test_release_docker_publishes_with_oidc_and_signing():
+    """The container release pipeline must authenticate without static
+    credentials (GHCR token, Docker Hub secrets, AWS OIDC), sign keylessly
+    with cosign, and verify the signature before reporting success."""
+    data = load(WF_DIR / "release-docker.yml")
+    trigger = data[True] if True in data else data["on"]
+    inputs = trigger["workflow_call"]["inputs"]
+    assert inputs["registry"]["required"] is True
+    assert inputs["image_name"]["required"] is True
+    perms = data.get("permissions") or {}
+    assert perms == {"contents": "read"}
+    job = data["jobs"]["publish"]
+    job_perms = job.get("permissions") or {}
+    assert job_perms.get("packages") == "write", "GHCR push needs packages: write"
+    assert job_perms.get("id-token") == "write", "cosign keyless signing needs OIDC"
+    assert job_perms.get("security-events") == "write"
+    text = (WF_DIR / "release-docker.yml").read_text(encoding="utf-8")
+    for forbidden in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "aws_access_key_id"):
+        assert forbidden not in text, f"static AWS credentials are forbidden: {forbidden}"
+    steps = [str(s.get("name", "")) for s in job["steps"]]
+    assert any("cosign" in name.lower() for name in steps), "must install cosign"
+    run_blocks = " ".join(str(s.get("run", "")) for s in job["steps"])
+    assert "cosign sign --yes" in run_blocks, "must sign keylessly"
+    assert "cosign verify" in run_blocks, "must verify the signature it just created"
+    assert "--certificate-identity-regexp" in run_blocks, (
+        "verification must pin the OIDC identity to this repository"
+    )
+    validate = next(s for s in job["steps"] if "Validate" in str(s.get("name", "")))
+    validate_run = str(validate.get("run", ""))
+    assert "ghcr|dockerhub|ecr" in validate_run, "registry must be validated"
+    assert "role_arn is required for the ecr target" in validate_run, (
+        "ECR must fail closed without an OIDC role"
+    )
+    scan = next(s for s in job["steps"] if str(s.get("uses", "")).startswith("aquasecurity"))
+    assert scan.get("with", {}).get("scan-type") == "image"
+    assert data.get("concurrency", {}).get("group"), "publishes must be serialized"
+
+
+def test_deploy_aws_is_oidc_first_and_fails_closed():
+    """AWS deployments must use OIDC federation only - there is no input or
+    secret for a static access key - and must validate the deployment
+    contract before any credentials are assumed."""
+    data = load(WF_DIR / "deploy-aws.yml")
+    trigger = data[True] if True in data else data["on"]
+    inputs = trigger["workflow_call"]["inputs"]
+    assert inputs["role_arn"]["required"] is True, "OIDC role is the only auth path"
+    assert inputs["target"]["required"] is True
+    perms = data.get("permissions") or {}
+    assert perms == {"contents": "read"}
+    job = data["jobs"]["deploy"]
+    job_perms = job.get("permissions") or {}
+    assert job_perms.get("id-token") == "write", "federation needs id-token: write"
+    assert "packages" not in job_perms and "security-events" not in job_perms
+    text = (WF_DIR / "deploy-aws.yml").read_text(encoding="utf-8")
+    for forbidden in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "aws-access-key-id"):
+        assert forbidden not in text, f"static AWS credentials are forbidden: {forbidden}"
+    steps = job["steps"]
+    validate_idx = next(i for i, s in enumerate(steps) if "Validate" in str(s.get("name", "")))
+    cred_idx = next(
+        i for i, s in enumerate(steps) if str(s.get("uses", "")).startswith("aws-actions/configure")
+    )
+    assert validate_idx < cred_idx, "inputs must be validated before any role is assumed"
+    validate_run = str(steps[validate_idx].get("run", ""))
+    for target in ("s3", "lambda", "ecs", "cloudformation"):
+        assert target in validate_run, f"validate must know the {target} target"
+        deploy_steps = [s for s in steps if f"env.TARGET == '{target}'" in str(s.get("if", ""))]
+        assert deploy_steps, f"{target} must have a deploy step"
+    configure = steps[cred_idx]
+    assert configure.get("with", {}).get("role-to-assume") == "${{ inputs.role_arn }}", (
+        "credentials must come from role assumption, never from secrets"
+    )
+    assert "verdict" in job.get("outputs", {}), "the deployment must report a verdict"
+    assert data.get("concurrency", {}).get("group"), "deploys must be serialized"

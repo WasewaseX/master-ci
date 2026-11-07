@@ -1,9 +1,15 @@
 # =============================================================================
-# Master CI - the one-stop reusable pipeline for Rust / Node / Python projects
+# Master CI - the one-stop reusable pipeline for ten stacks:
+#   Rust, Node/TypeScript, Python, Go, JVM (Java/Kotlin/Scala via Maven or
+#   Gradle), C/C++, .NET (C#/F#), Ruby, PHP and Docker
 # =============================================================================
 # Zero-config by default: every check auto-detects your stack and skips itself
 # when nothing relevant changed. All findings land in the Security tab, as
 # inline PR annotations and in a dashboard comment on every pull request.
+#
+# Deployment and release pipelines ship as sibling reusable workflows:
+#   release-docker.yml - multi-arch container build + push (GHCR/Docker Hub/ECR)
+#   deploy-aws.yml     - OIDC-first deploys to S3, Lambda, ECS, CloudFormation
 #
 # Called with a single line from any repository:
 #   uses: WasewaseX/master-ci/.github/workflows/master-ci.yml@v1
@@ -69,12 +75,63 @@ on:
         required: false
         type: string
         default: 'stable'
+      run_java:
+        description: 'auto | true | false - run the JVM stack (Java, Kotlin, Scala via Maven/Gradle)'
+        required: false
+        type: string
+        default: auto
+      java_version:
+        description: JDK version for the JVM stack (Temurin)
+        required: false
+        type: string
+        default: '21'
+      run_cpp:
+        description: 'auto | true | false - run the C/C++ stack'
+        required: false
+        type: string
+        default: auto
+      run_csharp:
+        description: 'auto | true | false - run the .NET stack (C#/F#)'
+        required: false
+        type: string
+        default: auto
+      dotnet_version:
+        description: .NET SDK for the .NET stack (ignored when global.json pins one)
+        required: false
+        type: string
+        default: '10.0'
+      run_ruby:
+        description: 'auto | true | false - run the Ruby stack'
+        required: false
+        type: string
+        default: auto
+      ruby_version:
+        description: Ruby version for the Ruby stack
+        required: false
+        type: string
+        default: '3.4'
+      run_php:
+        description: 'auto | true | false - run the PHP stack'
+        required: false
+        type: string
+        default: auto
+      php_version:
+        description: PHP version for the PHP stack
+        required: false
+        type: string
+        default: '8.4'
+      run_docker:
+        description: 'auto | true | false - run the Docker stack (hadolint, image build, image scan)'
+        required: false
+        type: string
+        default: auto
       select:
         description: >-
           Comma-separated job names to run (empty = all): hygiene, secrets,
           ai-integrity, docs, node-lint, node-test, python, rust, go-lint,
-          go-test, security, deps-review, scorecard. Unknown names fail the
-          run in meta - never silently skipped.
+          go-test, java, cpp, csharp, ruby, php, docker, security,
+          deps-review, scorecard. Unknown names fail the run in meta -
+          never silently skipped.
         required: false
         type: string
         default: ''
@@ -165,6 +222,12 @@ jobs:
           RUN_PYTHON: ${{ inputs.run_python }}
           RUN_RUST: ${{ inputs.run_rust }}
           RUN_GO: ${{ inputs.run_go }}
+          RUN_JAVA: ${{ inputs.run_java }}
+          RUN_CPP: ${{ inputs.run_cpp }}
+          RUN_CSHARP: ${{ inputs.run_csharp }}
+          RUN_RUBY: ${{ inputs.run_ruby }}
+          RUN_PHP: ${{ inputs.run_php }}
+          RUN_DOCKER: ${{ inputs.run_docker }}
           SELECT: ${{ inputs.select }}
         run: |
           # Untrusted caller input never reaches a checkout ref unvalidated,
@@ -190,10 +253,11 @@ jobs:
             quick|standard|strict|custom) ;;
             *) die "profile must be one of: quick, standard, strict, custom" ;;
           esac
-          for value in "$RUN_NODE" "$RUN_PYTHON" "$RUN_RUST" "$RUN_GO"; do
+          for value in "$RUN_NODE" "$RUN_PYTHON" "$RUN_RUST" "$RUN_GO" \
+            "$RUN_JAVA" "$RUN_CPP" "$RUN_CSHARP" "$RUN_RUBY" "$RUN_PHP" "$RUN_DOCKER"; do
             case "$value" in
               auto|true|false) ;;
-              *) die "run_node/run_python/run_rust/run_go must be auto, true or false (got '$value')" ;;
+              *) die "run_* stack toggles must be auto, true or false (got '$value')" ;;
             esac
           done
           case "$SELECT" in
@@ -201,10 +265,13 @@ jobs:
             *[[:space:]]*)
               die "select must be comma-separated job names without spaces" ;;
             *)
+              # the allowlist is one variable so the error message can
+              # never drift from the accepted set
+              valid_jobs="hygiene secrets ai-integrity docs node-lint node-test python rust go-lint go-test java cpp csharp ruby php docker security deps-review scorecard"
               for token in $(printf '%s' "$SELECT" | tr ',' ' '); do
-                case "$token" in
-                  hygiene|secrets|ai-integrity|docs|node-lint|node-test|python|rust|go-lint|go-test|security|deps-review|scorecard) ;;
-                  *) die "select contains unknown job '$token' (valid: hygiene secrets ai-integrity docs node-lint node-test python rust go-lint go-test security deps-review scorecard)" ;;
+                case " $valid_jobs " in
+                  *" $token "*) ;;
+                  *) die "select contains unknown job '$token' (valid: $valid_jobs)" ;;
                 esac
               done ;;
           esac
@@ -338,6 +405,11 @@ jobs:
       python: ${{ steps.filter.outputs.python }}
       rust: ${{ steps.filter.outputs.rust }}
       go: ${{ steps.filter.outputs.go }}
+      java: ${{ steps.filter.outputs.java }}
+      cpp: ${{ steps.filter.outputs.cpp }}
+      csharp: ${{ steps.filter.outputs.csharp }}
+      ruby: ${{ steps.filter.outputs.ruby }}
+      php: ${{ steps.filter.outputs.php }}
       docs: ${{ steps.filter.outputs.docs }}
       docker: ${{ steps.filter.outputs.docker }}
       workflows: ${{ steps.filter.outputs.workflows }}
@@ -363,11 +435,21 @@ jobs:
               - '**/*.rs'
               - '**/*.go'
               - '**/*.java'
+              - '**/*.kt'
+              - '**/*.kts'
               - '**/*.rb'
+              - '**/*.erb'
               - '**/*.php'
               - '**/*.c'
+              - '**/*.cc'
               - '**/*.cpp'
+              - '**/*.cxx'
               - '**/*.h'
+              - '**/*.hh'
+              - '**/*.hpp'
+              - '**/*.hxx'
+              - '**/*.cs'
+              - '**/*.fs'
               - '**/*.sh'
               - '!**/dist/**'
               - '!**/build/**'
@@ -375,6 +457,8 @@ jobs:
               - '!**/vendor/**'
               - '!**/coverage/**'
               - '!**/node_modules/**'
+              - '!**/bin/**'
+              - '!**/obj/**'
             node:
               - '**/package.json'
               - '**/package-lock.json'
@@ -435,6 +519,89 @@ jobs:
               - '!**/vendor/**'
               - '!**/coverage/**'
               - '!**/node_modules/**'
+            java:
+              - '**/*.java'
+              - '**/*.kt'
+              - '**/*.kts'
+              - '**/pom.xml'
+              - '**/build.gradle'
+              - '**/build.gradle.kts'
+              - '**/settings.gradle'
+              - '**/settings.gradle.kts'
+              - '**/gradle/wrapper/gradle-wrapper.properties'
+              - '**/maven.config'
+              - '**/.mvn/**'
+              - '!**/dist/**'
+              - '!**/build/**'
+              - '!**/target/**'
+              - '!**/vendor/**'
+              - '!**/coverage/**'
+              - '!**/node_modules/**'
+            cpp:
+              - '**/*.c'
+              - '**/*.cc'
+              - '**/*.cpp'
+              - '**/*.cxx'
+              - '**/*.h'
+              - '**/*.hh'
+              - '**/*.hpp'
+              - '**/*.hxx'
+              - '**/CMakeLists.txt'
+              - '**/*.cmake'
+              - '**/.clang-format'
+              - '!**/dist/**'
+              - '!**/build/**'
+              - '!**/target/**'
+              - '!**/vendor/**'
+              - '!**/coverage/**'
+              - '!**/node_modules/**'
+            csharp:
+              - '**/*.cs'
+              - '**/*.fs'
+              - '**/*.fsproj'
+              - '**/*.csproj'
+              - '**/*.sln'
+              - '**/*.slnx'
+              - '**/global.json'
+              - '**/nuget.config'
+              - '**/Directory.Build.props'
+              - '**/Directory.Packages.props'
+              - '!**/dist/**'
+              - '!**/build/**'
+              - '!**/target/**'
+              - '!**/vendor/**'
+              - '!**/coverage/**'
+              - '!**/node_modules/**'
+              - '!**/bin/**'
+              - '!**/obj/**'
+            ruby:
+              - '**/*.rb'
+              - '**/*.erb'
+              - '**/Gemfile'
+              - '**/Gemfile.lock'
+              - '**/*.gemspec'
+              - '**/Rakefile'
+              - '**/.rubocop.yml'
+              - '!**/dist/**'
+              - '!**/build/**'
+              - '!**/target/**'
+              - '!**/vendor/**'
+              - '!**/coverage/**'
+              - '!**/node_modules/**'
+            php:
+              - '**/*.php'
+              - '**/composer.json'
+              - '**/composer.lock'
+              - '**/phpunit.xml'
+              - '**/phpunit.xml.dist'
+              - '**/phpstan.neon'
+              - '**/phpstan.neon.dist'
+              - '!**/dist/**'
+              - '!**/build/**'
+              - '!**/target/**'
+              - '!**/vendor/**'
+              - '!**/coverage/**'
+              - '!**/node_modules/**'
             docs:
               - '**/*.md'
               - '**/*.mdx'
@@ -453,6 +620,16 @@ jobs:
             docker:
               - '**/Dockerfile*'
               - '**/*.dockerfile'
+              - '**/docker-compose*.yml'
+              - '**/docker-compose*.yaml'
+              - '**/compose.yml'
+              - '**/compose.yaml'
+              - '**/.dockerignore'
+              - '!**/dist/**'
+              - '!**/build/**'
+              - '!**/target/**'
+              - '!**/vendor/**'
+              - '!**/node_modules/**'
 
   # ---------------------------------------------------------------------------
   # Repo hygiene: workflows, YAML, shell, whitespace, duplication
@@ -1017,6 +1194,387 @@ jobs:
         run: go test -race -shuffle=on ./...
 
   # ---------------------------------------------------------------------------
+  # JVM stack (Java, Kotlin, Scala riding Maven or Gradle): wrapper validation,
+  # build + verify. Lint and tests ride the build tool's own lifecycle, which
+  # is the idiom Maven and Gradle projects already maintain.
+  # ---------------------------------------------------------------------------
+  java:
+    needs: [changes, meta]
+    if: >-
+      (inputs.select == '' || contains(format(',{0},', inputs.select), ',java,'))
+      && needs.meta.result == 'success'
+      && ((inputs.run_java == 'auto' && needs.changes.outputs.java == 'true') || inputs.run_java == 'true')
+    runs-on: ${{ inputs.runs_on }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Detect JVM build tool
+        id: detect
+        run: |
+          if [ -f pom.xml ] || [ -f mvnw ]; then
+            echo "tool=maven" >> "$GITHUB_OUTPUT"
+          elif ls build.gradle build.gradle.kts settings.gradle settings.gradle.kts >/dev/null 2>&1; then
+            echo "tool=gradle" >> "$GITHUB_OUTPUT"
+          else
+            echo "tool=none" >> "$GITHUB_OUTPUT"
+            echo "No pom.xml or Gradle build script at repository root - JVM stack supports root builds only"
+          fi
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        if: steps.detect.outputs.tool != 'none'
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java_version }}
+          cache: ${{ steps.detect.outputs.tool == 'maven' && 'maven' || 'gradle' }}
+      - name: Validate Gradle wrapper checksums
+        # a wrapper jar that does not match the recorded SHA of its
+        # distribution is a supply-chain incident, not a build problem
+        if: steps.detect.outputs.tool == 'gradle' && hashFiles('gradle/wrapper/gradle-wrapper.properties') != ''
+        uses: gradle/actions/wrapper-validation@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      - name: Build and verify (Maven)
+        # `verify` runs the full lifecycle the project declares: compile,
+        # tests, integration tests, packaging. A red verify is a real red.
+        if: steps.detect.outputs.tool == 'maven'
+        run: |
+          if [ -x ./mvnw ]; then
+            ./mvnw -B -ntp verify
+          else
+            mvn -B -ntp verify
+          fi
+      - name: Build and verify (Gradle)
+        if: steps.detect.outputs.tool == 'gradle'
+        run: |
+          if [ -x ./gradlew ]; then
+            ./gradlew --no-daemon build
+          else
+            gradle --no-daemon build
+          fi
+
+  # ---------------------------------------------------------------------------
+  # C/C++ stack: cppcheck static analysis (advisory), opt-in clang-format
+  # gate, then build + ctest through the project's own build system.
+  # ---------------------------------------------------------------------------
+  cpp:
+    needs: [changes, meta]
+    if: >-
+      (inputs.select == '' || contains(format(',{0},', inputs.select), ',cpp,'))
+      && needs.meta.result == 'success'
+      && ((inputs.run_cpp == 'auto' && needs.changes.outputs.cpp == 'true') || inputs.run_cpp == 'true')
+    runs-on: ${{ inputs.runs_on }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Detect C/C++ build system
+        id: detect
+        run: |
+          if [ -f CMakeLists.txt ]; then
+            echo "build=cmake" >> "$GITHUB_OUTPUT"
+          elif [ -f Makefile ]; then
+            echo "build=make" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=none" >> "$GITHUB_OUTPUT"
+            echo "No CMakeLists.txt or Makefile at repository root - sources are lint-only"
+          fi
+      - name: Static analysis (cppcheck, advisory)
+        run: |
+          command -v cppcheck >/dev/null 2>&1 || sudo apt-get install -y -qq cppcheck
+          rc=0
+          cppcheck --enable=warning,style,performance --inline-suppr \
+            --suppress=missingIncludeSystem --std=c++17 -q . || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::warning::cppcheck flagged issues (advisory in every profile)"
+          fi
+      - name: Check formatting (clang-format, only when the repo opts in)
+        # formatting is enforced only where a .clang-format exists: its
+        # presence is the project's consent to be formatted at all
+        if: hashFiles('.clang-format') != ''
+        run: |
+          command -v clang-format >/dev/null 2>&1 || sudo apt-get install -y -qq clang-format
+          files=$(git ls-files '*.c' '*.cc' '*.cpp' '*.cxx' '*.h' '*.hh' '*.hpp' '*.hxx')
+          [ -z "$files" ] && exit 0
+          printf '%s\n' "$files" | xargs -n1 clang-format --dry-run -Werror
+      - name: Build and test (CMake)
+        if: steps.detect.outputs.build == 'cmake'
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel
+          if [ -f build/CTestTestfile.cmake ]; then
+            ctest --test-dir build --output-on-failure
+          else
+            echo "No CTest suite registered - skipping ctest"
+          fi
+      - name: Build (Make)
+        if: steps.detect.outputs.build == 'make'
+        run: make -j2
+
+  # ---------------------------------------------------------------------------
+  # .NET stack (C#, F#): setup-dotnet (global.json wins over the input),
+  # release build with implicit restore, tests, advisory format drift.
+  # ---------------------------------------------------------------------------
+  csharp:
+    needs: [changes, meta]
+    if: >-
+      (inputs.select == '' || contains(format(',{0},', inputs.select), ',csharp,'))
+      && needs.meta.result == 'success'
+      && ((inputs.run_csharp == 'auto' && needs.changes.outputs.csharp == 'true') || inputs.run_csharp == 'true')
+    runs-on: ${{ inputs.runs_on }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Detect .NET project
+        id: detect
+        run: |
+          if ls *.sln *.slnx 2>/dev/null | grep -q .; then
+            echo "project=true" >> "$GITHUB_OUTPUT"
+          elif ls *.csproj *.fsproj 2>/dev/null | grep -q .; then
+            echo "project=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "project=false" >> "$GITHUB_OUTPUT"
+            echo "No .sln or .csproj/.fsproj at repository root - .NET stack supports root projects only"
+          fi
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        # global.json is the project's own SDK pin and always wins over
+        # the dotnet_version input
+        if: steps.detect.outputs.project == 'true' && hashFiles('global.json') == ''
+        with:
+          dotnet-version: ${{ inputs.dotnet_version }}
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        if: steps.detect.outputs.project == 'true' && hashFiles('global.json') != ''
+        with:
+          global-json-file: global.json
+      - name: Build and test
+        if: steps.detect.outputs.project == 'true'
+        run: |
+          dotnet build -c Release
+          dotnet test -c Release --no-build
+      - name: Format drift (dotnet format, advisory)
+        # checked only when an .editorconfig exists - adopting the check is
+        # a decision the project makes by committing its formatting policy
+        if: steps.detect.outputs.project == 'true' && hashFiles('.editorconfig') != ''
+        run: |
+          rc=0
+          dotnet format --verify-no-changes || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::warning::dotnet format found drift (advisory in every profile)"
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Ruby stack: bundler install with cache, advisory RuboCop and
+  # bundler-audit, tests through rake (minitest) or rspec.
+  # ---------------------------------------------------------------------------
+  ruby:
+    needs: [changes, meta]
+    if: >-
+      (inputs.select == '' || contains(format(',{0},', inputs.select), ',ruby,'))
+      && needs.meta.result == 'success'
+      && ((inputs.run_ruby == 'auto' && needs.changes.outputs.ruby == 'true') || inputs.run_ruby == 'true')
+    runs-on: ${{ inputs.runs_on }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Detect Ruby project
+        id: detect
+        run: |
+          if [ -f Gemfile ] || [ -f Rakefile ] || ls *.gemspec >/dev/null 2>&1; then
+            echo "project=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "project=false" >> "$GITHUB_OUTPUT"
+            echo "No Gemfile, gemspec or Rakefile at repository root - Ruby stack supports root projects only"
+          fi
+      - uses: ruby/setup-ruby@b3aaceaef7e0ee231b499e7b5f49c03fc1d32199 # v1.338.0
+        if: steps.detect.outputs.project == 'true'
+        with:
+          ruby-version: ${{ inputs.ruby_version }}
+          # bundler-cache installs the Gemfile with dependency caching; a
+          # gemspec-only project has no Gemfile and must not fail setup
+          bundler-cache: ${{ hashFiles('Gemfile') != '' }}
+      - name: Lint (RuboCop, advisory)
+        if: steps.detect.outputs.project == 'true'
+        run: |
+          if bundle exec rubocop --version >/dev/null 2>&1; then
+            rc=0
+            bundle exec rubocop || rc=$?
+            if [ "$rc" -ne 0 ]; then
+              echo "::warning::RuboCop flagged offenses (advisory in every profile)"
+            fi
+          else
+            echo "RuboCop is not in the bundle - skipping"
+          fi
+      - name: Dependency advisories (bundler-audit, advisory)
+        if: steps.detect.outputs.project == 'true'
+        # the audit gem below is a scanner, not a project dependency; its
+        # version is deliberately not locked (advisory step)
+        run: | # zizmor: ignore[adhoc-packages]
+          if [ -f Gemfile.lock ]; then
+            gem install bundler-audit --no-document >/dev/null 2>&1 || true
+            rc=0
+            bundle-audit check --update || rc=$?
+            if [ "$rc" -ne 0 ]; then
+              echo "::warning::bundler-audit flagged vulnerable gems (advisory in every profile)"
+            fi
+          else
+            echo "No Gemfile.lock - skipping bundler-audit"
+          fi
+      - name: Test suite
+        if: steps.detect.outputs.project == 'true'
+        run: |
+          if [ -d spec ]; then
+            bundle exec rspec
+          elif [ -d test ]; then
+            bundle exec rake test
+          else
+            echo "No spec/ or test/ directory - skipping Ruby tests"
+          fi
+
+  # ---------------------------------------------------------------------------
+  # PHP stack: composer install (lockfile-faithful), syntax check over every
+  # tracked file, opt-in PHPStan, tests through the composer script or
+  # PHPUnit.
+  # ---------------------------------------------------------------------------
+  php:
+    needs: [changes, meta]
+    if: >-
+      (inputs.select == '' || contains(format(',{0},', inputs.select), ',php,'))
+      && needs.meta.result == 'success'
+      && ((inputs.run_php == 'auto' && needs.changes.outputs.php == 'true') || inputs.run_php == 'true')
+    runs-on: ${{ inputs.runs_on }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Detect PHP project
+        id: detect
+        run: |
+          if [ -f composer.json ]; then
+            echo "project=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "project=false" >> "$GITHUB_OUTPUT"
+            echo "No composer.json at repository root - PHP stack supports root projects only"
+          fi
+      - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2
+        if: steps.detect.outputs.project == 'true'
+        with:
+          php-version: ${{ inputs.php_version }}
+          coverage: none
+      - name: Install dependencies
+        # composer install never rewrites composer.lock: a lock drift is a
+        # consumer decision, not something CI resolves silently
+        if: steps.detect.outputs.project == 'true'
+        run: composer install --no-interaction --prefer-dist --no-progress
+      - name: Syntax check (php -l)
+        if: steps.detect.outputs.project == 'true'
+        run: |
+          files=$(git ls-files '*.php' | grep -v '^vendor/' || true)
+          if [ -n "$files" ]; then
+            printf '%s\n' "$files" | xargs -r -n1 php -l
+          fi
+      - name: Static analysis (PHPStan, only when the repo opts in)
+        if: steps.detect.outputs.project == 'true'
+        run: |
+          config=$(ls phpstan.neon.dist phpstan.neon phpstan.neon.dist.php 2>/dev/null | head -1 || true)
+          if [ -n "$config" ] && [ -x vendor/bin/phpstan ]; then
+            vendor/bin/phpstan analyse --no-progress
+          else
+            echo "No PHPStan config or dev dependency - skipping"
+          fi
+      - name: Test suite
+        if: steps.detect.outputs.project == 'true'
+        run: |
+          test_script=$(composer config scripts.test 2>/dev/null || true)
+          if [ -n "$test_script" ]; then
+            composer test
+          elif ls phpunit.xml phpunit.xml.dist >/dev/null 2>&1 && [ -x vendor/bin/phpunit ]; then
+            vendor/bin/phpunit
+          else
+            echo "No composer test script or PHPUnit config - skipping PHP tests"
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Docker stack: hadolint lint (advisory), one real image build, then an
+  # image-level Trivy scan whose exit code follows the same enforce_trivy
+  # flag as the filesystem scan in the security job (strict enforces).
+  # ---------------------------------------------------------------------------
+  docker:
+    needs: [changes, meta]
+    if: >-
+      (inputs.select == '' || contains(format(',{0},', inputs.select), ',docker,'))
+      && needs.meta.result == 'success'
+      && ((inputs.run_docker == 'auto' && needs.changes.outputs.docker == 'true') || inputs.run_docker == 'true')
+    runs-on: ${{ inputs.runs_on }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    env:
+      TRIVY_EXIT: ${{ needs.meta.outputs.enforce_trivy == 'true' && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Discover Dockerfiles
+        id: files
+        run: |
+          files=$(git ls-files '*Dockerfile*' '*.dockerfile' | grep -v '^_ci/' || true)
+          if [ -z "$files" ]; then
+            echo "count=0" >> "$GITHUB_OUTPUT"
+            echo "No Dockerfiles tracked - skipping"
+            exit 0
+          fi
+          printf '%s\n' "$files" > dockerfiles.txt
+          count=$(printf '%s\n' "$files" | wc -l)
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          echo "Found $count Dockerfile(s):"
+          printf '%s\n' "$files"
+      - name: Lint Dockerfiles (hadolint, advisory)
+        if: steps.files.outputs.count != '0'
+        # checksum recorded from the v2.12.0 release asset at adoption time
+        run: |
+          curl -fsSL --retry 3 --retry-all-errors -o /tmp/hadolint \
+            https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-linux-x86_64
+          echo "56de6d5e5ec427e17b74fa48d51271c7fc0d61244bf5c90e828aab8362d55010  /tmp/hadolint" | sha256sum -c -
+          chmod +x /tmp/hadolint
+          rc=0
+          /tmp/hadolint --no-color $(tr '\n' ' ' < dockerfiles.txt) || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::warning::hadolint flagged Dockerfile issues (advisory in every profile; commit .hadolint.yaml to tune)"
+          fi
+      - name: Build image (no push)
+        # builds the first Dockerfile in tracked order - the root one for
+        # the standard layout. Multi-arch publishing lives in
+        # release-docker.yml; this build proves the image still compiles.
+        if: steps.files.outputs.count != '0'
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          file=$(head -n1 dockerfiles.txt)
+          context=$(dirname "$file")
+          docker build --file "$file" --tag "master-ci-ci:$IMAGE_TAG" "$context"
+      - name: Scan the built image (Trivy)
+        if: steps.files.outputs.count != '0'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: master-ci-ci:${{ github.sha }}
+          scanners: vuln,secret
+          format: sarif
+          output: trivy-image.sarif
+          severity: HIGH,CRITICAL
+          exit-code: ${{ env.TRIVY_EXIT }}
+          ignore-unfixed: true
+      - name: Upload image-scan SARIF
+        if: always() && hashFiles('trivy-image.sarif') != '' && steps.files.outputs.count != '0'
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image
+
+  # ---------------------------------------------------------------------------
   # Security: semgrep + trivy + osv-scanner, results pushed to the Security tab
   # ---------------------------------------------------------------------------
   security:
@@ -1184,7 +1742,7 @@ jobs:
   # Dashboard comment on pull requests
   # ---------------------------------------------------------------------------
   dashboard:
-    needs: [changes, meta, hygiene, secrets, ai-integrity, docs, node-lint, node-test, python, rust, go-lint, go-test, security, deps-review, scorecard]
+    needs: [changes, meta, hygiene, secrets, ai-integrity, docs, node-lint, node-test, python, rust, go-lint, go-test, java, cpp, csharp, ruby, php, docker, security, deps-review, scorecard]
     if: always() && github.event_name == 'pull_request'
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 5
@@ -1214,6 +1772,12 @@ jobs:
               ("rust", "Rust"),
               ("go-lint", "Go lint"),
               ("go-test", "Go tests"),
+              ("java", "JVM (Java/Kotlin)"),
+              ("cpp", "C/C++"),
+              ("csharp", ".NET (C#/F#)"),
+              ("ruby", "Ruby"),
+              ("php", "PHP"),
+              ("docker", "Docker"),
               ("security", "Security"),
               ("deps-review", "Dependency review"),
               ("scorecard", "Scorecard"),
@@ -1265,7 +1829,7 @@ jobs:
   # Single required check: fails when any non-skipped job failed
   # ---------------------------------------------------------------------------
   ci-success:
-    needs: [changes, meta, hygiene, secrets, ai-integrity, docs, node-lint, node-test, python, rust, go-lint, go-test, security, deps-review, scorecard]
+    needs: [changes, meta, hygiene, secrets, ai-integrity, docs, node-lint, node-test, python, rust, go-lint, go-test, java, cpp, csharp, ruby, php, docker, security, deps-review, scorecard]
     if: always()
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 5
@@ -1296,6 +1860,12 @@ jobs:
               "rust",
               "go-lint",
               "go-test",
+              "java",
+              "cpp",
+              "csharp",
+              "ruby",
+              "php",
+              "docker",
               "security",
               "deps-review",
               "scorecard",
@@ -1313,6 +1883,12 @@ jobs:
               "rust": "Rust",
               "go-lint": "Go lint",
               "go-test": "Go tests",
+              "java": "JVM (Java/Kotlin)",
+              "cpp": "C/C++",
+              "csharp": ".NET (C#/F#)",
+              "ruby": "Ruby",
+              "php": "PHP",
+              "docker": "Docker",
               "security": "Security",
               "deps-review": "Dependency review",
               "scorecard": "Scorecard",

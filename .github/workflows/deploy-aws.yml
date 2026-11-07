@@ -1,0 +1,343 @@
+# =============================================================================
+# Master CI - AWS Deploy: OIDC-first deployments, no static credentials
+# =============================================================================
+# A reusable workflow that deploys to AWS with short-lived OIDC federation
+# only: there is no place to put an AWS access key. The caller's IAM role
+# trusts github.actions.githubusercontent.com and this repo/OIDC subject;
+# every deployment runs through that assumption.
+#
+#   jobs:
+#     deploy:
+#       needs: ci
+#       uses: WasewaseX/master-ci/.github/workflows/deploy-aws.yml@v1
+#       with:
+#         role_arn: arn:aws:iam::123456789012:role/ci-deploy
+#         target: s3                     # s3 | lambda | ecs | cloudformation
+#         s3_bucket: my-bucket
+#         s3_source_dir: dist
+#       permissions:
+#         contents: read
+#         id-token: write                # AWS OIDC federation
+#
+# Targets and their required inputs (validated before anything deploys):
+#   s3              s3_bucket, s3_source_dir; optional s3_delete,
+#                   cloudfront_distribution_id + cloudfront_invalidate_path
+#   lambda          lambda_function_name, lambda_zip_path (.zip file or a
+#                   directory that is zipped on the fly)
+#   ecs             ecs_cluster, ecs_service, ecs_task_definition_family,
+#                   ecs_container_name, ecs_image
+#   cloudformation  cf_stack_name, cf_template_file; optional cf_parameters
+#                   (comma-separated Key=Value), cf_capabilities
+#
+# Deployment waits: Lambda waits for function-updated, ECS optionally waits
+# for service stability (ecs_wait, default true), S3/CloudFront invalidation
+# is fire-and-acknowledge. All inputs reach scripts through env vars only.
+# =============================================================================
+
+name: Master CI - AWS Deploy
+
+on:
+  workflow_call:
+    inputs:
+      role_arn:
+        description: IAM role ARN to assume via OIDC (required)
+        required: true
+        type: string
+      aws_region:
+        description: AWS region for every call
+        required: false
+        type: string
+        default: us-east-1
+      target:
+        description: 's3 | lambda | ecs | cloudformation'
+        required: true
+        type: string
+      session_name:
+        description: Role session name recorded in CloudTrail
+        required: false
+        type: string
+        default: master-ci-deploy
+      # --- s3 ---------------------------------------------------------------
+      s3_bucket:
+        description: Target bucket (s3 target)
+        required: false
+        type: string
+        default: ''
+      s3_source_dir:
+        description: Local directory to sync (s3 target)
+        required: false
+        type: string
+        default: ''
+      s3_delete:
+        description: Delete remote files that no longer exist locally (s3 target)
+        required: false
+        type: boolean
+        default: false
+      cloudfront_distribution_id:
+        description: Distribution to invalidate after the sync (optional, s3 target)
+        required: false
+        type: string
+        default: ''
+      cloudfront_invalidate_path:
+        description: Invalidation path pattern (s3 target, with the distribution id)
+        required: false
+        type: string
+        default: '/*'
+      # --- lambda -----------------------------------------------------------
+      lambda_function_name:
+        description: Function to update (lambda target)
+        required: false
+        type: string
+        default: ''
+      lambda_zip_path:
+        description: Path to a .zip artifact or a directory to zip (lambda target)
+        required: false
+        type: string
+        default: ''
+      # --- ecs --------------------------------------------------------------
+      ecs_cluster:
+        description: Cluster name (ecs target)
+        required: false
+        type: string
+        default: ''
+      ecs_service:
+        description: Service name (ecs target)
+        required: false
+        type: string
+        default: ''
+      ecs_task_definition_family:
+        description: Task definition family to redeploy (ecs target)
+        required: false
+        type: string
+        default: ''
+      ecs_container_name:
+        description: Container in the task definition that receives the image (ecs target)
+        required: false
+        type: string
+        default: ''
+      ecs_image:
+        description: New image (registry/repo:tag) to render in (ecs target)
+        required: false
+        type: string
+        default: ''
+      ecs_wait:
+        description: Wait for the service to reach stability (ecs target)
+        required: false
+        type: boolean
+        default: true
+      ecs_wait_timeout:
+        description: Service-stability wait timeout in minutes (ecs target)
+        required: false
+        type: number
+        default: 30
+      # --- cloudformation ----------------------------------------------------
+      cf_stack_name:
+        description: Stack to create or update (cloudformation target)
+        required: false
+        type: string
+        default: ''
+      cf_template_file:
+        description: Local template file (cloudformation target)
+        required: false
+        type: string
+        default: ''
+      cf_parameters:
+        description: 'Comma-separated Key=Value parameter overrides (cloudformation target)'
+        required: false
+        type: string
+        default: ''
+      cf_capabilities:
+        description: 'Space-separated IAM capability flags (cloudformation target)'
+        required: false
+        type: string
+        default: CAPABILITY_NAMED_IAM
+    outputs:
+      verdict:
+        description: Aggregate verdict of the deployment (passed | failed)
+        value: ${{ jobs.deploy.outputs.verdict }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: master-ci-deploy-aws-${{ inputs.target }}-${{ inputs.aws_region }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      verdict: ${{ steps.result.outputs.verdict }}
+    env:
+      ROLE_ARN: ${{ inputs.role_arn }}
+      AWS_REGION: ${{ inputs.aws_region }}
+      SESSION_NAME: ${{ inputs.session_name }}
+      TARGET: ${{ inputs.target }}
+      S3_BUCKET: ${{ inputs.s3_bucket }}
+      S3_SOURCE_DIR: ${{ inputs.s3_source_dir }}
+      S3_DELETE: ${{ inputs.s3_delete }}
+      CF_DISTRIBUTION_ID: ${{ inputs.cloudfront_distribution_id }}
+      CF_INVALIDATE_PATH: ${{ inputs.cloudfront_invalidate_path }}
+      LAMBDA_FUNCTION_NAME: ${{ inputs.lambda_function_name }}
+      LAMBDA_ZIP_PATH: ${{ inputs.lambda_zip_path }}
+      ECS_CLUSTER: ${{ inputs.ecs_cluster }}
+      ECS_SERVICE: ${{ inputs.ecs_service }}
+      ECS_TASK_FAMILY: ${{ inputs.ecs_task_definition_family }}
+      ECS_CONTAINER_NAME: ${{ inputs.ecs_container_name }}
+      ECS_IMAGE: ${{ inputs.ecs_image }}
+      ECS_WAIT: ${{ inputs.ecs_wait }}
+      ECS_WAIT_TIMEOUT: ${{ inputs.ecs_wait_timeout }}
+      CF_STACK_NAME: ${{ inputs.cf_stack_name }}
+      CF_TEMPLATE_FILE: ${{ inputs.cf_template_file }}
+      CF_PARAMETERS: ${{ inputs.cf_parameters }}
+      CF_CAPABILITIES: ${{ inputs.cf_capabilities }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate deployment inputs
+        run: |
+          die() { echo "::error::$1"; exit 1; }
+          case "$TARGET" in
+            s3|lambda|ecs|cloudformation) ;;
+            *) die "target must be one of: s3, lambda, ecs, cloudformation (got '$TARGET')" ;;
+          esac
+          case "$ROLE_ARN" in
+            arn:aws*:iam::*:role/*) ;;
+            *) die "role_arn must look like arn:aws:iam::<account-id>:role/<name>" ;;
+          esac
+          # path inputs must stay inside the checkout: an absolute path or a
+          # traversal would let a misconfigured caller deploy outside the tree
+          for path_input in "$S3_SOURCE_DIR" "$LAMBDA_ZIP_PATH" "$CF_TEMPLATE_FILE"; do
+            [ -z "$path_input" ] && continue
+            case "$path_input" in
+              /*|*..*) die "path inputs must be relative and must not traverse upward: $path_input" ;;
+            esac
+          done
+          case "$TARGET" in
+            s3)
+              [ -n "$S3_BUCKET" ] || die "s3 target requires s3_bucket"
+              [ -n "$S3_SOURCE_DIR" ] || die "s3 target requires s3_source_dir"
+              [ -d "$S3_SOURCE_DIR" ] || die "s3_source_dir '$S3_SOURCE_DIR' does not exist in the checkout" ;;
+            lambda)
+              [ -n "$LAMBDA_FUNCTION_NAME" ] || die "lambda target requires lambda_function_name"
+              [ -n "$LAMBDA_ZIP_PATH" ] || die "lambda target requires lambda_zip_path"
+              if [ -d "$LAMBDA_ZIP_PATH" ]; then :
+              elif [ -f "$LAMBDA_ZIP_PATH" ]; then
+                case "$LAMBDA_ZIP_PATH" in
+                  *.zip) ;;
+                  *) die "lambda_zip_path must be a .zip file or a directory (got '$LAMBDA_ZIP_PATH')" ;;
+                esac
+              else
+                die "lambda_zip_path '$LAMBDA_ZIP_PATH' does not exist in the checkout"
+              fi ;;
+            ecs)
+              for required in "ecs_cluster:$ECS_CLUSTER" "ecs_service:$ECS_SERVICE" \
+                "ecs_task_definition_family:$ECS_TASK_FAMILY" \
+                "ecs_container_name:$ECS_CONTAINER_NAME" "ecs_image:$ECS_IMAGE"; do
+                [ -n "${required#*:}" ] || die "ecs target requires ${required%%:*}"
+              done ;;
+            cloudformation)
+              [ -n "$CF_STACK_NAME" ] || die "cloudformation target requires cf_stack_name"
+              [ -n "$CF_TEMPLATE_FILE" ] || die "cloudformation target requires cf_template_file"
+              [ -f "$CF_TEMPLATE_FILE" ] || die "cf_template_file '$CF_TEMPLATE_FILE' does not exist in the checkout" ;;
+          esac
+          echo "deployment inputs validated (target=$TARGET region=$AWS_REGION)"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ inputs.role_arn }}
+          aws-region: ${{ inputs.aws_region }}
+          role-session-name: ${{ inputs.session_name }}
+
+      - name: Deploy to S3 (and invalidate CloudFront when configured)
+        if: env.TARGET == 's3'
+        run: |
+          args=(--exact-timestamps --no-progress)
+          if [ "$S3_DELETE" = "true" ]; then
+            args+=(--delete)
+          fi
+          aws s3 sync "$S3_SOURCE_DIR" "s3://$S3_BUCKET" "${args[@]}"
+          if [ -n "$CF_DISTRIBUTION_ID" ]; then
+            aws cloudfront create-invalidation \
+              --distribution-id "$CF_DISTRIBUTION_ID" \
+              --paths "$CF_INVALIDATE_PATH"
+          fi
+          echo "s3 sync complete: $S3_SOURCE_DIR -> s3://$S3_BUCKET"
+
+      - name: Deploy to Lambda
+        if: env.TARGET == 'lambda'
+        run: |
+          if [ -d "$LAMBDA_ZIP_PATH" ]; then
+            zip -qr /tmp/master-ci-lambda.zip . -x '*.git*'
+            artifact=/tmp/master-ci-lambda.zip
+          else
+            artifact="$LAMBDA_ZIP_PATH"
+          fi
+          aws lambda update-function-code \
+            --function-name "$LAMBDA_FUNCTION_NAME" \
+            --zip-file "fileb://$artifact"
+          # the deployment is not done until the function reports the new code
+          aws lambda wait function-updated --function-name "$LAMBDA_FUNCTION_NAME"
+          echo "lambda update complete: $LAMBDA_FUNCTION_NAME"
+
+      - name: Deploy to ECS
+        if: env.TARGET == 'ecs'
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "$ECS_TASK_FAMILY" \
+            --query 'taskDefinition' > task-definition.json
+          echo "rendered new image into container $ECS_CONTAINER_NAME (see next step)"
+
+      - name: Render the new image into the task definition
+        if: env.TARGET == 'ecs'
+        uses: aws-actions/amazon-ecs-render-task-definition@8d79160660ad39c402a16e5fc7cd2a32e8f7d6b7 # v1.9.1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ inputs.ecs_container_name }}
+          image: ${{ inputs.ecs_image }}
+
+      - name: Register the task definition and update the service
+        if: env.TARGET == 'ecs'
+        uses: aws-actions/amazon-ecs-deploy-task-definition@a00d4d57ac0de1a99b39fe469f3d898d38717c2b # v2.6.4
+        with:
+          task-definition: task-definition.json
+          cluster: ${{ inputs.ecs_cluster }}
+          service: ${{ inputs.ecs_service }}
+          wait-for-service-stability: ${{ inputs.ecs_wait }}
+          wait-for-minutes: ${{ inputs.ecs_wait_timeout }}
+
+      - name: Deploy CloudFormation stack
+        if: env.TARGET == 'cloudformation'
+        run: |
+          param_args=()
+          for pair in $(printf '%s' "$CF_PARAMETERS" | tr ',' ' '); do
+            case "$pair" in
+              *=*) param_args+=("$pair") ;;
+              *) echo "::error::cf_parameters entries must be Key=Value (got '$pair')"; exit 1 ;;
+            esac
+          done
+          read -ra caps <<< "$CF_CAPABILITIES"
+          cmd=(deploy --stack-name "$CF_STACK_NAME" --template-file "$CF_TEMPLATE_FILE" --capabilities "${caps[@]}")
+          if [ ${#param_args[@]} -gt 0 ]; then
+            cmd+=(--parameter-overrides "${param_args[@]}")
+          fi
+          aws cloudformation "${cmd[@]}"
+          echo "cloudformation deploy complete: $CF_STACK_NAME"
+
+      - name: Record verdict
+        id: result
+        if: always()
+        run: |
+          if [ "$DEPLOY_RESULT" = "success" ]; then
+            echo "verdict=passed" >> "$GITHUB_OUTPUT"
+          else
+            echo "verdict=failed" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          DEPLOY_RESULT: ${{ job.status }}

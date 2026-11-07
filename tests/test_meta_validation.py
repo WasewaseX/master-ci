@@ -24,6 +24,12 @@ VALID = {
     "RUN_PYTHON": "true",
     "RUN_RUST": "false",
     "RUN_GO": "auto",
+    "RUN_JAVA": "auto",
+    "RUN_CPP": "auto",
+    "RUN_CSHARP": "auto",
+    "RUN_RUBY": "auto",
+    "RUN_PHP": "auto",
+    "RUN_DOCKER": "auto",
     "SELECT": "",
 }
 
@@ -34,7 +40,8 @@ CASES = [
         "every valid select token",
         {
             "SELECT": "hygiene,secrets,ai-integrity,docs,node-lint,node-test,"
-            "python,rust,go-lint,go-test,security,deps-review,scorecard"
+            "python,rust,go-lint,go-test,java,cpp,csharp,ruby,php,docker,"
+            "security,deps-review,scorecard"
         },
         True,
     ),
@@ -52,6 +59,12 @@ CASES = [
     ("run_python empty", {"RUN_PYTHON": ""}, False),
     ("run_go yes", {"RUN_GO": "yes"}, False),
     ("run_rust injection", {"RUN_RUST": "true; curl evil"}, False),
+    ("run_java typo", {"RUN_JAVA": "ture"}, False),
+    ("run_cpp empty", {"RUN_CPP": ""}, False),
+    ("run_csharp yes", {"RUN_CSHARP": "yes"}, False),
+    ("run_ruby typo", {"RUN_RUBY": "tRue"}, False),
+    ("run_php injection", {"RUN_PHP": "true; curl evil"}, False),
+    ("run_docker typo", {"RUN_DOCKER": "ture"}, False),
     ("select unknown job", {"SELECT": "secrets,bogus-job"}, False),
     ("select with space", {"SELECT": "secrets, python"}, False),
     ("select traversal", {"SELECT": "../x"}, False),
