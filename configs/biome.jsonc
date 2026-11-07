@@ -13,11 +13,13 @@
       "**/*.tsx",
       "**/*.json",
       "**/*.jsonc",
-      "!**/node_modules/**",
-      "!**/dist/**",
-      "!**/build/**",
-      "!**/coverage/**",
-      "!**/_ci/**"
+      "!**/node_modules",
+      "!**/dist",
+      "!**/build",
+      "!**/coverage",
+      "!**/_ci",
+      "!**/composer.json",
+      "!**/composer.lock"
     ]
   }
 }
