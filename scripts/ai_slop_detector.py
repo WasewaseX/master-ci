@@ -1248,6 +1248,70 @@ def _is_banner(comment: Comment) -> bool:
     return bool(BANNER_DECO.match(core))
 
 
+def _comment_pressure_finding(
+    path: Path,
+    comments: list[Comment],
+    non_blank: int,
+) -> Finding | None:
+    """Flag files where comments outweigh code (AI padding tell)."""
+    if non_blank < BLOAT_COMMENT_MIN_LINES:
+        return None
+    comment_lines = {c.line for c in comments}
+    ratio = len(comment_lines) / non_blank
+    if ratio <= BLOAT_COMMENT_RATIO:
+        return None
+    return Finding(
+        path=str(path),
+        line=1,
+        check="bloat-comment-ratio",
+        message=(
+            f"{len(comment_lines)}/{non_blank} lines are comments "
+            f"({ratio:.0%} - budget {BLOAT_COMMENT_RATIO:.0%})"
+        ),
+        weight=1,
+        advisory=True,
+    )
+
+
+def _banner_cluster_starts(comments: list[Comment]) -> list[int]:
+    """First line of each banner cluster (a titled block is one unit)."""
+    starts: list[int] = []
+    prev = 0
+    for c in comments:
+        if not _is_banner(c):
+            continue
+        if not starts or c.line - prev > 2:
+            starts.append(c.line)
+        prev = c.line
+    return starts
+
+
+def _banner_padding_finding(
+    path: Path,
+    comments: list[Comment],
+    non_blank: int,
+) -> Finding | None:
+    """Flag bunched banner blocks; spread-out dividers are navigation."""
+    clusters = _banner_cluster_starts(comments)
+    if len(clusters) < BLOAT_BANNER_MIN:
+        return None
+    gaps = sorted(b - a for a, b in zip(clusters, clusters[1:]))
+    median_gap = gaps[len(gaps) // 2] if gaps else non_blank
+    if median_gap >= BLOAT_BANNER_GAP:
+        return None
+    return Finding(
+        path=str(path),
+        line=clusters[0],
+        check="bloat-banner-comments",
+        message=(
+            f"{len(clusters)} decorative banner blocks pad the file; "
+            "structure should carry the sections"
+        ),
+        weight=1,
+        advisory=True,
+    )
+
+
 def _file_bloat_findings(
     path: Path,
     text: str,
@@ -1256,8 +1320,7 @@ def _file_bloat_findings(
 ) -> list[Finding]:
     """File-level budgets: length, comment pressure, banner padding."""
     findings: list[Finding] = []
-    lines = text.splitlines()
-    non_blank = sum(1 for line in lines if line.strip())
+    non_blank = sum(1 for line in text.splitlines() if line.strip())
     if non_blank > BLOAT_FILE_LINES and not is_test_path(rel):
         findings.append(
             Finding(
@@ -1269,51 +1332,12 @@ def _file_bloat_findings(
                 advisory=True,
             )
         )
-    comment_lines = {c.line for c in comments}
-    if non_blank >= BLOAT_COMMENT_MIN_LINES:
-        ratio = len(comment_lines) / non_blank
-        if ratio > BLOAT_COMMENT_RATIO:
-            findings.append(
-                Finding(
-                    path=str(path),
-                    line=1,
-                    check="bloat-comment-ratio",
-                    message=(
-                        f"{len(comment_lines)}/{non_blank} lines are comments "
-                        f"({ratio:.0%} - budget {BLOAT_COMMENT_RATIO:.0%})"
-                    ),
-                    weight=1,
-                    advisory=True,
-                )
-            )
-    banner_lines = [c.line for c in comments if _is_banner(c)]
-    # Banners that sit far apart are section navigation; banners bunched
-    # together are padding. A titled section block (divider, title, divider)
-    # is one decoration unit: measure the gaps between clusters, not between
-    # the lines inside a block.
-    cluster_starts: list[int] = []
-    prev = banner_lines[0] - 10 if banner_lines else 0
-    for line in banner_lines:
-        if line - prev > 2:
-            cluster_starts.append(line)
-        prev = line
-    if len(cluster_starts) >= BLOAT_BANNER_MIN:
-        gaps = sorted(b - a for a, b in zip(cluster_starts, cluster_starts[1:]))
-        median_gap = gaps[len(gaps) // 2] if gaps else non_blank
-        if median_gap < BLOAT_BANNER_GAP:
-            findings.append(
-                Finding(
-                    path=str(path),
-                    line=cluster_starts[0],
-                    check="bloat-banner-comments",
-                    message=(
-                        f"{len(cluster_starts)} decorative banner blocks pad the "
-                        "file; structure should carry the sections"
-                    ),
-                    weight=1,
-                    advisory=True,
-                )
-            )
+    pressure = _comment_pressure_finding(path, comments, non_blank)
+    if pressure:
+        findings.append(pressure)
+    padding = _banner_padding_finding(path, comments, non_blank)
+    if padding:
+        findings.append(padding)
     return findings
 
 
