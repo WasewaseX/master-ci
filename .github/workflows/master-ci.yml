@@ -150,6 +150,11 @@ on:
         required: false
         type: number
         default: 8
+      ai_slop_max_deficit:
+        description: 'Project slop-score ceiling (0=clean..100=awful); PRs above it fail when fail_on_ai_slop is set'
+        required: false
+        type: number
+        default: 30
       complexity_max:
         description: Max cyclomatic complexity per function
         required: false
@@ -755,6 +760,7 @@ jobs:
       security-events: write
     env:
       AI_MAX: ${{ inputs.ai_slop_max_score }}
+      AI_CEILING: ${{ inputs.ai_slop_max_deficit }}
       FAIL_SLOP: ${{ inputs.fail_on_ai_slop }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -770,6 +776,7 @@ jobs:
         run: |
           python3 _ci/scripts/ai_slop_detector.py . \
             --max-score "$AI_MAX" \
+            --max-slop-score "$AI_CEILING" \
             --report-file ai_report.md \
             --sarif ai_integrity.sarif \
             --annotate

@@ -9,11 +9,9 @@ from slop_patterns import _strip_strings
 GOD_FUNCTION_LINES = 80  # scanaislop-aligned function budget
 MAX_NESTING = 5
 
-# ---------------------------------------------------------------------------
 # Bloat budget: the "AI writes 300 lines for 100 lines of work" guards.
-# All advisory - bloat is judgment, not a content defect. Budgets are
-# deliberately generous so normal, well-factored code never trips them.
-# ---------------------------------------------------------------------------
+# All advisory - bloat is judgment, not a content defect; budgets are
+# deliberately generous so well-factored code never trips them.
 BLOAT_FILE_LINES = 400  # non-blank lines before a source file is flagged
 BLOAT_MAX_PARAMS = 6  # parameters before a signature is unreadable
 BLOAT_COMMENT_RATIO = 0.5  # comment share of non-blank lines

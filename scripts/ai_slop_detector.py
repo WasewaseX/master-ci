@@ -15,11 +15,15 @@ CRITICAL verdicts), FixMySlop's rule-with-remedy + baseline + SARIF flow,
 and slopdetector.org's explainable, evidence-first prose checks.
 
 Contract:
-- Exit code 1 only when the *blocking* score exceeds --max-score.
+- Exit code 1 when the *blocking* score exceeds --max-score, or when the
+    aggregate project slop score exceeds --max-slop-score (the
+    scanaislop-style PR gate; default 100 keeps the CLI advisory-only).
 - Blocking-grade signals are deterministic content defects (elided code,
     stubs, empty tests, swallowed exceptions, chatbot residue in comments).
     Everything stylistic or speculative is advisory: reported and annotated,
-    never failing a build.
+    never failing a build on its own - advisory pressure is scored through
+    the deficit model (per-rule saturation cap, impact tiers) and gates
+    through the slop-score ceiling instead.
 - Provenance signals (`ai-provenance`) and the test inventory
     (`missing-tests`) are traceability signals, never authorship verdicts;
     advisory. Disable with `--no-provenance`.
@@ -111,6 +115,7 @@ from slop_reporting import (  # noqa: F401
     annotate,
     apply_baseline,
     blocking_score,
+    check_tier,
     file_deficit,
     fingerprint,
     project_score,
@@ -118,17 +123,18 @@ from slop_reporting import (  # noqa: F401
     write_report,
     write_sarif,
 )
+from slop_residue import (  # noqa: F401
+    check_residue,
+)
 from slop_ui_prose import (  # noqa: F401
     check_doc_extras,
     check_ui_slop,
     scan_doc_file,
 )
 
-# ---------------------------------------------------------------------------
-# Orchestration, CLI and the re-exported test surface. The checker
+# Orchestration, CLI and the re-exported test surface: the checker
 # implementations live in the slop_* sibling modules; this file stays the
 # single entry point the workflow invokes and the tests import.
-# ---------------------------------------------------------------------------
 
 
 def scan_code_file(
@@ -153,6 +159,7 @@ def scan_code_file(
     findings.extend(check_rust(path, text, family))
     findings.extend(check_debug_left(path, text, family, rel))
     findings.extend(check_js_slop(path, text, family, rel))
+    findings.extend(check_residue(path, text, family, rel, comments))
     findings.extend(check_ui_slop(path, text, ext))
     findings.extend(check_blanket_suppression(path, text))
     findings.extend(check_placeholder_names(path, text))
@@ -320,6 +327,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Fail when the blocking score exceeds this value",
     )
     parser.add_argument(
+        "--max-slop-score",
+        type=float,
+        default=100.0,
+        help=(
+            "Fail when the project slop score (0=clean, 100=awful) exceeds "
+            "this ceiling; the scanaislop-style PR gate. Default 100 = off"
+        ),
+    )
+    parser.add_argument(
         "--ignore",
         action="append",
         default=[],
@@ -389,9 +405,11 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"ai-integrity blocking={blocking_score(findings)} max={args.max_score} "
         f"advisory={advisory_score(findings)} findings={len(findings)} "
-        f"score={score}/100 grade={grade} verdict={verdict}"
+        f"score={score}/100 grade={grade} verdict={verdict} "
+        f"ceiling={args.max_slop_score:g}"
     )
-    return 1 if blocking_score(findings) > args.max_score else 0
+    failed = blocking_score(findings) > args.max_score or score > args.max_slop_score
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

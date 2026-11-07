@@ -98,6 +98,25 @@ REMEDIES = {
         "Declare the generating tool in the commit message or PR description, "
         "or remove the stale marker"
     ),
+    "unreachable-code": "Delete the dead statements; code that can never run does not ship",
+    "constant-condition": (
+        "Remove the dead branch or make the condition real; constants gate nothing"
+    ),
+    "range-len-loop": ("Iterate the sequence directly, or use enumerate when the index is needed"),
+    "isinstance-ladder": ("Replace the hand-rolled type dispatch with a mapping or polymorphism"),
+    "repetitive-dispatch": ("Replace the ==-chain with a dict dispatch or a match statement"),
+    "duplicate-import": "Merge the duplicate imports into one statement",
+    "redundant-try-catch": "Drop the try wrapper or handle the error for real",
+    "silent-recovery": (
+        "Include the caught error in the log and decide: recover, propagate, or crash loudly"
+    ),
+    "tautological-test": ("Assert on actual behavior; a test that cannot fail proves nothing"),
+    "generic-name": (
+        "Rename to describe the content: users, parsed_config, retry_count - not data/result"
+    ),
+    "meta-comment": ("Delete comments that narrate the task history; the diff tells that story"),
+    "prose-block": ("Cut the block to the one non-obvious why; the code already shows the what"),
+    "hardcoded-url": ("Move the environment-specific URL to configuration or the environment"),
     "missing-tests": (
         "Add tests for the source files, or move generated vendored code "
         "behind an interface and ignore the directory"
@@ -148,6 +167,21 @@ ADVISORY_ONLY_CHECKS = frozenset(
         "bloat-comment-ratio",
         "bloat-banner-comments",
         "chained-dict-get",
+        # scanaislop round-2 adoption: dead residue, dispatch shapes,
+        # comment prose, naming and environment leakage. Judgment calls.
+        "unreachable-code",
+        "constant-condition",
+        "range-len-loop",
+        "isinstance-ladder",
+        "repetitive-dispatch",
+        "duplicate-import",
+        "redundant-try-catch",
+        "silent-recovery",
+        "tautological-test",
+        "generic-name",
+        "meta-comment",
+        "prose-block",
+        "hardcoded-url",
         "ui-eyebrow-label",
         "ui-italic-serif-hero",
         "ui-fake-stats",

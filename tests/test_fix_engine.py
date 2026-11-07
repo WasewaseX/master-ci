@@ -250,11 +250,8 @@ def test_fix_text_idempotent() -> None:
         assert fe._fix_text(once, ".txt") == once
 
 
-# ---------------------------------------------------------------------------
-# engine-vs-CI parity guard: the fix plan must stay a subset of what the
-# deep audit and the CI stacks actually check, so fixes can never drift
-# away from checks.
-# ---------------------------------------------------------------------------
+# Engine-vs-CI parity guard: the fix plan must stay a subset of what the
+# deep audit and the CI stacks actually check, so fixes never drift.
 
 
 def test_engine_tools_are_the_ci_toolchain() -> None:

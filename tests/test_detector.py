@@ -617,3 +617,293 @@ def test_bloat_is_never_blocking():
         finding = mod.Finding("x.js", 1, check, "m", 1, advisory=False)
         assert finding.advisory, f"{check} must stay advisory"
         assert check not in mod.BLOCKING_CHECKS
+
+
+# Round-2 scanaislop adoption: dead residue, dispatch shapes, commentary.
+# Every new check is advisory; fixtures are runtime-built so this file
+# itself stays detector-clean.
+
+
+def test_unreachable_code_flagged(tmp_path):
+    code = "def f():\n    return 1\n    print('dead')\n"
+    findings = scan_py(tmp_path, code)
+    assert any(f.check == "unreachable-code" for f in findings)
+    assert all(f.advisory for f in findings if f.check == "unreachable-code")
+
+
+def test_clean_function_has_no_unreachable(tmp_path):
+    code = "def f(items):\n    if not items:\n        return 0\n    return len(items)\n"
+    findings = scan_py(tmp_path, code)
+    assert not any(f.check == "unreachable-code" for f in findings)
+
+
+def test_constant_condition_if_true_flagged_while_true_not(tmp_path):
+    code = (
+        "def f():\n    if True:\n        return 1\n    while False:\n        pass\n    return 2\n"
+    )
+    findings = scan_py(tmp_path, code)
+    hits = [f for f in findings if f.check == "constant-condition"]
+    assert len(hits) == 2, "if True and while False both flagged"
+
+
+def test_while_true_loop_is_not_flagged(tmp_path):
+    code = "def f(stop):\n    while True:\n        if stop():\n            break\n    return None\n"
+    findings = scan_py(tmp_path, code)
+    assert not any(f.check == "constant-condition" for f in findings)
+
+
+def test_range_len_loop_flagged(tmp_path):
+    code = "def f(items):\n    total = 0\n    for i in range(len(items)):\n        total += i\n    return total\n"
+    findings = scan_py(tmp_path, code)
+    assert any(f.check == "range-len-loop" for f in findings)
+
+
+def test_isinstance_ladder_at_four_branches(tmp_path):
+    lines = ["def f(x):"]
+    lines.append("    if isinstance(x, int):")
+    lines.append("        return 1")
+    for name in ("str", "float", "bytes"):
+        lines.append(f"    elif isinstance(x, {name}):")
+        lines.append("        return 2")
+    lines.append("    return 3")
+    findings = scan(tmp_path, {"a.py": "\n".join(lines) + "\n"})
+    assert any(f.check == "isinstance-ladder" for f in findings)
+
+
+def test_three_branch_isinstance_chain_not_flagged(tmp_path):
+    code = (
+        "def f(x):\n"
+        "    if isinstance(x, int):\n"
+        "        return 1\n"
+        "    elif isinstance(x, str):\n"
+        "        return 2\n"
+        "    elif isinstance(x, float):\n"
+        "        return 3\n"
+        "    return 4\n"
+    )
+    findings = scan_py(tmp_path, code)
+    assert not any(f.check == "isinstance-ladder" for f in findings)
+
+
+def test_repetitive_string_dispatch_flagged(tmp_path):
+    lines = ["def f(cmd):"]
+    for idx, cmd in enumerate(("run", "stop", "pause", "resume")):
+        keyword = "if" if idx == 0 else "elif"
+        lines.append(f'    {keyword} cmd == "{cmd}":')
+        lines.append(f"        return {len(cmd)}")
+    lines.append("    return 0")
+    findings = scan(tmp_path, {"a.py": "\n".join(lines) + "\n"})
+    assert any(f.check == "repetitive-dispatch" for f in findings)
+
+
+def test_duplicate_top_level_import_flagged(tmp_path):
+    code = "import os\nimport sys\nimport os\n\n\ndef f():\n    return os.sep\n"
+    findings = scan_py(tmp_path, code)
+    assert any(f.check == "duplicate-import" for f in findings)
+
+
+def test_function_local_import_is_not_duplicate(tmp_path):
+    code = "import re\n\n\ndef f():\n    import re as _re\n    return _re.escape('x')\n"
+    findings = scan_py(tmp_path, code)
+    assert not any(f.check == "duplicate-import" for f in findings)
+
+
+def test_redundant_rethrow_flagged(tmp_path):
+    code = "def f():\n    try:\n        return 1\n    except ValueError:\n        raise\n"
+    findings = scan_py(tmp_path, code)
+    assert any(f.check == "redundant-try-catch" for f in findings)
+
+
+def test_silent_recovery_flagged(tmp_path):
+    code = (
+        "def f():\n"
+        "    try:\n"
+        "        return load()\n"
+        "    except OSError as exc:\n"
+        "        logging.info('load failed, continuing')\n"
+        "    return None\n"
+    )
+    findings = scan_py(tmp_path, code)
+    assert any(f.check == "silent-recovery" for f in findings)
+
+
+def test_handler_using_error_not_flagged(tmp_path):
+    code = (
+        "def f():\n"
+        "    try:\n"
+        "        return load()\n"
+        "    except OSError as exc:\n"
+        "        logging.warning('load failed: %s', exc)\n"
+        "        raise\n"
+    )
+    findings = scan_py(tmp_path, code)
+    assert not any(f.check == "silent-recovery" for f in findings)
+
+
+def test_tautological_test_flagged_only_in_tests(tmp_path):
+    taut = "def test_ok():\n    assert True\n"
+    findings = scan(tmp_path, {"tests/test_a.py": taut, "src_helper.py": taut})
+    flagged_paths = {f.path for f in findings if f.check == "tautological-test"}
+    assert any(p.endswith("test_a.py") for p in flagged_paths)
+    assert not any(p.endswith("src_helper.py") for p in flagged_paths)
+
+
+def test_assert_same_name_flagged(tmp_path):
+    code = "def test_x():\n    value = compute()\n    assert value == value\n"
+    findings = scan(tmp_path, {"tests/test_a.py": code})
+    assert any(f.check == "tautological-test" for f in findings)
+
+
+def test_generic_top_level_name_flagged(tmp_path):
+    code = "data = load()\nresult = process(data)\n\n\ndef run():\n    return result\n"
+    findings = scan(tmp_path, {"mod.py": code})
+    hits = [f for f in findings if f.check == "generic-name"]
+    assert hits and "data" in hits[0].message
+
+
+def test_local_variables_not_flagged_as_generic(tmp_path):
+    code = "def run(items):\n    data = transform(items)\n    return data\n"
+    findings = scan(tmp_path, {"mod.py": code})
+    assert not any(f.check == "generic-name" for f in findings)
+
+
+def test_meta_comment_flagged(tmp_path):
+    code = (
+        "def f():\n    # Removed per the request; previously this called the v1 API\n    return 1\n"
+    )
+    findings = scan_py(tmp_path, code)
+    assert any(f.check == "meta-comment" for f in findings)
+
+
+def test_prose_block_at_five_lines_flagged_four_not(tmp_path):
+    five = "\n".join(f"# narration line {i} explaining the next step" for i in range(5))
+    four = "\n".join(f"# narration line {i} explaining the next step" for i in range(4))
+    findings = scan(
+        tmp_path,
+        {
+            "five.py": five + "\n\ndef f():\n    return 1\n",
+            "four.py": four + "\n\ndef f():\n    return 1\n",
+        },
+    )
+    flagged = {f.path for f in findings if f.check == "prose-block"}
+    assert any(p.endswith("five.py") for p in flagged)
+    assert not any(p.endswith("four.py") for p in flagged)
+
+
+def test_hardcoded_localhost_url_flagged_public_not(tmp_path):
+    code = "ENDPOINT = 'http://localhost:8080/api'\nDOCS = 'https://api.example.com/v1'\n"
+    findings = scan(tmp_path, {"cfg.py": code})
+    hits = [f for f in findings if f.check == "hardcoded-url"]
+    assert hits and "1 environment-specific" in hits[0].message
+
+
+def test_hardcoded_url_skipped_in_tests(tmp_path):
+    code = "BASE = 'http://127.0.0.1:9000'\n\ndef test_base():\n    assert BASE\n"
+    findings = scan(tmp_path, {"tests/test_cfg.py": code})
+    assert not any(f.check == "hardcoded-url" for f in findings)
+
+
+def test_js_constant_condition_flagged(tmp_path):
+    code = "function f(x) {\n  if (true) {\n    return x;\n  }\n  return x + 1;\n}\n"
+    findings = scan(tmp_path, {"a.js": code})
+    assert any(f.check == "constant-condition" and f.path.endswith("a.js") for f in findings)
+
+
+def test_ts_as_any_counts_as_suppression(tmp_path):
+    code = "const el = input as any;\n"
+    findings = scan(tmp_path, {"a.ts": code})
+    assert any(f.check == "ts-suppression" for f in findings)
+
+
+def test_round2_checks_all_advisory():
+    for check in (
+        "unreachable-code",
+        "constant-condition",
+        "range-len-loop",
+        "isinstance-ladder",
+        "repetitive-dispatch",
+        "duplicate-import",
+        "redundant-try-catch",
+        "silent-recovery",
+        "tautological-test",
+        "generic-name",
+        "meta-comment",
+        "prose-block",
+        "hardcoded-url",
+    ):
+        finding = mod.Finding("x.py", 1, check, "m", 3, advisory=False)
+        assert finding.advisory, f"{check} must stay advisory"
+        assert check not in mod.BLOCKING_CHECKS
+        assert check in mod.ADVISORY_ONLY_CHECKS
+
+
+def test_round2_remedies_exist():
+    for check in (
+        "unreachable-code",
+        "constant-condition",
+        "range-len-loop",
+        "isinstance-ladder",
+        "repetitive-dispatch",
+        "duplicate-import",
+        "redundant-try-catch",
+        "silent-recovery",
+        "tautological-test",
+        "generic-name",
+        "meta-comment",
+        "prose-block",
+        "hardcoded-url",
+    ):
+        assert mod.REMEDIES.get(check), f"missing remedy for {check}"
+
+
+# scanaislop-aligned scoring: per-rule saturation, impact tiers, and
+# the slop-score ceiling gate.
+
+
+def test_per_rule_saturation_caps_one_noisy_check(tmp_path):
+    noisy = "\n".join(f"# narration line {i} padding the block" for i in range(10))
+    code = noisy + "\n\n" + "import os\nimport sys\nimport os\nimport re\nimport re\n"
+    findings = scan(tmp_path, {"a.py": code * 3})
+    assert findings
+
+
+def test_saturation_bounds_advisory_weight():
+    findings = [
+        mod.Finding("x.py", i, "phantom-import", f"m{i}", 1, advisory=True) for i in range(60)
+    ]
+    deficit = mod.file_deficit(findings)
+    # 60 mechanical findings saturate at MAX_PER_RULE (40), tier 0.5 -> 20
+    import math
+
+    assert deficit == round(8 * math.log1p(20))
+    # the same weight without saturation would press harder (60 * 0.5 = 30)
+    assert deficit < round(8 * math.log1p(30))
+
+
+def test_impact_tiers_press_less_than_standard():
+    style = mod.Finding("ui.tsx", 1, "ui-triple-slogan", "m", 4, advisory=True)
+    strict = mod.Finding("a.py", 1, "undeclared-import", "m", 4, advisory=True)
+    assert mod.file_deficit([style]) < mod.file_deficit([strict])
+
+
+def test_blocking_weight_is_never_tiered():
+    blocking = mod.Finding("a.py", 1, "empty-test", "m", 4)
+    assert mod.check_tier("empty-test") == 1.0
+    assert mod.file_deficit([blocking]) == mod.file_deficit([blocking])
+
+
+def test_max_slop_score_gate_fails_dirty_project(tmp_path):
+    noisy = "\n".join(f"# narration line {i} padding the block out" for i in range(6))
+    code = (
+        noisy
+        + "\n\nimport os\nimport sys\nimport os\nimport re\nimport re\nimport json\nimport json\n"
+    )
+    scan_py(tmp_path, code)
+    rc = mod.main([str(tmp_path), "--max-score", "0", "--max-slop-score", "0"])
+    assert rc == 1
+
+
+def test_max_slop_score_gate_keeps_clean_project(tmp_path):
+    scan(tmp_path, {"a.py": "def add(a, b):\n    return a + b\n"})
+    rc = mod.main([str(tmp_path), "--max-score", "0", "--max-slop-score", "0"])
+    assert rc == 0

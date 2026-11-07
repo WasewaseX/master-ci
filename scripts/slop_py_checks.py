@@ -286,9 +286,7 @@ def _has_chained_dict_get(tree: ast.AST) -> bool:
     return False
 
 
-# ---------------------------------------------------------------------------
-# Bloat budget: function, file and comment-pressure checks.
-# Python is measured through its AST; brace families through a conservative
-# line scanner; Ruby through def/end pairing. Every check is advisory and
-# reports at most one finding per file per rule (the worst offender wins).
-# ---------------------------------------------------------------------------
+# Bloat budget: function, file and comment-pressure checks. Python is
+# measured through its AST; brace families through a line scanner; Ruby
+# through def/end pairing. Every check is advisory, one finding per
+# file per rule (the worst offender wins).

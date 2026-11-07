@@ -23,7 +23,11 @@ jobs:
   master:
     # `$/` self-repository syntax would be stricter, but actionlint 1.7.x
     # cannot parse it yet; `./` resolves from this repo's checkout.
+    # The template holds its own PRs to the full AI-integrity bar
+    # (blocking score AND the slop-score ceiling) - eat your own cooking.
     uses: ./.github/workflows/master-ci.yml # zizmor: ignore[self-repository]
+    with:
+      fail_on_ai_slop: true
     permissions:
       contents: read
       security-events: write

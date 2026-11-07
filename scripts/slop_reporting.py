@@ -12,10 +12,83 @@ from pathlib import Path
 from slop_model import BLOCKING_CHECKS, REMEDIES, Finding
 from slop_patterns import IGNORE_FILE, MAX_ANNOTATIONS, TOOL_NAME
 
+# scanaislop-aligned scoring (scanaislop.com/docs/scoring): per-rule
+# saturation (maxPerRule) plus impact tiers; blocking weight stays 1.0.
+MAX_PER_RULE = 40  # a single check contributes at most this much per file
+
+TIER_MAINTAINABILITY = 0.75  # refactoring and design debt
+TIER_MECHANICAL = 0.5  # cleanup a mechanical fixer can usually handle
+TIER_STYLE = 0.5  # style, policy and prose pressure
+TIER_INFO = 0.25  # medium-confidence traceability signals
+
+TIERED_CHECKS: dict[str, float] = {
+    "bloat-long-file": TIER_MAINTAINABILITY,
+    "bloat-param-count": TIER_MAINTAINABILITY,
+    "bloat-comment-ratio": TIER_MAINTAINABILITY,
+    "bloat-banner-comments": TIER_MAINTAINABILITY,
+    "god-function": TIER_MAINTAINABILITY,
+    "deep-nesting": TIER_MAINTAINABILITY,
+    "mutable-default": TIER_MAINTAINABILITY,
+    "star-import": TIER_MAINTAINABILITY,
+    "prose-block": TIER_MAINTAINABILITY,
+    "range-len-loop": TIER_MAINTAINABILITY,
+    "isinstance-ladder": TIER_MAINTAINABILITY,
+    "repetitive-dispatch": TIER_MAINTAINABILITY,
+    "unwrap-density": TIER_MAINTAINABILITY,
+    "chained-dict-get": TIER_MAINTAINABILITY,
+    "phantom-import": TIER_MECHANICAL,
+    "duplicate-import": TIER_MECHANICAL,
+    "debug-print": TIER_MECHANICAL,
+    "constant-condition": TIER_MECHANICAL,
+    "unreachable-code": TIER_MECHANICAL,
+    "redundant-try-catch": TIER_MECHANICAL,
+    "silent-recovery": TIER_MECHANICAL,
+    "tautological-test": TIER_MECHANICAL,
+    "generic-name": TIER_MECHANICAL,
+    "meta-comment": TIER_MECHANICAL,
+    "hardcoded-url": TIER_MECHANICAL,
+    "todo-density": TIER_MECHANICAL,
+    "ts-suppression": TIER_MECHANICAL,
+    "blanket-suppression": TIER_MECHANICAL,
+    "missing-tests": TIER_MECHANICAL,
+    "em-dash-density": TIER_STYLE,
+    "md-emoji-headings": TIER_STYLE,
+    "exclamations": TIER_STYLE,
+    "rhetorical-questions": TIER_STYLE,
+    "rule-of-three": TIER_STYLE,
+    "ui-eyebrow-label": TIER_STYLE,
+    "ui-italic-serif-hero": TIER_STYLE,
+    "ui-fake-stats": TIER_STYLE,
+    "ui-generic-testimonial": TIER_STYLE,
+    "ui-not-just-x": TIER_STYLE,
+    "ui-triple-slogan": TIER_STYLE,
+    "ui-glass-glow": TIER_STYLE,
+    "ui-decorative-numbering": TIER_STYLE,
+    "ui-ai-gradient": TIER_STYLE,
+    "ui-gradient-text": TIER_STYLE,
+    "ui-emoji-decor": TIER_STYLE,
+    "ui-marketing-copy": TIER_STYLE,
+    "ui-placeholder-copy": TIER_STYLE,
+    "placeholder-note": TIER_INFO,
+    "ai-provenance": TIER_INFO,
+    "go-error-assigned-blank": TIER_INFO,
+}
+
+
+def check_tier(check: str) -> float:
+    """Impact-tier multiplier for one check id (strict/standard = 1.0)."""
+    return TIERED_CHECKS.get(check, 1.0)
+
 
 def file_deficit(findings: list[Finding]) -> int:
     blocking_weight = sum(f.weight for f in findings if not f.advisory)
-    advisory_weight = sum(f.weight for f in findings if f.advisory)
+    advisory_weight = 0.0
+    per_check: dict[str, int] = {}
+    for item in findings:
+        if item.advisory:
+            used = min(per_check.get(item.check, 0) + item.weight, MAX_PER_RULE)
+            advisory_weight += (used - per_check.get(item.check, 0)) * check_tier(item.check)
+            per_check[item.check] = used
     purity = math.exp(-0.5 * blocking_weight)
     deficit = 100 * (1 - purity) + 8 * math.log1p(advisory_weight)
     return min(100, round(deficit))

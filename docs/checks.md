@@ -103,9 +103,12 @@ Profile presets (quick / standard / strict / custom) only change the
   deficit, grades A-F, verdicts CLEAN / SUSPICIOUS / INFLATED / CRITICAL),
   a "fix these first" brief, per-rule totals, and SARIF uploaded to the
   Security tab (category `ai-integrity`).
-- **Fails when:** only the **blocking** score exceeds `ai_slop_max_score`
-  AND `fail_on_ai_slop: true`. Blocking signals are the deterministic
-  content checks; everything stylistic is advisory.
+- **Fails when:** the **blocking** score exceeds `ai_slop_max_score`, or
+  the project slop score exceeds `ai_slop_max_deficit` (default 30, the
+  CLEAN/SUSPICIOUS boundary) - both only when `fail_on_ai_slop: true`.
+  Blocking signals are the deterministic content checks; everything
+  stylistic is advisory and is enforced through the aggregate score
+  ceiling instead of per-finding failures.
 - **False positives:** domain vocabulary overlapping the phrase list;
   abstract methods that raise NotImplementedError; intentional emoji.
   Tests asserting via a raises-style context (`with pytest.raises(...)`,
@@ -138,6 +141,31 @@ Profile presets (quick / standard / strict / custom) only change the
   `ui-not-just-x` ("not just X, it's Y"), `ui-triple-slogan` ("Simple.
   Fast. Efficient."), `ui-glass-glow` (2+ backdrop-blur effects per file)
   and `ui-decorative-numbering` (3+ decorative 01/02/03 markers).
+- **Round-2 scanaislop adoption (advisory):** the second tranche of
+  scanaislop.com's 58-pattern catalog plus the comment doctrine from its
+  writing-comments guide. Dead residue: `unreachable-code` (statements
+  after return/raise/break/continue), `constant-condition` (`if True:`,
+  `while False:` - `while True:` stays legal), `duplicate-import` (two
+  top-level imports of one module). Pythonic-shape debts:
+  `range-len-loop` (`for i in range(len(x))`), `isinstance-ladder` and
+  `repetitive-dispatch` (four-plus branches on one subject),
+  `redundant-try-catch` (a handler that only rethrows), `silent-recovery`
+  (logs without the caught error and carries on). Test integrity:
+  `tautological-test` (`assert True`, `assert x == x` - test files only).
+  Naming: `generic-name` (top-level data/result/value/temp/obj/...).
+  Commentary: `meta-comment` (task-history narration), `prose-block`
+  (five-plus consecutive narrating comments), `hardcoded-url`
+  (localhost/staging/internal URLs baked into non-test source). The
+  TypeScript escape hatch covers `as any` and `as unknown as` via
+  `ts-suppression`.
+- **Scoring refinements (scanaislop-aligned):** advisory pressure is
+  tier-weighted - maintainability debts (bloat, god-function, deep
+  nesting, dispatch ladders) press at 0.75x, mechanical residue
+  (phantom imports, dead residue, debug prints) at 0.5x, style and UI
+  findings at 0.5x, traceability notes at 0.25x - and every check's
+  contribution saturates at 40 points per file (`MAX_PER_RULE`), so one
+  noisy rule can never dominate a deficit. Blocking weight is never
+  tiered: strict signals stay strict.
 - **Disable:** `fail_on_ai_slop` defaults to `false` - the job reports,
   annotates and uploads SARIF but never gates. Provenance and test
   inventory can be turned off with `--no-provenance`.

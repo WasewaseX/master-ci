@@ -282,11 +282,8 @@ def test_meta_validates_untrusted_inputs():
         assert needle in meta
 
 
-# ---------------------------------------------------------------------------
 # Release integrity (dependency-review auth, helper pinning, lockfiles,
-# input validation, install failure handling) - regression-proofed after
-# an external review found these gaps.
-# ---------------------------------------------------------------------------
+# input validation, install failure handling), regression-proofed.
 
 
 def test_dependency_review_probe_is_authenticated():

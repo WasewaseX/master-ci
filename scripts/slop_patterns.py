@@ -197,7 +197,10 @@ RUST_STUB = re.compile(r"\b(?:todo|unimplemented)!\s*\(")
 RUST_UNWRAP = re.compile(r"\.unwrap\(\)")
 DEBUGGER_LEFT = re.compile(r"^\s*(?:debugger;\s*$|binding\.pry\b|byebug\b)", re.MULTILINE)
 JS_CONSOLE_LOG = re.compile(r"\bconsole\.log\s*\(")
-TS_SUPPRESSION = re.compile(r"@(?:ts-ignore|ts-nocheck|ts-expect-error)|:\s*any\b")
+TS_SUPPRESSION = re.compile(
+    r"@(?:ts-ignore|ts-nocheck|ts-expect-error)|:\s*any\b"
+    r"|\bas\s+unknown\s+as\b|\bas\s+any\b"
+)
 BLANKET_SUPPRESS = re.compile(
     r"(?://|/\*)\s*eslint-disable(?:\s|$)|#\s*noqa(?!\s*:)|#\s*type:\s*ignore\b"
     r"|#\s*type: ignore\s*#|nolint\b",
