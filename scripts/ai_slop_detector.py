@@ -1169,16 +1169,18 @@ def _brace_blocks(code_lines: list[str]) -> list[dict]:
     depth_end, max_depth, max_control = _brace_depths(code_lines)
     blocks: list[dict] = []
     for idx, header in _header_openers(code_lines):
+        open_idx: int
         if "{" in code_lines[idx]:
             open_idx = idx
         else:
-            open_idx = None
+            found: int | None = None
             for nxt in range(idx + 1, min(idx + 3, len(code_lines))):
                 if code_lines[nxt].strip().startswith("{"):
-                    open_idx = nxt
+                    found = nxt
                     break
-            if open_idx is None:
+            if found is None:
                 continue
+            open_idx = found
         open_depth = depth_end[open_idx] - 1
         if open_depth < 0:
             open_depth = 0
