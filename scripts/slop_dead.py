@@ -330,8 +330,7 @@ def _js_unused_dep_findings(js_deps: dict[str, int], files: list[Path]) -> list[
                 line=lineno,
                 check="unused-dependency",
                 message=(
-                    f"runtime package {pkg!r} is never imported - declared "
-                    "weight with no consumer"
+                    f"runtime package {pkg!r} is never imported - declared weight with no consumer"
                 ),
                 weight=1,
                 advisory=True,
