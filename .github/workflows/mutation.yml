@@ -90,7 +90,7 @@ jobs:
                 echo "gap: a defect that shape would ship unnoticed." ;;
               stryker)
                 echo "Stryker ran; the HTML report is in the mutation-stryker-reports"
-                echo "artifact. A low mutation score means the tests execute code but" 
+                echo "artifact. A low mutation score means the tests execute code but"
                 echo "do not verify behavior." ;;
             esac
           } >> "$GITHUB_STEP_SUMMARY"
