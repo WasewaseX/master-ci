@@ -141,37 +141,49 @@ def _parse_py_dep_tables(content: str, declared: set[str]) -> None:
             declared.add(match.group(1).lower().replace("_", "-"))
 
 
+def _add_package_name(entry: Path, local: set[str]) -> None:
+    """A directory with __init__.py is importable by its own name."""
+    if (entry / "__init__.py").exists():
+        local.add(entry.name)
+
+
+def _add_src_layout_names(entry: Path, local: set[str]) -> None:
+    """src-layout packages: <dir>/src/<pkg>/__init__.py."""
+    src = entry / "src"
+    if not src.is_dir():
+        return
+    for sub in sorted(src.iterdir()):
+        if sub.is_dir() and (sub / "__init__.py").exists():
+            local.add(sub.name)
+
+
+def _add_flat_layout_names(entry: Path, local: set[str]) -> None:
+    """Flat sibling layout: modules one or two directories down
+    (scripts/, src/), whose files import their siblings as bare names
+    because the interpreter runs from that directory."""
+    if entry.name in SKIP_DIRS or (entry / "__init__.py").exists():
+        return
+    for py in sorted(entry.glob("*.py")):
+        local.add(py.stem)
+    for nested in sorted(entry.iterdir()):
+        if nested.is_dir() and nested.name not in SKIP_DIRS and not nested.name.startswith("."):
+            for py in sorted(nested.glob("*.py")):
+                local.add(py.stem)
+
+
 def _local_modules(root: Path) -> set[str]:
     """Importable module names in the project tree: top-level files,
-    packages, src layouts, and modules one directory down (flat script
-    layouts like scripts/ or src/, whose files import their siblings)."""
+    packages, src layouts, and flat sibling layouts one directory down."""
     local: set[str] = set()
     for entry in sorted(root.iterdir()):
         if entry.is_dir() and entry.name.startswith("."):
             continue
-        if entry.is_dir() and (entry / "__init__.py").exists():
-            local.add(entry.name)
-        elif entry.is_dir() and (entry / "src").is_dir():
-            for sub in sorted((entry / "src").iterdir()):
-                if sub.is_dir() and (sub / "__init__.py").exists():
-                    local.add(sub.name)
+        if entry.is_dir():
+            _add_package_name(entry, local)
+            _add_src_layout_names(entry, local)
+            _add_flat_layout_names(entry, local)
         elif entry.suffix == ".py":
             local.add(entry.stem)
-        if entry.is_dir() and entry.name in SKIP_DIRS:
-            continue
-        if entry.is_dir() and not (entry / "__init__.py").exists():
-            # Flat sibling layout: modules beside the importer resolve
-            # when the interpreter runs from that directory.
-            for py in sorted(entry.glob("*.py")):
-                local.add(py.stem)
-            for nested in sorted(entry.iterdir()):
-                if (
-                    nested.is_dir()
-                    and nested.name not in SKIP_DIRS
-                    and not nested.name.startswith(".")
-                ):
-                    for py in sorted(nested.glob("*.py")):
-                        local.add(py.stem)
     return local
 
 
