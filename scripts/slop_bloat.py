@@ -30,19 +30,45 @@ from slop_structural import (
 
 
 def _param_count(header: str) -> int:
+    """Top-level parameters of a signature line.
+
+    Commas only split parameters at bracket depth zero AND angle depth
+    zero, so generic type arguments (`Map<String, Pair<A, B>>`) do not
+    inflate the count.
+    """
     group = _last_param_group(header)
     if group is None or not group.strip():
         return 0
     depth = 0
+    angle = 0
     params = 1
+    prev = ""
     for ch in group:
-        if ch in "([{":
-            depth += 1
-        elif ch in ")]}":
-            depth = max(0, depth - 1)
-        elif ch == "," and depth == 0:
-            params += 1
+        depth, angle, params, prev = _scan_param_char(ch, depth, angle, params, prev)
     return params
+
+
+def _scan_param_char(
+    ch: str, depth: int, angle: int, params: int, prev: str
+) -> tuple[int, int, int, str]:
+    """One character of the signature walk.
+
+    A `<` opens a generic only when glued to an identifier or a closing
+    `>` (nested generics), never a bare comparison like `a < b`; a `>`
+    closes only when a generic is open and the previous char is not `-`
+    (return arrows).
+    """
+    if ch in "([{":
+        depth += 1
+    elif ch in ")]}":
+        depth = max(0, depth - 1)
+    elif ch == "<" and angle == 0 and (prev.isalnum() or prev in "_>"):
+        angle = 1
+    elif ch == ">" and angle > 0 and prev != "-":
+        angle = 0
+    elif ch == "," and depth == 0 and angle == 0:
+        params += 1
+    return depth, angle, params, ch
 
 
 def _header_openers(code_lines: list[str]) -> list[tuple[int, str]]:
@@ -254,46 +280,52 @@ def _file_bloat_findings(
     return findings
 
 
-def _worst_block_findings(path: Path, blocks: list[dict]) -> list[Finding]:
-    """One finding per rule for the worst function block in the file."""
+def _block_findings(path: Path, blocks: list[dict]) -> list[Finding]:
+    """One finding for every block over a budget, in file order.
+
+    Reporting only the worst function hid the second, third and fourth
+    offender; every function past a budget gets its own line so a PR
+    review sees the full workload.
+    """
     findings: list[Finding] = []
-    worst_len = max(blocks, key=lambda b: b["length"])
-    worst_depth = max(blocks, key=lambda b: b["depth"])
-    worst_params = max(blocks, key=lambda b: _param_count(b["header_text"]))
-    if worst_len["length"] > GOD_FUNCTION_LINES:
-        findings.append(
-            Finding(
-                path=str(path),
-                line=worst_len["header"] + 1,
-                check="god-function",
-                message=f"function block spans {worst_len['length']} lines",
-                weight=1,
-                advisory=True,
+    ordered = sorted(blocks, key=lambda b: b["header"])
+    for block in ordered:
+        if block["length"] > GOD_FUNCTION_LINES:
+            findings.append(
+                Finding(
+                    path=str(path),
+                    line=block["header"] + 1,
+                    check="god-function",
+                    message=f"function block spans {block['length']} lines",
+                    weight=1,
+                    advisory=True,
+                )
             )
-        )
-    if worst_depth["depth"] > MAX_NESTING:
-        findings.append(
-            Finding(
-                path=str(path),
-                line=worst_depth["header"] + 1,
-                check="deep-nesting",
-                message=f"nests more than {MAX_NESTING} levels",
-                weight=1,
-                advisory=True,
+    for block in ordered:
+        if block["depth"] > MAX_NESTING:
+            findings.append(
+                Finding(
+                    path=str(path),
+                    line=block["header"] + 1,
+                    check="deep-nesting",
+                    message=f"nests more than {MAX_NESTING} levels",
+                    weight=1,
+                    advisory=True,
+                )
             )
-        )
-    params = _param_count(worst_params["header_text"])
-    if params > BLOAT_MAX_PARAMS:
-        findings.append(
-            Finding(
-                path=str(path),
-                line=worst_params["header"] + 1,
-                check="bloat-param-count",
-                message=f"{params} parameters (budget {BLOAT_MAX_PARAMS})",
-                weight=1,
-                advisory=True,
+    for block in ordered:
+        params = _param_count(block["header_text"])
+        if params > BLOAT_MAX_PARAMS:
+            findings.append(
+                Finding(
+                    path=str(path),
+                    line=block["header"] + 1,
+                    check="bloat-param-count",
+                    message=f"{params} parameters (budget {BLOAT_MAX_PARAMS})",
+                    weight=1,
+                    advisory=True,
+                )
             )
-        )
     return findings
 
 
@@ -314,5 +346,5 @@ def check_bloat(
         else _brace_blocks(_code_lines(text, family))
     )
     if blocks:
-        findings.extend(_worst_block_findings(path, blocks))
+        findings.extend(_block_findings(path, blocks))
     return findings

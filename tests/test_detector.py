@@ -907,3 +907,159 @@ def test_max_slop_score_gate_keeps_clean_project(tmp_path):
     scan(tmp_path, {"a.py": "def add(a, b):\n    return a + b\n"})
     rc = mod.main([str(tmp_path), "--max-score", "0", "--max-slop-score", "0"])
     assert rc == 0
+
+
+# Structural-correctness round: each test pins a defect that shipped in
+# earlier versions (comment braces, generic commas, worst-only reporting,
+# nesting contamination).
+
+
+def test_block_comment_braces_do_not_corrupt_blocks(tmp_path):
+    ts = (
+        "function ok() {\n"
+        "  /* comment with brace { { {\n"
+        "     still comment */\n"
+        "  return 1;\n"
+        "}\n"
+        "function two() {\n"
+        "  return 2;\n"
+        "}\n"
+    )
+    findings = scan(tmp_path, {"a.ts": ts})
+    # Both functions close at their own brace; the comment braces are inert.
+    god = [f for f in findings if f.check == "god-function"]
+    assert not god, "comment braces must not merge two small functions"
+
+
+def test_string_containing_comment_opener_is_code(tmp_path):
+    js = (
+        "function f() {\n"
+        '  const s = "/* fake { */";\n'
+        "  return s;\n"
+        "}\n"
+        "function g() {\n"
+        "  return 1;\n"
+        "}\n"
+    )
+    findings = scan(tmp_path, {"a.js": js})
+    assert not [f for f in findings if f.check == "god-function"]
+
+
+def test_rust_nested_block_comments_are_inert(tmp_path):
+    rs = (
+        "fn one() {\n"
+        "  /* outer /* inner { */ still outer { */\n"
+        "  let x = 1;\n"
+        "}\n"
+        "fn two() {\n"
+        "  let y = 2;\n"
+        "}\n"
+    )
+    findings = scan(tmp_path, {"a.rs": rs})
+    assert not [f for f in findings if f.check == "god-function"]
+
+
+def test_ruby_pod_comments_hold_no_phantom_defs(tmp_path):
+    rb = "=begin\ndef fake\nend\n=end\ndef real(a)\n  a + 1\nend\n"
+    findings = scan(tmp_path, {"a.rb": rb})
+    # The pod's `def fake`/`end` pair must not create an unclosed block
+    # that swallows `real` into a god-function finding.
+    assert not [f for f in findings if f.check == "god-function"]
+
+
+def test_php_attribute_lines_survive_comment_blanket(tmp_path):
+    php = (
+        "<?php\n"
+        '#[Route("/x")]\n'
+        "function ok(): int {\n"
+        "  return 1;\n"
+        "}\n"
+        "function two() {\n"
+        "  return 2;\n"
+        "}\n"
+    )
+    findings = scan(tmp_path, {"a.php": php})
+    assert not [f for f in findings if f.check == "god-function"]
+
+
+def test_generic_type_commas_do_not_inflate_params(tmp_path):
+    kt = (
+        "class P {\n"
+        "    fun process(map: Map<String, Pair<A, B>>, list: List<Int>, name: String) {\n"
+        "        go(map, list, name)\n"
+        "    }\n"
+        "}\n"
+    )
+    findings = scan(tmp_path, {"P.kt": kt})
+    assert not [f for f in findings if f.check == "bloat-param-count"]
+
+
+def test_generics_still_flag_real_param_bloat(tmp_path):
+    pair = "Dictionary<string, List<int>> item"
+    cs = (
+        "public class P {\n"
+        f"    public void M({pair}A, {pair}B, {pair}C, {pair}D, {pair}E, {pair}F, {pair}G) {{\n"
+        "        Do(A);\n"
+        "    }\n"
+        "}\n"
+    )
+    findings = scan(tmp_path, {"P.cs": cs})
+    flagged = [f for f in findings if f.check == "bloat-param-count"]
+    assert flagged and flagged[0].message.startswith("7 parameters")
+
+
+def test_rust_return_arrow_does_not_break_param_split(tmp_path):
+    rs = (
+        "fn f(callback: impl Fn(u32) -> Result<T, E>, name: &str) {\n"
+        "    let _ = (callback, name);\n"
+        "}\n"
+    )
+    findings = scan(tmp_path, {"a.rs": rs})
+    assert not [f for f in findings if f.check == "bloat-param-count"]
+
+
+def test_every_offender_reported_not_just_worst(tmp_path):
+    body = "\n".join(f"    step{i} = a + {i};" for i in range(90))
+    js = "function one(a) {\n" + body + "\n}\nfunction two(a) {\n" + body + "\n}\n"
+    findings = scan(tmp_path, {"big.js": js})
+    god = [f for f in findings if f.check == "god-function"]
+    assert len(god) == 2, "both over-budget functions must be reported"
+    assert {f.line for f in god} == {1, 93}
+
+
+def test_nested_def_depth_does_not_contaminate_parent(tmp_path):
+    code = (
+        "def outer():\n"
+        "    def inner():\n"
+        "        if a:\n"
+        "            if b:\n"
+        "                if c:\n"
+        "                    if d:\n"
+        "                        if e:\n"
+        "                            if f:\n"
+        "                                pass\n"
+        "    inner()\n"
+    )
+    findings = scan_py(tmp_path, code)
+    # inner (line 2) is over budget on its own; outer (line 1) must stay
+    # clean - its own depth is 0 now that the boundary is enforced.
+    nest = [f for f in findings if f.check == "deep-nesting"]
+    assert all(f.line != 1 for f in nest), "parent must not inherit inner's depth"
+    assert any(f.line == 2 for f in nest), "inner is legitimately over budget"
+
+
+def test_match_and_async_for_count_toward_nesting(tmp_path):
+    code = (
+        "def handler(x):\n"
+        "    match x:\n"
+        "        case 1:\n"
+        "            if x == 1:\n"
+        "                if True:\n"
+        "                    if True:\n"
+        "                        if True:\n"
+        "                            if True:\n"
+        "                                if True:\n"
+        "                                    pass\n"
+    )
+    findings = scan_py(tmp_path, code)
+    assert any(f.check == "deep-nesting" for f in findings)

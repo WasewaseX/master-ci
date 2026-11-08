@@ -57,14 +57,28 @@ def check_placeholder_impl(path: Path, text: str) -> list[Finding]:
     return []
 
 
+# Control-flow nodes a reader has to track as one more nesting level.
+_NESTING_NODES = (
+    ast.If,
+    ast.For,
+    ast.AsyncFor,
+    ast.While,
+    ast.With,
+    ast.AsyncWith,
+    ast.Try,
+    ast.Match,
+)
+# Nested definitions are measured on their own; their internal depth
+# must not contaminate the enclosing function's budget.
+_FUNC_BOUNDARY = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+
+
 def _nesting_depth(node: ast.AST, depth: int = 0) -> int:
     best = depth
     for child in ast.iter_child_nodes(node):
-        step = (
-            depth + 1
-            if isinstance(child, (ast.If, ast.For, ast.While, ast.With, ast.Try))
-            else depth
-        )
+        if isinstance(child, _FUNC_BOUNDARY):
+            continue
+        step = depth + 1 if isinstance(child, _NESTING_NODES) else depth
         best = max(best, _nesting_depth(child, step))
     return best
 
@@ -288,5 +302,5 @@ def _has_chained_dict_get(tree: ast.AST) -> bool:
 
 # Bloat budget: function, file and comment-pressure checks. Python is
 # measured through its AST; brace families through a line scanner; Ruby
-# through def/end pairing. Every check is advisory, one finding per
-# file per rule (the worst offender wins).
+# through def/end pairing. Every check is advisory, and every function
+# over a budget is reported - not just the worst one.

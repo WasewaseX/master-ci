@@ -682,7 +682,7 @@ jobs:
           advanced-security: false
       - name: Lint YAML
         run: |
-          pip install --quiet yamllint
+          pip install --quiet "$(python3 _ci/scripts/tool_versions.py pip yamllint)"
           yamllint -s -c _ci/configs/.yamllint.yaml .
       - name: Check editorconfig compliance
         # the pip package is legacy and no longer builds on Python 3.13;
@@ -717,8 +717,9 @@ jobs:
       - name: Detect duplicated code
         if: env.CODE_CHANGED == 'true'
         run: |
-          # jscpd@5: --formats was removed; extension detection is automatic
-          if npx --yes jscpd@5 --silent --min-tokens 50 --threshold "$DUP_THRESHOLD" \
+          # jscpd: exact pin from configs/tool-versions.yml - a new
+          # release must never change duplication behavior mid-CI
+          if npx --yes "jscpd@$(python3 _ci/scripts/tool_versions.py npm jscpd)" --silent --min-tokens 50 --threshold "$DUP_THRESHOLD" \
             --reporters console \
             --ignore "**/_ci/**,**/fixtures/**,**/node_modules/**,**/.git/**,**/dist/**,**/build/**,**/target/**" .; then
             exit 0
@@ -818,7 +819,7 @@ jobs:
       - name: Lint markdown
         run: |
           [ -f .markdownlint-cli2.jsonc ] || cp _ci/configs/.markdownlint-cli2.jsonc .
-          npx --yes markdownlint-cli2 "**/*.md" "!**/node_modules/**" \
+          npx --yes "markdownlint-cli2@$(python3 _ci/scripts/tool_versions.py npm markdownlint-cli2)" "**/*.md" "!**/node_modules/**" \
             "!**/_ci/**" "!**/fixtures/**" "!**/dist/**" "!**/build/**"
 
   # ---------------------------------------------------------------------------
@@ -834,16 +835,27 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Detect package manager
-        id: pm
+      - name: Fetch master-ci helpers
+        # Helper checkout moves ahead of discovery: workspace-aware Node
+        # analysis needs the template's project inventory script.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ needs.meta.outputs.template_repo }}
+          ref: ${{ needs.meta.outputs.template_ref }}
+          path: _ci
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Discover Node projects
+        # Nested package.json manifests used to trigger this job and then
+        # skip silently ("root manifests only"). Discovery makes every
+        # project explicit; --fail-empty turns a missing inventory into a
+        # loud failure instead of a green no-op.
         run: |
-          if [ -f pnpm-lock.yaml ]; then pm=pnpm
-          elif [ -f yarn.lock ]; then pm=yarn
-          else pm=npm
-          fi
-          echo "pm=$pm" >> "$GITHUB_OUTPUT"
+          python3 _ci/scripts/discover_projects.py --family node --format summary
+          python3 _ci/scripts/discover_projects.py --family node --list --fail-empty \
+            > "$RUNNER_TEMP/node-projects.txt"
       - name: Install pnpm
-        if: steps.pm.outputs.pm == 'pnpm'
+        if: hashFiles('**/pnpm-lock.yaml') != ''
         # pnpm is a build tool, not project code; version comes from the
         # consumer's lockfile compatibility, so this stays unversioned here.
         run: npm install --global pnpm # zizmor: ignore[adhoc-packages]
@@ -852,37 +864,24 @@ jobs:
           node-version: ${{ inputs.node_version }}
           cache: ${{ (hashFiles('**/pnpm-lock.yaml') != '' && 'pnpm') || (hashFiles('**/yarn.lock') != '' && 'yarn') || (hashFiles('**/package-lock.json') != '' && 'npm') || '' }}
       - name: Install dependencies
-        env:
-          PM: ${{ steps.pm.outputs.pm }}
         run: |
-          if [ ! -f package.json ]; then
-            echo "No package.json at repository root - skipping Node install"
-            exit 0
-          fi
-          # A lockfile is a contract: when one exists, install reproducibly
-          # and treat failures as real failures - never fall back behind a
-          # silent || to mutable dependency resolution.
-          case "$PM" in
-            pnpm)
-              if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile
-              else pnpm install; fi ;;
-            yarn)
-              if [ -f yarn.lock ]; then yarn install --immutable
-              else yarn install; fi ;;
-            npm)
-              if [ -f package-lock.json ]; then npm ci
-              else npm install; fi ;;
-          esac
-      - name: Fetch master-ci helpers
-        # node-lint now ships a default biome policy from the template, so
-        # it joins every other check job in fetching the helper checkout.
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ needs.meta.outputs.template_repo }}
-          ref: ${{ needs.meta.outputs.template_ref }}
-          path: _ci
-          fetch-depth: 1
-          persist-credentials: false
+          install_one() {
+            cd "$1"
+            # A lockfile is a contract: when one exists, install reproducibly
+            # and treat failures as real failures - never fall back behind a
+            # silent || to mutable dependency resolution.
+            if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile
+            elif [ -f yarn.lock ]; then yarn install --immutable
+            elif [ -f package-lock.json ]; then npm ci
+            else npm install
+            fi
+            cd "$GITHUB_WORKSPACE"
+          }
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            echo "Installing dependencies in $dir"
+            install_one "$dir"
+          done < "$RUNNER_TEMP/node-projects.txt"
       - name: Default biome policy (if absent)
         # Biome 2.x formats YAML and Markdown by default, which drags
         # consumer workflow files and prose into the Node stack's gate -
@@ -894,30 +893,44 @@ jobs:
           [ -f biome.jsonc ] || cp _ci/configs/biome.jsonc .
       - name: Lint (project script or biome)
         run: |
-          if [ ! -f package.json ]; then
-            echo "No package.json at repository root - Node stack supports root manifests only"
-            exit 0
-          fi
-          if node -e "process.exit(require('./package.json').scripts && require('./package.json').scripts.lint ? 0 : 1)"; then
-            npm run lint --silent
-          else
-            npx --yes @biomejs/biome ci --no-errors-on-unmatched .
-          fi
+          lint_one() {
+            cd "$1"
+            if node -e "process.exit(require('./package.json').scripts && require('./package.json').scripts.lint ? 0 : 1)"; then
+              npm run lint --silent
+            else
+              npx --yes "@biomejs/biome@$(python3 _ci/scripts/tool_versions.py npm @biomejs/biome)" ci --no-errors-on-unmatched .
+            fi
+            cd "$GITHUB_WORKSPACE"
+          }
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            echo "Linting $dir"
+            lint_one "$dir"
+          done < "$RUNNER_TEMP/node-projects.txt"
       - name: Type-check (tsc)
         run: |
-          if [ -f tsconfig.json ]; then
+          found=0
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            [ -f "$dir/tsconfig.json" ] || continue
+            found=1
+            cd "$dir"
             if [ -x node_modules/.bin/tsc ]; then
               node_modules/.bin/tsc --noEmit
             else
               npx --yes -p typescript tsc --noEmit
             fi
-          else
-            echo "No tsconfig.json - skipping tsc"
-          fi
+            cd "$GITHUB_WORKSPACE"
+          done < "$RUNNER_TEMP/node-projects.txt"
+          [ "$found" = 1 ] || echo "No tsconfig.json in any project - skipping tsc"
       - name: Flag unused dependencies (depcheck, advisory)
         run: |
-          npx --yes depcheck --ignores "@types/*,eslint*,prettier,biome*" \
-            || echo "::warning::depcheck flagged unused or missing dependencies (advisory)"
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            echo "Depchecking $dir"
+            (cd "$dir" && npx --yes "depcheck@$(python3 _ci/scripts/tool_versions.py npm depcheck)" --ignores "@types/*,eslint*,prettier,biome*") \
+              || echo "::warning::depcheck flagged unused or missing dependencies in $dir (advisory)"
+          done < "$RUNNER_TEMP/node-projects.txt"
 
   # ---------------------------------------------------------------------------
   # Node / TypeScript stack: tests
@@ -932,16 +945,21 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Detect package manager
-        id: pm
+      - name: Fetch master-ci helpers
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ needs.meta.outputs.template_repo }}
+          ref: ${{ needs.meta.outputs.template_ref }}
+          path: _ci
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Discover Node projects
         run: |
-          if [ -f pnpm-lock.yaml ]; then pm=pnpm
-          elif [ -f yarn.lock ]; then pm=yarn
-          else pm=npm
-          fi
-          echo "pm=$pm" >> "$GITHUB_OUTPUT"
+          python3 _ci/scripts/discover_projects.py --family node --format summary
+          python3 _ci/scripts/discover_projects.py --family node --list --fail-empty \
+            > "$RUNNER_TEMP/node-projects.txt"
       - name: Install pnpm
-        if: steps.pm.outputs.pm == 'pnpm'
+        if: hashFiles('**/pnpm-lock.yaml') != ''
         # pnpm is a build tool, not project code; version comes from the
         # consumer's lockfile compatibility, so this stays unversioned here.
         run: npm install --global pnpm # zizmor: ignore[adhoc-packages]
@@ -950,44 +968,43 @@ jobs:
           node-version: ${{ inputs.node_version }}
           cache: ${{ (hashFiles('**/pnpm-lock.yaml') != '' && 'pnpm') || (hashFiles('**/yarn.lock') != '' && 'yarn') || (hashFiles('**/package-lock.json') != '' && 'npm') || '' }}
       - name: Install dependencies
-        env:
-          PM: ${{ steps.pm.outputs.pm }}
         run: |
-          if [ ! -f package.json ]; then
-            echo "No package.json at repository root - skipping Node install"
-            exit 0
-          fi
-          # A lockfile is a contract: when one exists, install reproducibly
-          # and treat failures as real failures - never fall back behind a
-          # silent || to mutable dependency resolution.
-          case "$PM" in
-            pnpm)
-              if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile
-              else pnpm install; fi ;;
-            yarn)
-              if [ -f yarn.lock ]; then yarn install --immutable
-              else yarn install; fi ;;
-            npm)
-              if [ -f package-lock.json ]; then npm ci
-              else npm install; fi ;;
-          esac
+          install_one() {
+            cd "$1"
+            # A lockfile is a contract: when one exists, install reproducibly
+            # and treat failures as real failures - never fall back behind a
+            # silent || to mutable dependency resolution.
+            if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile
+            elif [ -f yarn.lock ]; then yarn install --immutable
+            elif [ -f package-lock.json ]; then npm ci
+            else npm install
+            fi
+            cd "$GITHUB_WORKSPACE"
+          }
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            echo "Installing dependencies in $dir"
+            install_one "$dir"
+          done < "$RUNNER_TEMP/node-projects.txt"
       - name: Run tests
-        env:
-          PM: ${{ steps.pm.outputs.pm }}
         run: |
-          if [ ! -f package.json ]; then
-            echo "No package.json at repository root - skipping Node tests"
-            exit 0
-          fi
-          if node -e "process.exit(require('./package.json').scripts && require('./package.json').scripts.test ? 0 : 1)"; then
-            case "$PM" in
-              pnpm) pnpm test ;;
-              yarn) yarn test ;;
-              *) npm test --silent ;;
-            esac
-          else
-            echo "No test script defined - skipping"
-          fi
+          test_one() {
+            cd "$1"
+            if node -e "process.exit(require('./package.json').scripts && require('./package.json').scripts.test ? 0 : 1)"; then
+              if [ -f pnpm-lock.yaml ]; then pnpm test
+              elif [ -f yarn.lock ]; then yarn test
+              else npm test --silent
+              fi
+            else
+              echo "No test script defined in $1 - skipping"
+            fi
+            cd "$GITHUB_WORKSPACE"
+          }
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            echo "Testing $dir"
+            test_one "$dir"
+          done < "$RUNNER_TEMP/node-projects.txt"
 
   # ---------------------------------------------------------------------------
   # Python stack: lint, format, types, dead code, complexity, tests
@@ -1020,7 +1037,11 @@ jobs:
       - name: Install tooling
         run: |
           python -m pip install --upgrade pip
-          python -m pip install --quiet ruff mypy vulture lizard pytest
+          # Exact pins from configs/tool-versions.yml: a new analyzer
+          # release must never change CI behavior silently. Bump pins by
+          # PR after validating the template's own gates.
+          python -m pip install --quiet \
+            "$(python3 _ci/scripts/tool_versions.py pip ruff mypy vulture lizard pytest)"
       - name: Ruff lint
         run: |
           { [ -f ruff.toml ] || [ -f .ruff.toml ]; } || \
@@ -1139,6 +1160,10 @@ jobs:
             echo "manifest=true" >> "$GITHUB_OUTPUT"
           else
             echo "manifest=false" >> "$GITHUB_OUTPUT"
+            nested=$(git ls-files '*/go.mod' | head -5 | tr '\n' ' ')
+            if [ -n "$nested" ]; then
+              echo "::warning::nested Go module(s) detected but this job analyzes root manifests only: $nested"
+            fi
             echo "No go.mod at repository root - Go stack supports root manifests only"
           fi
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -1187,6 +1212,10 @@ jobs:
             echo "manifest=true" >> "$GITHUB_OUTPUT"
           else
             echo "manifest=false" >> "$GITHUB_OUTPUT"
+            nested=$(git ls-files '*/go.mod' | head -5 | tr '\n' ' ')
+            if [ -n "$nested" ]; then
+              echo "::warning::nested Go module(s) detected but this job analyzes root manifests only: $nested"
+            fi
             echo "No go.mod at repository root - skipping Go build and tests"
           fi
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -1226,6 +1255,10 @@ jobs:
             echo "tool=gradle" >> "$GITHUB_OUTPUT"
           else
             echo "tool=none" >> "$GITHUB_OUTPUT"
+            nested=$(git ls-files '*pom.xml' '*build.gradle*' '*settings.gradle*' | head -5 | tr '\n' ' ')
+            if [ -n "$nested" ]; then
+              echo "::warning::nested JVM project(s) detected but this job analyzes root builds only: $nested"
+            fi
             echo "No pom.xml or Gradle build script at repository root - JVM stack supports root builds only"
           fi
       - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
@@ -1342,6 +1375,10 @@ jobs:
             echo "project=true" >> "$GITHUB_OUTPUT"
           else
             echo "project=false" >> "$GITHUB_OUTPUT"
+            nested=$(git ls-files '*/*.csproj' '*/*.fsproj' '*/*.sln' '*/*.slnx' | head -5 | tr '\n' ' ')
+            if [ -n "$nested" ]; then
+              echo "::warning::nested .NET project(s) detected but this job analyzes root projects only: $nested"
+            fi
             echo "No .sln or .csproj/.fsproj at repository root - .NET stack supports root projects only"
           fi
       - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
@@ -1393,6 +1430,10 @@ jobs:
             echo "project=true" >> "$GITHUB_OUTPUT"
           else
             echo "project=false" >> "$GITHUB_OUTPUT"
+            nested=$(git ls-files '*Gemfile' '*Rakefile' '*.gemspec' | head -5 | tr '\n' ' ')
+            if [ -n "$nested" ]; then
+              echo "::warning::nested Ruby project(s) detected but this job analyzes root projects only: $nested"
+            fi
             echo "No Gemfile, gemspec or Rakefile at repository root - Ruby stack supports root projects only"
           fi
       - uses: ruby/setup-ruby@b3aaceaef7e0ee231b499e7b5f49c03fc1d32199 # v1.338.0
@@ -1464,6 +1505,10 @@ jobs:
             echo "project=true" >> "$GITHUB_OUTPUT"
           else
             echo "project=false" >> "$GITHUB_OUTPUT"
+            nested=$(git ls-files '*/composer.json' | head -5 | tr '\n' ' ')
+            if [ -n "$nested" ]; then
+              echo "::warning::nested PHP project(s) detected but this job analyzes root projects only: $nested"
+            fi
             echo "No composer.json at repository root - PHP stack supports root projects only"
           fi
       - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2
@@ -1505,9 +1550,10 @@ jobs:
           fi
 
   # ---------------------------------------------------------------------------
-  # Docker stack: hadolint lint (advisory), one real image build, then an
-  # image-level Trivy scan whose exit code follows the same enforce_trivy
-  # flag as the filesystem scan in the security job (strict enforces).
+  # Docker stack: hadolint lint (advisory), a proof-build per tracked
+  # Dockerfile with size reporting, then an image-level Trivy scan whose
+  # exit code follows the same enforce_trivy flag as the filesystem scan
+  # in the security job (strict enforces).
   # ---------------------------------------------------------------------------
   docker:
     needs: [changes, meta]
@@ -1551,17 +1597,37 @@ jobs:
           if [ "$rc" -ne 0 ]; then
             echo "::warning::hadolint flagged Dockerfile issues (advisory in every profile; commit .hadolint.yaml to tune)"
           fi
-      - name: Build image (no push)
-        # builds the first Dockerfile in tracked order - the root one for
-        # the standard layout. Multi-arch publishing lives in
-        # release-docker.yml; this build proves the image still compiles.
+      - name: Build every Dockerfile (no push)
+        # One proof-build per tracked Dockerfile - not just the first:
+        # a repo with a root image plus service images used to prove only
+        # the root one compiles, and breakage elsewhere stayed green.
+        # The first tracked Dockerfile keeps the plain sha tag so the
+        # Trivy image scan below stays stable; every image gets a
+        # per-file tag and a size notice. Multi-arch publishing lives in
+        # release-docker.yml.
         if: steps.files.outputs.count != '0'
         env:
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          file=$(head -n1 dockerfiles.txt)
-          context=$(dirname "$file")
-          docker build --file "$file" --tag "master-ci-ci:$IMAGE_TAG" "$context"
+          first=1
+          built=0
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            safe=$(printf '%s' "$file" | tr '/' '-' | tr -c 'A-Za-z0-9._-' '-')
+            echo "Building $file"
+            context=$(dirname "$file")
+            if [ "$first" = 1 ]; then
+              docker build --file "$file" --tag "master-ci-ci:$IMAGE_TAG" \
+                --tag "master-ci-ci:$safe-$IMAGE_TAG" "$context"
+              first=0
+            else
+              docker build --file "$file" --tag "master-ci-ci:$safe-$IMAGE_TAG" "$context"
+            fi
+            size=$(docker image inspect "master-ci-ci:$safe-$IMAGE_TAG" --format '{{.Size}}')
+            echo "::notice::image $file built - $(numfmt --to=iec "$size" 2>/dev/null || echo "${size}B")"
+            built=$((built + 1))
+          done < dockerfiles.txt
+          echo "Built $built image(s)"
       - name: Scan the built image (Trivy)
         if: steps.files.outputs.count != '0'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -1610,7 +1676,7 @@ jobs:
         run: '[ -f .semgrepignore ] || cp _ci/configs/.semgrepignore .'
       - name: Semgrep static analysis
         run: |
-          pip install --quiet semgrep
+          pip install --quiet "$(python3 _ci/scripts/tool_versions.py pip semgrep)"
           read -ra packs <<< "$SEMGREP_PACKS"
           args=()
           for c in "${packs[@]}"; do

@@ -130,6 +130,35 @@ Profile presets (quick / standard / strict / custom) only change the
   navigation, not padding). Every bloat check is structurally advisory:
   `ADVISORY_ONLY_CHECKS` forces the flag, so no call site can make one
   fail a build.
+- **Structural correctness (v1.11):** the scanner and AST views obey
+  real language tokenization. Block comments (`/* */`, Rust/Swift nested,
+  Ruby `=begin/=end` pods) are blanked with a string-aware tokenizer
+  before brace analysis, so braces inside comments can no longer merge
+  or swallow function blocks. Parameter counting tracks generic angle
+  brackets (`Map<String, Pair<A, B>>`), Rust `->` arrows and JS
+  destructuring, so signature commas count parameters, not type
+  arguments. Every function over a budget is reported in file order -
+  not just the worst one per file. Python nesting counts `match`,
+  `async for` and `async with`, and nested `def`/lambda bodies are
+  measured on their own instead of contaminating the enclosing
+  function's depth.
+- **Workspace discovery (v1.11):** `scripts/discover_projects.py`
+  inventories independent projects per family (root manifests with
+  workspace semantics - npm/pnpm/yarn workspaces, `go.work`, Cargo
+  `[workspace]` - collapse to the root; every other manifest directory
+  is its own project). The Node jobs run install, lint, type-check and
+  tests per discovered project, and `--fail-empty` turns a
+  triggered-but-empty family into a loud failure instead of a green
+  no-op. Go, JVM, .NET, Ruby and PHP jobs still analyze root manifests
+  only, but emit a `::warning::` listing nested manifests they skip, so
+  no stack can silently do nothing.
+- **Pinned analyzers (v1.11):** `configs/tool-versions.yml` pins every
+  analyzer the template installs (ruff, mypy, vulture, lizard, pytest,
+  yamllint, semgrep, Biome, depcheck, markdownlint-cli2, jscpd);
+  `scripts/tool_versions.py` resolves the pins and errors on any
+  unpinned tool name. A new analyzer release can never change CI
+  behavior silently - bumps are reviewable PRs, and project-local tool
+  installs always win over template fallbacks.
 - **Agent-tell checks (advisory):** `chained-dict-get` flags chained
   `.get(..., {})` lookups in Python - a brittle agent shortcut that hides
   missing-data cases; normalize at the boundary instead. The design-sign

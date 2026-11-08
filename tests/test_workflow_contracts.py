@@ -412,8 +412,8 @@ def test_template_ref_fails_closed_for_foreign_callers():
     assert "ref: ${{ inputs.template_ref }}" not in text, (
         "helper checkouts must consume the resolved ref, not the raw input"
     )
-    assert text.count("ref: ${{ needs.meta.outputs.template_ref }}") == 7, (
-        "all seven helper checkouts must use the resolved ref"
+    assert text.count("ref: ${{ needs.meta.outputs.template_ref }}") == 8, (
+        "all eight helper checkouts must use the resolved ref"
     )
 
 
@@ -996,9 +996,14 @@ def test_docker_job_builds_and_scans_the_image_it_builds():
     text = "\n".join(str(s.get("run", "")) for s in docker["steps"])
     assert "hadolint-linux-x86_64" in text, "hadolint must be downloaded from its release"
     assert "sha256sum -c -" in text, "the hadolint download must be checksum-verified"
-    build = next(s for s in docker["steps"] if s.get("name", "").startswith("Build image"))
+    build = next(
+        s for s in docker["steps"] if s.get("name", "").startswith("Build every Dockerfile")
+    )
     assert build["env"]["IMAGE_TAG"] == "${{ github.sha }}", (
         "the built image must be tagged with the commit SHA"
+    )
+    assert 'docker build --file "$file" --tag "master-ci-ci:$IMAGE_TAG"' in build["run"], (
+        "every tracked Dockerfile must be built; the first keeps the sha tag the scan targets"
     )
     scan = next(s for s in docker["steps"] if str(s.get("uses", "")).startswith("aquasecurity"))
     with_block = scan.get("with", {})
