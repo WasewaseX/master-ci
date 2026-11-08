@@ -371,8 +371,11 @@ Profile presets (quick / standard / strict / custom) only change the
   `-coverprofile=cover.out`, Node via the project's own
   `test:coverage` script emitting Cobertura XML) and upload the report
   as an artifact; the dedicated `coverage-gate` job - which waits for
-  the coverage-producing stacks - downloads the reports and consumes
-  them through `scripts/coverage_gate.py` (standalone CLI), which
+  the coverage-producing stacks and runs only when at least one of
+  them actually executed (a no-code-change commit skips the stacks,
+  and "nothing changed" is not a coverage failure) - downloads the
+  reports and consumes them through `scripts/coverage_gate.py`
+  (standalone CLI), which
   parses all three dialects (Python `coverage.json`, Cobertura XML,
   Go `cover.out`) and renders a "Test assurance: measured coverage"
   table into the markdown report. The floor gates **every** report -

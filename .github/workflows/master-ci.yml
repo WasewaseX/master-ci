@@ -889,10 +889,12 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Coverage gate: measured test assurance, consumed after the stacks run.
-  # Runs only when coverage_min > 0; waits for the coverage-producing
-  # stacks (skipped stacks are fine - their artifact is simply absent,
-  # and the gate's own fail-closed discovery reports a floor with no
-  # report as exit 2).
+  # Runs only when coverage_min > 0 AND at least one coverage-producing
+  # stack actually ran: a commit that touched no code skips the stacks,
+  # and "nothing changed" is not a coverage failure. When a stack ran
+  # but produced no report, the gate fails closed (exit 2) - code
+  # changed with nothing measuring it is exactly what the floor exists
+  # to catch.
   # ---------------------------------------------------------------------------
   coverage-gate:
     needs: [meta, python, go-test, node-test]
@@ -901,6 +903,9 @@ jobs:
       && needs.python.result != 'failure'
       && needs.go-test.result != 'failure'
       && needs.node-test.result != 'failure'
+      && (needs.python.result == 'success'
+          || needs.go-test.result == 'success'
+          || needs.node-test.result == 'success')
       && needs.meta.outputs.coverage_min != '0'
       && needs.meta.outputs.coverage_min != ''
     runs-on: ${{ inputs.runs_on }}
