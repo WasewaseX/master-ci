@@ -21,6 +21,10 @@ REMEDIES = {
         "Group the parameters into an options object or struct; more than "
         "six parameters is unreadable at the call site"
     ),
+    "high-cyclomatic": (
+        "Split the function along its decision axes; complexity 15+ resists "
+        "review, testing and safe change"
+    ),
     "bloat-comment-ratio": (
         "Delete comments that narrate the code; keep only the ones that "
         "explain intent or constraints"
@@ -218,6 +222,7 @@ STRUCTURAL_BUDGET_CHECKS = frozenset(
         "god-function",
         "deep-nesting",
         "chained-dict-get",
+        "high-cyclomatic",
     }
 )
 
@@ -244,6 +249,7 @@ ADVISORY_ONLY_CHECKS = frozenset(
     {
         "god-function",
         "deep-nesting",
+        "high-cyclomatic",
         "mutable-default",
         "star-import",
         "unwrap-density",

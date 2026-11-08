@@ -81,7 +81,7 @@ which keeps its baseline reproducible across template releases:
 ```yaml
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v1.18.0
+      template_ref: v1.19.0
 ```
 
 ### Required check
@@ -317,7 +317,7 @@ Advisory rules (never fail a build; reported, annotated, SARIF `warning`):
 |---|---|
 | Dependency hygiene | `phantom-import` (unused), `undeclared-import` (not stdlib/local/manifest - the slopsquatting guard), `star-import`, `mutable-default` |
 | Suppression abuse | `lint-escape`, `blanket-suppression`, `ts-suppression` |
-| Code smells | `god-function` (>100 lines, every language family), `deep-nesting` (>5 levels, every family), `bloat-long-file` (>400 lines), `bloat-param-count` (>7 parameters), `bloat-comment-ratio` (>50% comments), `bloat-banner-comments` (bunched banner padding), `placeholder-naming`, `debug-print`, `unwrap-density`, `go-error-assigned-blank` |
+| Code smells | `god-function` (>80 non-comment lines, unified lizard parse), `high-cyclomatic` (complexity >15, every parsed language), `deep-nesting` (>5 levels, every family), `bloat-long-file` (>400 lines), `bloat-param-count` (>6 parameters), `bloat-comment-ratio` (>50% comments), `bloat-banner-comments` (bunched banner padding), `placeholder-naming`, `debug-print`, `unwrap-density`, `go-error-assigned-blank` |
 | Credentials | `placeholder-credential` (fake keys gitleaks ignores) |
 | UI slop | `ui-ai-gradient`, `ui-gradient-text`, `ui-marketing-copy`, `ui-placeholder-copy`, `ui-emoji-decor`, `ui-eyebrow-label`, `ui-italic-serif-hero`, `ui-fake-stats`, `ui-generic-testimonial`, `ui-not-just-x`, `ui-triple-slogan`, `ui-glass-glow`, `ui-decorative-numbering`, `ui-placeholder-image`, `ui-identical-cards`, `ui-em-dash-overuse` |
 | Prose | `ai-prose`, `humanizer`, `em-dash-density`, `rule-of-three`, `rhetorical-questions`, `exclamations`, `md-emoji-headings`, `md-residue`, `step-comments`, `placeholder-note` |
@@ -620,7 +620,7 @@ carries a `SKILL.md`, so assistants with a skills directory can load it
 with one command:
 
 ```bash
-git clone --depth 1 --branch v1.18.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+git clone --depth 1 --branch v1.19.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
 ```
 
 MCP clients configure the same install like this:
@@ -782,8 +782,8 @@ understanding software, not stacking thirty more regex checks:
 | # | Priority | Status |
 |---|---|---|
 | 1 | Fail-closed architecture configuration | **done (v1.18)** - invalid configs exit 2, never silently skip |
-| 2 | Unified syntax-tree analysis across languages | planned - one tree model instead of per-language regex |
-| 3 | Cognitive complexity across languages | partially - cyclomatic gate (lizard) today, cognitive next |
+| 2 | Unified syntax-tree analysis across languages | **done (v1.19)** - lizard parse facts behind every structural budget, line scanner only as fallback |
+| 3 | Cognitive complexity across languages | partially - cyclomatic in every parsed language (v1.19), cognitive next |
 | 4 | Coverage and mutation testing | planned - test-assurance dimension goes from inventory to proof |
 | 5 | Full monorepo project discovery | partially - `discover_projects.py` first pass, manifest-aware next |
 | 6 | Native dependency and dead-code analysis | partially - import graph, unused declarations/dependencies today |

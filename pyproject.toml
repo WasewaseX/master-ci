@@ -7,7 +7,9 @@ extend-exclude = ["_ci", "fixtures"]
 [dependency-groups]
 # pyyaml backs the optional live filter loading in path_filters.py and
 # tool_versions.py; both fall back to bundled JSON when it is absent.
-scanner = ["pyyaml>=6.0"]
+# lizard backs the unified syntax-tree parse in slop_lizard.py; without
+# it the structural budgets degrade to the line scanner.
+scanner = ["pyyaml>=6.0", "lizard>=1.17"]
 # the contract-test suite (tests/) runs under stock pytest.
 test = ["pytest>=8.0"]
 

@@ -108,11 +108,12 @@ Profile presets (quick / standard / strict / custom) only change the
   CLEAN/SUSPICIOUS boundary). The gate is armed by the profile: `standard`
   and `strict` enforce it, `quick` reports only, `custom` follows the raw
   `fail_on_ai_slop` input. Blocking signals are the deterministic content
-  checks; `strict` additionally passes `--enforce-bloat`, escalating the
-  structural-budget family (`bloat-long-file`, `bloat-param-count`,
+  checks; `strict` additionally passes `--enforce-bloat`, escalating
+  the structural-budget family (`bloat-long-file`, `bloat-param-count`,
   `bloat-comment-ratio`, `bloat-banner-comments`, `god-function`,
-  `deep-nesting`, `chained-dict-get`) from advisory to blocking - file
-  size, parameter and comment budgets fail the PR outright. `strict`
+  `deep-nesting`, `chained-dict-get`, `high-cyclomatic`) from advisory
+  to blocking - file size, parameter, comment and complexity budgets
+  fail the PR outright. `strict`
   also tightens the caps to `ai_slop_max=4` / ceiling `20`.
 - **False positives:** domain vocabulary overlapping the phrase list;
   abstract methods that raise NotImplementedError; intentional emoji.
@@ -125,11 +126,14 @@ Profile presets (quick / standard / strict / custom) only change the
 - **Bloat budget (advisory):** the anti-bloatware guard for machine-written
   padding - code that does 100 lines of work in 300, aligned with
   scanaislop.com's quality bar. `bloat-long-file` (over 400 non-blank
-  lines, test files exempt), `god-function` (a function over 80 lines,
-  enforced across every language family: Python through its AST, brace
-  languages through a conservative scanner, Ruby through def/end pairing),
+  lines, test files exempt), `god-function` (a function over 80
+  non-comment lines, measured through the unified lizard parse in
+  every parsed family - Python keeps the same budget through its AST),
   `deep-nesting` (over 5 levels in every family), `bloat-param-count`
-  (over 6 parameters), `bloat-comment-ratio` (over half the file is
+  (over 6 parameters, read from the real signature), `high-cyclomatic`
+  (cyclomatic complexity over 15 - the same ceiling the CI gate
+  enforces - in every parsed language), `bloat-comment-ratio` (over
+  half the file is
   comments in substantial files) and `bloat-banner-comments` (decorative
   banner blocks bunched together - spread-out section dividers are
   navigation, not padding). Every bloat check is structurally advisory:
@@ -258,6 +262,28 @@ Profile presets (quick / standard / strict / custom) only change the
   pattern module under the same 400-line budget the detector enforces
   on others, and the unknown-directive scan now strips string literals
   first so regex tables cannot self-report.
+- **v1.19 - unified syntax-tree analysis:** the structural budgets are
+  parse-backed, not regex-guessed. `slop_lizard.py` runs lizard (the
+  same mature analyzer the CI complexity gate uses) over every parsed
+  family - Python, JS/TS/JSX/TSX, Go, JVM, C#, C/C++, Ruby, PHP, Rust,
+  Swift, Dart - and reduces each file to shared function facts: name,
+  start line, nloc (non-comment, non-blank lines), cyclomatic
+  complexity, parameter count. `god-function` now measures honest nloc,
+  so comment padding can no longer pass a length budget and blank
+  lines cannot convict dense code; `bloat-param-count` reads real
+  parameter lists (generic type arguments never inflate them); and the
+  new `high-cyclomatic` reports any function over the same complexity
+  15 ceiling the CI gate enforces, in every parsed language - Python
+  included, where it joins the AST-backed length/nesting/parameter
+  checks. When no parse exists - the optional analyzer is missing, the
+  file is SFC markup (.vue/.svelte/.astro), or the source is too
+  malformed for the lexer - the line scanner takes over and the
+  message says so ("function block spans"): a missing analyzer
+  degrades the measurement, it never drops the check. Nesting stays on
+  the line scanner either way; it is the one function fact the parser
+  does not carry. A related accuracy fix: a *scoped* `# type:
+  ignore[code]` names its rule and no longer counts toward
+  `blanket-suppression` - only bare suppressions do.
 - **Round-7 scanaislop adoption (blocking-grade, opt-in):** the
   "Custom Architecture Rules" from the scanaislop docs. A
   `.ai-integrity-arch.json` at the scan root declares the project's

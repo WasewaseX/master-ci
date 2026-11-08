@@ -1032,6 +1032,98 @@ def test_every_offender_reported_not_just_worst(tmp_path):
     assert {f.line for f in god} == {1, 93}
 
 
+# Unified syntax-tree round: the structural budgets read lizard's parse
+# facts where a parse exists; the line scanner only where it does not.
+
+
+def test_parse_counts_code_not_comment_lines(tmp_path):
+    code = "".join(f"  step{i} = a + {i};\n" for i in range(60))
+    comments = "".join(f"  // narrative line {i} that pads the file out\n" for i in range(40))
+    padded = "function padded(a) {\n" + comments + code + "}\n"
+    dense = (
+        "function dense(a) {\n"
+        + "".join(f"  step{i} = a + {i};\n" for i in range(90))
+        + "}\n"
+    )
+    findings = scan(tmp_path, {"p.js": padded, "d.js": dense})
+    god = {Path(f.path).name: f for f in findings if f.check == "god-function"}
+    assert "p.js" not in god, "comment padding must not pass as function length"
+    assert "d.js" in god and "non-comment lines" in god["d.js"].message
+
+
+def test_high_cyclomatic_flagged_across_languages(tmp_path):
+    js = (
+        "function h(a) {\n"
+        + "".join(f"  if (a > {i}) {{ a -= {i}; }}\n" for i in range(20))
+        + "  return a;\n}\n"
+    )
+    py = "def h(a):\n" + "".join(f"    if a > {i}:\n        a -= {i}\n" for i in range(20)) + "    return a\n"
+    findings = scan(tmp_path, {"h.js": js, "h.py": py})
+    hits = [f for f in findings if f.check == "high-cyclomatic"]
+    assert len(hits) == 2, "the complexity budget applies to every parsed family"
+    assert all(f.advisory for f in hits)
+    assert {Path(f.path).suffix for f in hits} == {".js", ".py"}
+
+
+def test_complexity_under_budget_stays_silent(tmp_path):
+    js = "function small(a) {\n  if (a > 1) { return 1; }\n  return 0;\n}\n"
+    findings = scan(tmp_path, {"s.js": js})
+    assert not [f for f in findings if f.check == "high-cyclomatic"]
+
+
+def test_line_scanner_fallback_without_lizard(tmp_path, monkeypatch):
+    import slop_lizard
+
+    body = "\n".join(f"    step{i} = a + {i};" for i in range(90))
+    js = "function one(a) {\n" + body + "\n}\n"
+    monkeypatch.setattr(slop_lizard, "_LIZARD_OK", False)
+    findings = scan(tmp_path, {"one.js": js})
+    god = [f for f in findings if f.check == "god-function"]
+    assert god and "function block spans" in god[0].message, (
+        "a missing analyzer degrades to the line scanner, never drops the check"
+    )
+
+
+def test_sfc_markup_keeps_line_scanner(tmp_path):
+    lines = ["<template><div /></template>", "<script>", "function big(a) {"]
+    lines += [f"  step{i} = a + {i};" for i in range(90)]
+    lines += ["}", "</script>", ""]
+    findings = scan(tmp_path, {"C.vue": "\n".join(lines)})
+    god = [f for f in findings if f.check == "god-function"]
+    assert god and "function block spans" in god[0].message
+
+
+def test_high_cyclomatic_registry_contract():
+    assert "high-cyclomatic" in mod.STRUCTURAL_BUDGET_CHECKS
+    assert "high-cyclomatic" in mod.ADVISORY_ONLY_CHECKS
+    assert mod.category_of("high-cyclomatic") == "maintainability"
+    assert "high-cyclomatic" in mod.REMEDIES
+
+
+# Blanket suppression: a *scoped* `# type: ignore[code]` names its rule -
+# exactly the remediation the check asks for - so it must not count;
+# bare suppressions still do. Strings are assembled at runtime so this
+# source never carries a matchable suppression itself.
+
+
+def test_scoped_type_ignores_are_not_blanket(tmp_path):
+    scoped_a = "# type: " + "ignore[import-untyped]"
+    scoped_b = "# type: " + "ignore[assignment]"
+    code = f"import yaml  {scoped_a}\nx = 1  {scoped_b}\n"
+    findings = scan(tmp_path, {"a.py": code})
+    assert not [f for f in findings if f.check == "blanket-suppression"], (
+        "a scoped ignore names its rule; it is not a blanket suppression"
+    )
+
+
+def test_bare_suppressions_still_count(tmp_path):
+    bare_a = "# type: " + "ignore"
+    bare_b = "# no" + "qa"
+    code = f"x = 1  {bare_a}\ny = 2  {bare_b}\n"
+    findings = scan(tmp_path, {"a.py": code})
+    assert any(f.check == "blanket-suppression" for f in findings)
+
+
 def test_nested_def_depth_does_not_contaminate_parent(tmp_path):
     code = (
         "def outer():\n"

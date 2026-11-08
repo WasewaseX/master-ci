@@ -208,7 +208,8 @@ TS_SUPPRESSION = re.compile(
     r"|\bas\s+unknown\s+as\b|\bas\s+any\b"
 )
 BLANKET_SUPPRESS = re.compile(
-    r"(?://|/\*)\s*eslint-disable(?:\s|$)|#\s*noqa(?!\s*:)|#\s*type:\s*ignore\b"
+    r"(?://|/\*)\s*eslint-disable(?:\s|$)|#\s*noqa(?!\s*:)"
+    r"|#\s*type:\s*ignore\b(?!\s*\[)"
     r"|#\s*type: ignore\s*#|nolint\b",
     re.IGNORECASE,
 )

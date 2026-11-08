@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 from slop_files import is_test_path
+from slop_lizard import COMPLEXITY_BUDGET, FunctionFact, parse_functions
 from slop_model import Comment, Finding
 from slop_structural import (
     BANNER_DECO,
@@ -280,16 +281,15 @@ def _file_bloat_findings(
     return findings
 
 
-def _block_findings(path: Path, blocks: list[dict]) -> list[Finding]:
-    """One finding for every block over a budget, in file order.
+def _length_param_findings(path: Path, blocks: list[dict]) -> list[Finding]:
+    """Line-scanner budgets: block length and signature parameter count.
 
     Reporting only the worst function hid the second, third and fourth
     offender; every function past a budget gets its own line so a PR
     review sees the full workload.
     """
     findings: list[Finding] = []
-    ordered = sorted(blocks, key=lambda b: b["header"])
-    for block in ordered:
+    for block in sorted(blocks, key=lambda b: b["header"]):
         if block["length"] > GOD_FUNCTION_LINES:
             findings.append(
                 Finding(
@@ -301,19 +301,6 @@ def _block_findings(path: Path, blocks: list[dict]) -> list[Finding]:
                     advisory=True,
                 )
             )
-    for block in ordered:
-        if block["depth"] > MAX_NESTING:
-            findings.append(
-                Finding(
-                    path=str(path),
-                    line=block["header"] + 1,
-                    check="deep-nesting",
-                    message=f"nests more than {MAX_NESTING} levels",
-                    weight=1,
-                    advisory=True,
-                )
-            )
-    for block in ordered:
         params = _param_count(block["header_text"])
         if params > BLOAT_MAX_PARAMS:
             findings.append(
@@ -329,6 +316,92 @@ def _block_findings(path: Path, blocks: list[dict]) -> list[Finding]:
     return findings
 
 
+def _nesting_findings(path: Path, blocks: list[dict]) -> list[Finding]:
+    """Control-nesting budget, shared by the parse and scanner paths."""
+    findings: list[Finding] = []
+    for block in sorted(blocks, key=lambda b: b["header"]):
+        if block["depth"] > MAX_NESTING:
+            findings.append(
+                Finding(
+                    path=str(path),
+                    line=block["header"] + 1,
+                    check="deep-nesting",
+                    message=f"nests more than {MAX_NESTING} levels",
+                    weight=1,
+                    advisory=True,
+                )
+            )
+    return findings
+
+
+def _block_findings(path: Path, blocks: list[dict]) -> list[Finding]:
+    """Every scanner-path budget for one file's function blocks."""
+    return _length_param_findings(path, blocks) + _nesting_findings(path, blocks)
+
+
+def _fact_findings(
+    path: Path,
+    facts: list[FunctionFact],
+    kinds: tuple[str, ...],
+) -> list[Finding]:
+    """Parse-backed budgets: honest length, real parameter count, complexity.
+
+    nloc counts non-comment, non-blank lines, so comment padding cannot
+    pass a length budget and blank lines cannot convict dense code.
+    `kinds` selects the budgets: Python keeps AST-backed length/nesting/
+    parameter checks and takes only the complexity budget from the parse.
+    """
+    findings: list[Finding] = []
+    for fact in facts:
+        if "god-function" in kinds and fact.nloc > GOD_FUNCTION_LINES:
+            findings.append(
+                Finding(
+                    path=str(path),
+                    line=fact.line,
+                    check="god-function",
+                    message=(
+                        f"function {fact.name!r} uses {fact.nloc} "
+                        f"non-comment lines (budget {GOD_FUNCTION_LINES})"
+                    ),
+                    weight=1,
+                    advisory=True,
+                )
+            )
+        if "bloat-param-count" in kinds and fact.params > BLOAT_MAX_PARAMS:
+            findings.append(
+                Finding(
+                    path=str(path),
+                    line=fact.line,
+                    check="bloat-param-count",
+                    message=f"{fact.params} parameters (budget {BLOAT_MAX_PARAMS})",
+                    weight=1,
+                    advisory=True,
+                )
+            )
+        if "high-cyclomatic" in kinds and fact.ccn > COMPLEXITY_BUDGET:
+            findings.append(
+                Finding(
+                    path=str(path),
+                    line=fact.line,
+                    check="high-cyclomatic",
+                    message=(
+                        f"cyclomatic complexity {fact.ccn} "
+                        f"(budget {COMPLEXITY_BUDGET}) - split along its decision axes"
+                    ),
+                    weight=1,
+                    advisory=True,
+                )
+            )
+    return findings
+
+
+def _family_blocks(text: str, family: str) -> list[dict]:
+    """Function blocks from the line scanner (nesting source, fallback path)."""
+    if family == "ruby":
+        return _ruby_def_blocks(_code_lines(text, family))
+    return _brace_blocks(_code_lines(text, family))
+
+
 def check_bloat(
     path: Path,
     text: str,
@@ -336,15 +409,32 @@ def check_bloat(
     rel: str,
     comments: list[Comment],
 ) -> list[Finding]:
-    """File-level and function-level bloat budget checks (all advisory)."""
+    """File-level and function-level bloat budget checks (all advisory).
+
+    Function-level budgets run on the unified lizard parse wherever a
+    parse exists; the line scanner takes over where it does not. Nesting
+    is judged from the line scanner either way: it is the one function
+    fact the parser does not carry.
+    """
     findings = _file_bloat_findings(path, text, comments, rel)
+    facts = parse_functions(str(path), text)
     if family == "py":
+        # Python's length, nesting and parameter budgets are AST-backed in
+        # slop_py_checks; the parse adds only the complexity budget.
+        if facts is not None:
+            findings.extend(_fact_findings(path, facts, kinds=("high-cyclomatic",)))
         return findings
-    blocks = (
-        _ruby_def_blocks(_code_lines(text, family))
-        if family == "ruby"
-        else _brace_blocks(_code_lines(text, family))
-    )
+    if facts is not None:
+        findings.extend(
+            _fact_findings(
+                path,
+                facts,
+                kinds=("god-function", "bloat-param-count", "high-cyclomatic"),
+            )
+        )
+        findings.extend(_nesting_findings(path, _family_blocks(text, family)))
+        return findings
+    blocks = _family_blocks(text, family)
     if blocks:
         findings.extend(_block_findings(path, blocks))
     return findings
