@@ -136,6 +136,14 @@ REMEDIES = {
         "Add tests for the source files, or move generated vendored code "
         "behind an interface and ignore the directory"
     ),
+    "unused-declaration": (
+        "Delete it or wire it in; a definition nothing references is dead "
+        "weight the next reader must still understand"
+    ),
+    "unused-dependency": (
+        "Remove the dependency from the manifest or add the import that "
+        "justifies it; declared weight slows every install"
+    ),
 }
 BLOCKING_CHECKS = frozenset(
     {
@@ -244,6 +252,10 @@ ADVISORY_ONLY_CHECKS = frozenset(
         "ui-triple-slogan",
         "ui-glass-glow",
         "ui-decorative-numbering",
+        # scanaislop round-4 adoption: repo-level deadness. Only a name
+        # whose occurrences are exactly its own definition is reported.
+        "unused-declaration",
+        "unused-dependency",
     }
 )
 

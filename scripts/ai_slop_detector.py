@@ -29,6 +29,10 @@ from slop_comments import (  # noqa: F401
     phrase_findings,
     scan_comment_vocabulary,
 )
+from slop_dead import (  # noqa: F401
+    check_unused_declarations,
+    check_unused_dependencies,
+)
 from slop_duplicates import (  # noqa: F401
     MIN_SOURCES_FOR_INVENTORY,
     PROVENANCE_MARKERS,
@@ -286,6 +290,8 @@ def scan(
             )
         )
     findings.extend(scan_duplicates(files))
+    findings.extend(check_unused_declarations(root, files, globs))
+    findings.extend(check_unused_dependencies(root, files))
     findings.extend(check_unknown_directives(root, files, globs))
     if provenance:
         findings.extend(inventory_findings(root, files, globs))

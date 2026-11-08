@@ -210,6 +210,28 @@ Profile presets (quick / standard / strict / custom) only change the
   marketing-catchphrase set from noqode's copy signs: urgency filler
   ("look no" + "further"), power verbs paired with "your", the
   "not just X" pivot, and hustle-culture scene setting.
+- **Round-4 scanaislop adoption (advisory):** the repo-level deadness
+  tranche from scanaislop.com's catalog (`code-quality/unused-declaration`
+  and the knip family `knip/unused-export` / `knip/unused-dependency`,
+  plus the main site's "Unused helpers" headline signal). Deadness is a
+  property of the repository, not of a file, so both checks run once per
+  scan, not once per file. `unused-declaration` reports a module-level
+  Python def/class or a JS/TS export whose bare name appears exactly once
+  in the whole repository - its own definition site. Any other mention
+  anywhere (another source file, a test, a doc, a workflow, even a
+  string) is accepted as a reference, so the false-positive rate stays
+  near zero at the cost of missing dynamically-dispatched dead code.
+  Test files are candidates for neither harvest, because test runners
+  discover tests by name; they still count as usage oracles for
+  everything else. Dunders and `main` are exempt. `unused-dependency`
+  reports a runtime dependency that no source file ever imports:
+  `[project] dependencies` in pyproject.toml (dev groups are exempt) and
+  `dependencies`/`peerDependencies` in package.json (`devDependencies`
+  are exempt). Dist-to-import aliasing is handled (PyYAML->yaml,
+  python-dateutil->dateutil, ...) and entry-point-style servers
+  (gunicorn, uvloop, ...) are allowlisted. Both checks cap at 8 findings
+  per scan and are disabled by design when the scan root is a single
+  file.
 - **Scoring refinements (scanaislop-aligned):** advisory pressure is
   tier-weighted - maintainability debts (bloat, god-function, deep
   nesting, dispatch ladders) press at 0.75x, mechanical residue

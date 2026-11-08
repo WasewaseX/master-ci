@@ -48,7 +48,10 @@ def test_slop_detected(tmp_path):
 
 
 def test_clean_code(tmp_path):
-    findings = scan(tmp_path, {"y.py": "def add(a, b):\n    return a + b\n"})
+    # The fixture must reference its own definition: since round-4 the
+    # detector reports repo-level deadness, and an unreferenced def IS
+    # a finding now.
+    findings = scan(tmp_path, {"y.py": "def add(a, b):\n    return a + b\n\nprint(add(1, 2))\n"})
     assert not findings
 
 
@@ -906,7 +909,7 @@ def test_max_slop_score_gate_fails_dirty_project(tmp_path):
 
 
 def test_max_slop_score_gate_keeps_clean_project(tmp_path):
-    scan(tmp_path, {"a.py": "def add(a, b):\n    return a + b\n"})
+    scan(tmp_path, {"a.py": "def add(a, b):\n    return a + b\n\nprint(add(1, 2))\n"})
     rc = mod.main([str(tmp_path), "--max-score", "0", "--max-slop-score", "0"])
     assert rc == 0
 
@@ -1251,3 +1254,109 @@ def test_unknown_directive_respects_ignore_globs(tmp_path):
     (tmp_path / "vendored" / "old.py").write_text(code, encoding="utf-8")
     findings = mod.scan(tmp_path, mod.load_phrases())
     assert not any(f.check == "unknown-directive" for f in findings)
+
+
+# scanaislop round-4: repo-level deadness (unused-declaration and
+# unused-dependency). Deadness is a repo property: fixtures are two-file.
+
+
+def test_unused_declaration_fires_on_dead_helper(tmp_path):
+    findings = scan(tmp_path, {"app.py": "def orphan_helper():\n    return 42\n"})
+    hits = [f for f in findings if f.check == "unused-declaration"]
+    assert len(hits) == 1
+    assert hits[0].advisory
+    assert "orphan_helper" in hits[0].message
+
+
+def test_unused_declaration_survives_cross_file_reference(tmp_path):
+    findings = scan(
+        tmp_path,
+        {
+            "lib.py": "def used_helper():\n    return 42\n",
+            "app.py": "from lib import used_helper\n\nprint(used_helper())\n",
+        },
+    )
+    assert not [f for f in findings if f.check == "unused-declaration"]
+
+
+def test_unused_declaration_survives_same_file_call(tmp_path):
+    findings = scan(
+        tmp_path,
+        {"app.py": "def used_helper():\n    return 42\n\nprint(used_helper())\n"},
+    )
+    assert not [f for f in findings if f.check == "unused-declaration"]
+
+
+def test_unused_declaration_skips_tests_dunders_and_main(tmp_path):
+    findings = scan(
+        tmp_path,
+        {
+            "test_helpers.py": "def dead_test_helper():\n    return 1\n",
+            "app.py": "def __dunder__():\n    return 2\n\ndef main():\n    return 3\n",
+        },
+    )
+    assert not [f for f in findings if f.check == "unused-declaration"]
+
+
+def test_js_dead_export_fires_and_live_export_survives(tmp_path):
+    dead = "export function deadExport() {\n  return 1;\n}\n"
+    live_lib = "export function liveExport() {\n  return 2;\n}\n"
+    importer = "import { liveExport } from './lib.js';\n\nconsole.log(liveExport());\n"
+    findings = scan(tmp_path, {"dead.js": dead, "lib.js": live_lib, "main.js": importer})
+    hits = [f for f in findings if f.check == "unused-declaration"]
+    assert len(hits) == 1 and "deadExport" in hits[0].message
+
+
+def test_unused_dependency_fires_on_never_imported_runtime_dep(tmp_path):
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "x"\nversion = "0.1.0"\n'
+        'dependencies = [\n  "requests",\n  "click",\n]\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "app.py").write_text("import click\n\nprint(click)\n", encoding="utf-8")
+    findings = scan(tmp_path, {"app.py": "import click\n\nprint(click)\n"})
+    hits = [f for f in findings if f.check == "unused-dependency"]
+    assert len(hits) == 1 and "requests" in hits[0].message
+    assert hits[0].path.endswith("pyproject.toml")
+
+
+def test_unused_dependency_ignores_alias_and_dev_tables(tmp_path):
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "x"\nversion = "0.1.0"\n'
+        'dependencies = [\n  "PyYAML",\n  "gunicorn",\n]\n'
+        '\n[dependency-groups]\ndev = [\n  "pytest",\n]\n',
+        encoding="utf-8",
+    )
+    findings = scan(tmp_path, {"app.py": "import yaml\n\nprint(yaml)\n"})
+    assert not [f for f in findings if f.check == "unused-dependency"]
+
+
+def test_unused_js_dependency_fires_and_dev_ignored(tmp_path):
+    (tmp_path / "package.json").write_text(
+        '{"dependencies": {"left-pad": "1.0.0"}, "devDependencies": {"vitest": "1.0.0"}}',
+        encoding="utf-8",
+    )
+    findings = scan(tmp_path, {"app.js": "const v = 1;\nconsole.log(v);\n"})
+    hits = [f for f in findings if f.check == "unused-dependency"]
+    assert len(hits) == 1 and "left-pad" in hits[0].message
+
+
+def test_unused_js_dependency_survives_scoped_import(tmp_path):
+    (tmp_path / "package.json").write_text(
+        '{"dependencies": {"@org/kit": "1.0.0"}}',
+        encoding="utf-8",
+    )
+    findings = scan(
+        tmp_path, {"app.js": "import { thing } from '@org/kit';\nconsole.log(thing);\n"}
+    )
+    assert not [f for f in findings if f.check == "unused-dependency"]
+
+
+def test_deadness_checks_respect_ignore_globs(tmp_path):
+    (tmp_path / ".ai-integrity-ignore").write_text("vendored/\n")
+    (tmp_path / "vendored").mkdir()
+    (tmp_path / "vendored" / "old.py").write_text(
+        "def dead_in_vendored():\n    return 1\n", encoding="utf-8"
+    )
+    findings = mod.scan(tmp_path, mod.load_phrases())
+    assert not [f for f in findings if f.check == "unused-declaration"]
