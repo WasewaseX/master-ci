@@ -191,20 +191,19 @@ def _py_has_assert(node: ast.AST) -> bool:
     return False
 
 
+def _returned_call(stmt: ast.stmt) -> ast.Call | None:
+    """The call behind `return f(...)` or `return await f(...)`."""
+    if not isinstance(stmt, ast.Return) or not isinstance(stmt.value, (ast.Call, ast.Await)):
+        return None
+    value = stmt.value.value if isinstance(stmt.value, ast.Await) else stmt.value
+    return value if isinstance(value, ast.Call) else None
+
+
 def _py_forward_call(body: list[ast.stmt], params: list[str]) -> str | None:
     """Target name when the body is one return forwarding exactly `params`."""
     if len(body) != 1:
         return None
-    stmt = body[0]
-    call: ast.Call | None = None
-    if isinstance(stmt, ast.Return) and isinstance(stmt.value, ast.Call):
-        call = stmt.value
-    elif (
-        isinstance(stmt, ast.Return)
-        and isinstance(stmt.value, ast.Await)
-        and isinstance(stmt.value.value, ast.Call)
-    ):
-        call = stmt.value.value
+    call = _returned_call(body[0])
     if call is None:
         return None
     names = [arg.id for arg in call.args if isinstance(arg, ast.Name)]

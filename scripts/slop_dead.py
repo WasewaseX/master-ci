@@ -48,6 +48,13 @@ _JS_EXPORT = re.compile(
 _JS_IMPORT = re.compile(
     r"(?:import\s+[^'\"]*?from\s+|import\s+|require\s*\(\s*|import\s*\(\s*)[\"']([^\"']+)[\"']"
 )
+_PY_DEP_ITEM = re.compile(r"[\"']([A-Za-z0-9_.\-]+)")
+# Dist-name -> import-name: the usable direction of the alias table.
+_ALIASES_BY_DIST = {v.lower(): k for k, v in PY_IMPORT_ALIASES.items()}
+
+# Candidate record: (path, python definition line or None, JS export
+# offset or None). Exactly one of the two location fields is set.
+Candidate = tuple[Path, "int | None", "int | None"]
 
 
 def _cap(findings: list[Finding], limit: int = 8) -> list[Finding]:
@@ -75,27 +82,33 @@ def _py_toplevel_names(path: Path, text: str) -> list[tuple[str, int]]:
     return names
 
 
-def check_unused_declarations(
-    root: Path,
-    files: list[Path],
-    globs: list[str],
-) -> list[Finding]:
-    """Top-level defs and JS exports that nothing in the repo references."""
-    if not root.is_dir():
-        return []
+def _deadness_texts(files: list[Path]) -> dict[Path, str]:
+    """Read every Python and JS-family file once - the usage oracle.
+
+    Every scanned file counts as a usage oracle, including tests, docs
+    and workflows. Only the candidate harvest excludes tests: a helper
+    exercised by a test suite is not dead.
+    """
     texts: dict[Path, str] = {}
     for path in files:
-        # Every scanned file counts as a usage oracle - including tests,
-        # docs and workflows. Only the candidate harvest below excludes
-        # tests: a helper exercised by a test suite is not dead.
         suffix = path.suffix.lower()
-        if suffix == ".py" or suffix in _JS_EXTS:
-            try:
-                texts[path] = path.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-    # name -> (path, py line or None, js offset or None)
-    candidates: dict[str, tuple[Path, int | None, int | None]] = {}
+        if suffix != ".py" and suffix not in _JS_EXTS:
+            continue
+        try:
+            texts[path] = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+    return texts
+
+
+def _harvest_candidates(
+    root: Path,
+    files: list[Path],
+    texts: dict[Path, str],
+    globs: list[str],
+) -> dict[str, Candidate]:
+    """Name -> definition site, from non-test source files."""
+    candidates: dict[str, Candidate] = {}
     for path in files:
         try:
             rel = path.relative_to(root).as_posix()
@@ -109,14 +122,27 @@ def check_unused_declarations(
         elif path.suffix.lower() in _JS_EXTS:
             for match in _JS_EXPORT.finditer(texts[path]):
                 candidates.setdefault(match.group(1), (path, None, match.start()))
-    if not candidates:
-        return []
-    # One repo-wide pass: every occurrence of every candidate name.
+    return candidates
+
+
+def _count_occurrences(
+    candidates: dict[str, Candidate],
+    texts: dict[Path, str],
+) -> dict[str, Counter]:
+    """One repo-wide pass: every occurrence of every candidate name."""
     alternation = re.compile(r"\b(?:" + "|".join(sorted(re.escape(n) for n in candidates)) + r")\b")
     occurrences: dict[str, Counter] = {name: Counter() for name in candidates}
     for path, text in texts.items():
         for name in alternation.findall(text):
             occurrences[name][path] += 1
+    return occurrences
+
+
+def _flag_dead(
+    candidates: dict[str, Candidate],
+    occurrences: dict[str, Counter],
+    texts: dict[Path, str],
+) -> list[Finding]:
     findings: list[Finding] = []
     for name, (path, py_line, js_offset) in sorted(candidates.items()):
         counts = occurrences[name]
@@ -150,12 +176,65 @@ def check_unused_declarations(
                     1,
                 )
             )
-    return _cap(findings)
+    return findings
+
+
+def check_unused_declarations(
+    root: Path,
+    files: list[Path],
+    globs: list[str],
+) -> list[Finding]:
+    """Top-level defs and JS exports that nothing in the repo references."""
+    if not root.is_dir():
+        return []
+    texts = _deadness_texts(files)
+    candidates = _harvest_candidates(root, files, texts, globs)
+    if not candidates:
+        return []
+    occurrences = _count_occurrences(candidates, texts)
+    return _cap(_flag_dead(candidates, occurrences, texts))
 
 
 # ---------------------------------------------------------------------------
 # unused-dependency
 # ---------------------------------------------------------------------------
+
+
+def _py_dep_item(stripped: str, deps: dict[str, int], lineno: int) -> bool:
+    """Collect one deps-table line; False when the table closes."""
+    if stripped.startswith("]"):
+        return False
+    match = _PY_DEP_ITEM.match(stripped)
+    if match:
+        deps.setdefault(match.group(1), lineno)
+    return True
+
+
+def _py_inline_deps(stripped: str, deps: dict[str, int], lineno: int) -> None:
+    """Single-line table: dependencies = ["a", "b"]."""
+    inner = re.match(r"dependencies\s*=\s*\[(.*)\]", stripped)
+    if not inner:
+        return
+    for item in _PY_DEP_ITEM.finditer(inner.group(1)):
+        deps.setdefault(item.group(1), lineno)
+
+
+def _py_deps_from_lines(lines: list[str]) -> dict[str, int]:
+    deps: dict[str, int] = {}
+    in_project = False
+    in_deps = False
+    for lineno, line in enumerate(lines, 1):
+        stripped = line.strip()
+        if stripped.startswith("["):
+            in_project = stripped == "[project]"
+            in_deps = False
+        elif in_project and not in_deps:
+            if re.match(r"dependencies\s*=\s*\[", stripped):
+                in_deps = "]" not in stripped
+                _py_inline_deps(stripped, deps, lineno)
+        elif in_deps:
+            in_deps = _py_dep_item(stripped, deps, lineno)
+    return deps
 
 
 def _py_runtime_deps(root: Path) -> dict[str, int]:
@@ -167,31 +246,7 @@ def _py_runtime_deps(root: Path) -> dict[str, int]:
         lines = manifest.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return {}
-    deps: dict[str, int] = {}
-    in_project = False
-    in_deps = False
-    for lineno, line in enumerate(lines, 1):
-        stripped = line.strip()
-        if stripped.startswith("["):
-            in_project = stripped == "[project]"
-            in_deps = False
-            continue
-        if in_project and not in_deps:
-            if re.match(r"dependencies\s*=\s*\[", stripped):
-                in_deps = "]" not in stripped  # single-line table handled below
-                match = re.match(r"dependencies\s*=\s*\[(.*)\]", stripped)
-                if match:
-                    for item in re.finditer(r"[\"']([A-Za-z0-9_.\-]+)", match.group(1)):
-                        deps.setdefault(item.group(1), lineno)
-            continue
-        if in_deps:
-            if stripped.startswith("]"):
-                in_deps = False
-                continue
-            match = re.match(r"[\"']([A-Za-z0-9_.\-]+)", stripped)
-            if match:
-                deps.setdefault(match.group(1), lineno)
-    return deps
+    return _py_deps_from_lines(lines)
 
 
 def _js_runtime_deps(root: Path) -> dict[str, int]:
@@ -217,10 +272,6 @@ def _js_runtime_deps(root: Path) -> dict[str, int]:
     return deps
 
 
-# Dist-name -> import-name: the usable direction of the alias table.
-_ALIASES_BY_DIST = {v.lower(): k for k, v in PY_IMPORT_ALIASES.items()}
-
-
 def _py_imported_tops(files: list[Path]) -> set[str]:
     tops: set[str] = set()
     for path in files:
@@ -234,6 +285,61 @@ def _py_imported_tops(files: list[Path]) -> set[str]:
     return tops
 
 
+def _py_unused_dep_findings(py_deps: dict[str, int], files: list[Path]) -> list[Finding]:
+    tops = _py_imported_tops(files)
+    tops_folded = {t.replace("_", "") for t in tops}
+    findings: list[Finding] = []
+    for dist, lineno in py_deps.items():
+        if dist.lower() in _DYNAMIC_USE:
+            continue
+        stem = re.split(r"[<>=!~\[;]", dist)[0]
+        module = _ALIASES_BY_DIST.get(stem.lower(), stem.lower())
+        if module in tops or module.replace("_", "") in tops_folded:
+            continue
+        findings.append(
+            Finding(
+                path="pyproject.toml",
+                line=lineno,
+                check="unused-dependency",
+                message=(
+                    f"runtime dependency {stem!r} is never imported - "
+                    "declared weight with no consumer"
+                ),
+                weight=1,
+                advisory=True,
+            )
+        )
+    return findings
+
+
+def _js_unused_dep_findings(js_deps: dict[str, int], files: list[Path]) -> list[Finding]:
+    specs: set[str] = set()
+    for path in files:
+        if path.suffix.lower() not in _JS_EXTS:
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        specs.update(_JS_IMPORT.findall(text))
+    findings: list[Finding] = []
+    for pkg, lineno in js_deps.items():
+        base = pkg.split("/")[0] if not pkg.startswith("@") else pkg
+        if any(spec == pkg or spec.startswith(base + "/") for spec in specs):
+            continue
+        findings.append(
+            Finding(
+                path="package.json",
+                line=lineno,
+                check="unused-dependency",
+                message=(
+                    f"runtime package {pkg!r} is never imported - declared "
+                    "weight with no consumer"
+                ),
+                weight=1,
+                advisory=True,
+            )
+        )
+    return findings
+
+
 def check_unused_dependencies(root: Path, files: list[Path]) -> list[Finding]:
     """Runtime deps no source file ever imports (advisory)."""
     if not root.is_dir():
@@ -241,51 +347,8 @@ def check_unused_dependencies(root: Path, files: list[Path]) -> list[Finding]:
     findings: list[Finding] = []
     py_deps = _py_runtime_deps(root)
     if py_deps:
-        tops = _py_imported_tops(files)
-        tops_folded = {t.replace("_", "") for t in tops}
-        for dist, lineno in py_deps.items():
-            if dist.lower() in _DYNAMIC_USE:
-                continue
-            stem = re.split(r"[<>=!~\[;]", dist)[0]
-            module = _ALIASES_BY_DIST.get(stem.lower(), stem.lower())
-            if module in tops or module.replace("_", "") in tops_folded:
-                continue
-            findings.append(
-                Finding(
-                    path=str(root / "pyproject.toml"),
-                    line=lineno,
-                    check="unused-dependency",
-                    message=(
-                        f"runtime dependency {stem!r} is never imported - "
-                        "declared weight with no consumer"
-                    ),
-                    weight=1,
-                    advisory=True,
-                )
-            )
+        findings.extend(_py_unused_dep_findings(py_deps, files))
     js_deps = _js_runtime_deps(root)
     if js_deps:
-        specs: set[str] = set()
-        for path in files:
-            if path.suffix.lower() not in _JS_EXTS:
-                continue
-            text = path.read_text(encoding="utf-8", errors="replace")
-            specs.update(_JS_IMPORT.findall(text))
-        for pkg, lineno in js_deps.items():
-            base = pkg.split("/")[0] if not pkg.startswith("@") else pkg
-            if any(spec == pkg or spec.startswith(base + "/") for spec in specs):
-                continue
-            findings.append(
-                Finding(
-                    path=str(root / "package.json"),
-                    line=lineno,
-                    check="unused-dependency",
-                    message=(
-                        f"runtime package {pkg!r} is never imported - declared "
-                        "weight with no consumer"
-                    ),
-                    weight=1,
-                    advisory=True,
-                )
-            )
+        findings.extend(_js_unused_dep_findings(js_deps, files))
     return _cap(findings)
