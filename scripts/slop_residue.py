@@ -234,6 +234,23 @@ def check_dispatch_ladders(path: Path, tree: ast.AST) -> list[Finding]:
     return findings
 
 
+def _imported_modules(node: ast.stmt) -> list[str]:
+    """Top-level modules one import statement pulls in."""
+    if isinstance(node, ast.Import):
+        return [alias.name.split(".")[0] for alias in node.names]
+    if isinstance(node, ast.ImportFrom) and node.module:
+        return [node.module.split(".")[0]]
+    return []
+
+
+def _record_import(counts: dict, first_line: dict, module: str, lineno: int) -> None:
+    if module in counts:
+        counts[module] += 1
+    else:
+        counts[module] = 1
+        first_line[module] = lineno
+
+
 def check_duplicate_imports(path: Path, tree: ast.AST, rel: str) -> list[Finding]:
     """Two top-level imports of one module in a file (re-export shims exempt).
 
@@ -245,19 +262,8 @@ def check_duplicate_imports(path: Path, tree: ast.AST, rel: str) -> list[Finding
     counts: dict[str, int] = {}
     first_line: dict[str, int] = {}
     for node in getattr(tree, "body", []):
-        modules: list[str] = []
-        if isinstance(node, ast.Import):
-            modules = [alias.name.split(".")[0] for alias in node.names]
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            modules = [node.module.split(".")[0]]
-        else:
-            continue
-        for module in modules:
-            if module not in counts:
-                counts[module] = 1
-                first_line[module] = node.lineno
-            else:
-                counts[module] += 1
+        for module in _imported_modules(node):
+            _record_import(counts, first_line, module, node.lineno)
     return [
         Finding(
             path=str(path),
@@ -275,45 +281,46 @@ def check_duplicate_imports(path: Path, tree: ast.AST, rel: str) -> list[Finding
 _LOGISH_CALL = re.compile(r"(?i)\b(?:log(?:ger)?|logging|warn(?:ing)?|print|echo)\b")
 
 
+def _handler_debt(path: Path, node: ast.ExceptHandler) -> Finding | None:
+    """The debt one handler carries, if any."""
+    scope = _walk_body(node.body)
+    if len(node.body) == 1 and isinstance(node.body[0], ast.Raise) and node.body[0].exc is None:
+        return Finding(
+            path=str(path),
+            line=node.lineno,
+            check="redundant-try-catch",
+            message="handler only rethrows - the try block adds nothing",
+            weight=1,
+            advisory=True,
+        )
+    bound = node.name
+    if not bound:
+        return None
+    used = any(isinstance(n, ast.Name) and n.id == bound for n in ast.walk(scope))
+    propagates = any(isinstance(n, (ast.Raise, ast.Return)) for n in ast.walk(scope))
+    logs = any(
+        isinstance(n, ast.Call) and _LOGISH_CALL.search(_call_name(n.func)) for n in ast.walk(scope)
+    )
+    if not used and not propagates and logs:
+        return Finding(
+            path=str(path),
+            line=node.lineno,
+            check="silent-recovery",
+            message="handler logs without the caught error and carries on",
+            weight=1,
+            advisory=True,
+        )
+    return None
+
+
 def check_handler_debts(path: Path, tree: ast.AST) -> list[Finding]:
     """Catch blocks that only rethrow, or log without the error and go on."""
     findings: list[Finding] = []
     for node in ast.walk(tree):
-        if not isinstance(node, ast.ExceptHandler):
-            continue
-        scope = _walk_body(node.body)
-        if len(node.body) == 1 and isinstance(node.body[0], ast.Raise) and node.body[0].exc is None:
-            findings.append(
-                Finding(
-                    path=str(path),
-                    line=node.lineno,
-                    check="redundant-try-catch",
-                    message="handler only rethrows - the try block adds nothing",
-                    weight=1,
-                    advisory=True,
-                )
-            )
-            continue
-        bound = node.name
-        if not bound:
-            continue
-        used = any(isinstance(n, ast.Name) and n.id == bound for n in ast.walk(scope))
-        propagates = any(isinstance(n, (ast.Raise, ast.Return)) for n in ast.walk(scope))
-        logs = any(
-            isinstance(n, ast.Call) and _LOGISH_CALL.search(_call_name(n.func))
-            for n in ast.walk(scope)
-        )
-        if not used and not propagates and logs:
-            findings.append(
-                Finding(
-                    path=str(path),
-                    line=node.lineno,
-                    check="silent-recovery",
-                    message="handler logs without the caught error and carries on",
-                    weight=1,
-                    advisory=True,
-                )
-            )
+        if isinstance(node, ast.ExceptHandler):
+            debt = _handler_debt(path, node)
+            if debt is not None:
+                findings.append(debt)
     return findings
 
 
@@ -353,21 +360,26 @@ def check_tautological_tests(path: Path, tree: ast.AST, rel: str) -> list[Findin
     return findings
 
 
+def _generic_targets(node: ast.stmt) -> list[tuple[str, int]]:
+    """Generic module-level names one statement defines."""
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return [(f"{node.name}()", node.lineno)] if node.name in GENERIC_NAMES else []
+    if isinstance(node, ast.Assign):
+        return [
+            (target.id, node.lineno)
+            for target in node.targets
+            if isinstance(target, ast.Name) and target.id in GENERIC_NAMES
+        ]
+    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+        return [(node.target.id, node.lineno)] if node.target.id in GENERIC_NAMES else []
+    return []
+
+
 def check_generic_names(path: Path, tree: ast.AST, rel: str) -> list[Finding]:
     """Module-level nouns that name no noun in particular (data, result...)."""
     if is_test_path(rel):
         return []
-    offenders: list[tuple[str, int]] = []
-    for node in getattr(tree, "body", []):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in GENERIC_NAMES:
-            offenders.append((f"{node.name}()", node.lineno))
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id in GENERIC_NAMES:
-                    offenders.append((target.id, node.lineno))
-        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            if node.target.id in GENERIC_NAMES:
-                offenders.append((node.target.id, node.lineno))
+    offenders = [entry for node in getattr(tree, "body", []) for entry in _generic_targets(node)]
     if not offenders:
         return []
     names = ", ".join(sorted({name for name, _ in offenders}))

@@ -95,47 +95,62 @@ def _jvm_phantom_imports(path: Path, text: str) -> list[Finding]:
     return findings[:5]
 
 
-def check_exceptions_js_family(path: Path, text: str, family: str) -> list[Finding]:
+def _catch_findings(path: Path, text: str, family: str) -> list[Finding]:
+    """Empty catches across the brace families, stack-trace-only for the JVM."""
     findings: list[Finding] = []
     if family in ("js", "jvm", "csharp", "cpp", "php", "swift", "dart"):
-        for match in EMPTY_CATCH.finditer(text):
-            findings.append(
-                _finding(
-                    path,
-                    text,
-                    match.start(),
-                    "empty-catch",
-                    "empty catch block hides every error",
-                    2,
-                )
+        findings.extend(
+            _finding(
+                path,
+                text,
+                match.start(),
+                "empty-catch",
+                "empty catch block hides every error",
+                2,
             )
+            for match in EMPTY_CATCH.finditer(text)
+        )
     if family == "jvm":
-        for match in PRINT_STACKTRACE_ONLY.finditer(text):
-            findings.append(
-                _finding(
-                    path,
-                    text,
-                    match.start(),
-                    "print-stacktrace-only",
-                    "catch block only prints a stack trace",
-                    1,
-                )
+        findings.extend(
+            _finding(
+                path,
+                text,
+                match.start(),
+                "print-stacktrace-only",
+                "catch block only prints a stack trace",
+                1,
             )
+            for match in PRINT_STACKTRACE_ONLY.finditer(text)
+        )
+    return findings
+
+
+def _empty_rescue_lines(text: str) -> list[int]:
+    """1-based lines of `rescue` blocks with nothing but `end` after them."""
+    lines = text.splitlines()
+    hits: list[int] = []
+    for idx, raw in enumerate(lines):
+        if not EMPTY_RESCUE.match(raw):
+            continue
+        nxt = lines[idx + 1].strip() if idx + 1 < len(lines) else ""
+        if nxt == "end":
+            hits.append(idx + 1)
+    return hits
+
+
+def check_exceptions_js_family(path: Path, text: str, family: str) -> list[Finding]:
+    findings = _catch_findings(path, text, family)
     if family == "ruby":
-        lines = text.splitlines()
-        for idx, raw in enumerate(lines):
-            if EMPTY_RESCUE.match(raw):
-                nxt = lines[idx + 1].strip() if idx + 1 < len(lines) else ""
-                if nxt == "end":
-                    findings.append(
-                        Finding(
-                            path=str(path),
-                            line=idx + 1,
-                            check="empty-rescue",
-                            message="rescue with no handling before end",
-                            weight=2,
-                        )
-                    )
+        findings.extend(
+            Finding(
+                path=str(path),
+                line=line,
+                check="empty-rescue",
+                message="rescue with no handling before end",
+                weight=2,
+            )
+            for line in _empty_rescue_lines(text)
+        )
     return findings
 
 

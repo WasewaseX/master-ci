@@ -14,6 +14,8 @@ pip:
   pytest: 9.0.2
   yamllint: 1.38.0
   semgrep: 1.184.0
+  tree-sitter: 0.26.0
+  tree-sitter-language-pack: 1.25.0
 npm:
   "@biomejs/biome": 2.6.6
   depcheck: 1.4.7

@@ -40,14 +40,50 @@ def _py_docstring_step(
     return Comment(idx, stripped, "docstring"), True, delim
 
 
-def extract_comments(text: str, family: str) -> list[Comment]:
-    """Extract comments with a small state machine per language family."""
-    line_prefixes = {
+def _line_prefixes(family: str) -> tuple[str, ...]:
+    """Line-comment openers per family."""
+    return {
         "py": ("#",),
         "sh": ("#",),
         "ruby": ("#",),
         "php": ("//", "#"),
     }.get(family, ("//",))
+
+
+def _py_line(
+    idx: int,
+    stripped: str,
+    in_doc: bool,
+    doc_delim: str,
+    comments: list[Comment],
+) -> tuple[bool, str] | None:
+    """Docstring state change for a python line; None when not docstring."""
+    step = _py_docstring_step(idx, stripped, in_doc, doc_delim)
+    if step is None:
+        return None
+    comments.append(step[0])
+    return step[1], step[2]
+
+
+def _plain_code_line(
+    idx: int,
+    stripped: str,
+    prefixes: tuple[str, ...],
+    comments: list[Comment],
+) -> bool:
+    """Record a line or block comment start; True when a block opens."""
+    if any(stripped.startswith(prefix) for prefix in prefixes):
+        comments.append(Comment(idx, stripped, "line"))
+        return False
+    if stripped.startswith(BLOCK_OPEN):
+        comments.append(Comment(idx, stripped, "block"))
+        return BLOCK_CLOSE not in stripped[len(BLOCK_OPEN) :]
+    return False
+
+
+def extract_comments(text: str, family: str) -> list[Comment]:
+    """Extract comments with a small state machine per language family."""
+    prefixes = _line_prefixes(family)
     comments: list[Comment] = []
     in_block = False
     in_doc = False
@@ -56,26 +92,19 @@ def extract_comments(text: str, family: str) -> list[Comment]:
         stripped = raw.strip()
         if in_block:
             comments.append(Comment(idx, stripped, "block"))
-            if BLOCK_CLOSE in stripped:
-                in_block = False
+            in_block = BLOCK_CLOSE not in stripped
             continue
-        if family == "py":
-            step = _py_docstring_step(idx, stripped, in_doc, doc_delim)
-            if step is not None:
-                comments.append(step[0])
-                in_doc, doc_delim = step[1], step[2]
-                continue
         if family == "ruby" and stripped.startswith("=begin"):
             in_block = True
             comments.append(Comment(idx, stripped, "block"))
             continue
-        if any(stripped.startswith(prefix) for prefix in line_prefixes):
-            comments.append(Comment(idx, stripped, "line"))
-            continue
-        if stripped.startswith(BLOCK_OPEN):
-            comments.append(Comment(idx, stripped, "block"))
-            if BLOCK_CLOSE not in stripped[len(BLOCK_OPEN) :]:
-                in_block = True
+        if family == "py":
+            step = _py_line(idx, stripped, in_doc, doc_delim, comments)
+            if step is not None:
+                in_doc, doc_delim = step
+                continue
+        if _plain_code_line(idx, stripped, prefixes, comments):
+            in_block = True
     return comments
 
 

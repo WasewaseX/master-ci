@@ -191,33 +191,44 @@ SHFMT_URL = (
 )
 
 
+def _tracked_names(root: Path) -> list[str]:
+    """Git-tracked plus untracked-but-not-ignored file names."""
+    out = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return [n for n in out.stdout.splitlines() if n]
+
+
+def _walked_names(root: Path) -> list[str]:
+    """Every file under root outside the excluded directory names."""
+    names = []
+    for path in sorted(root.rglob("*")):
+        if path.is_dir():
+            continue
+        parts = path.relative_to(root).parts
+        if any(part in EXCLUDED_DIRS for part in parts[:-1]):
+            continue
+        names.append(str(path.relative_to(root)))
+    return names
+
+
 def find_files(root: Path, predicate) -> list[str]:
     """Return repo-relative paths matching predicate, respecting ignores."""
     if (root / ".git").exists():
-        out = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(root),
-                "ls-files",
-                "--cached",
-                "--others",
-                "--exclude-standard",
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        names = [n for n in out.stdout.splitlines() if n]
+        names = _tracked_names(root)
     else:
-        names = []
-        for path in sorted(root.rglob("*")):
-            if path.is_dir():
-                continue
-            parts = path.relative_to(root).parts
-            if any(part in EXCLUDED_DIRS for part in parts[:-1]):
-                continue
-            names.append(str(path.relative_to(root)))
+        names = _walked_names(root)
     # defense in depth: even git-tracked vendored files are never touched
     names = [n for n in names if not any(part in EXCLUDED_DIRS for part in Path(n).parts[:-1])]
     return sorted(n for n in names if predicate(root / n))

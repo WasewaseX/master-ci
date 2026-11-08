@@ -66,32 +66,38 @@ FAMILY_MANIFESTS: dict[str, tuple[str, ...]] = {
 DOTNET_GLOBS = ("*.csproj", "*.fsproj", "*.sln", "*.slnx")
 
 
+def _node_workspace(root: Path) -> bool:
+    if (root / "pnpm-workspace.yaml").is_file() or (root / "lerna.json").is_file():
+        return True
+    pkg = root / "package.json"
+    if not pkg.is_file():
+        return False
+    try:
+        data = json.loads(pkg.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return False  # malformed or unreadable manifest: plain project
+    return "workspaces" in data
+
+
+def _rust_workspace(root: Path) -> bool:
+    cargo = root / "Cargo.toml"
+    if not cargo.is_file():
+        return False
+    try:
+        text = cargo.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return re.search(r"^\s*\[workspace\]", text, re.M) is not None
+
+
 def _workspace_rooted(root: Path, family: str) -> bool:
     """True when the root manifest itself covers nested projects."""
     if family == "node":
-        pkg = root / "package.json"
-        if pkg.is_file():
-            try:
-                data = json.loads(pkg.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                return False  # malformed or unreadable manifest: plain project
-            return "workspaces" in data
-        if (root / "pnpm-workspace.yaml").is_file() or (root / "lerna.json").is_file():
-            return True
-        return False
+        return _node_workspace(root)
     if family == "go":
         return (root / "go.work").is_file()
     if family == "rust":
-        cargo = root / "Cargo.toml"
-        if cargo.is_file():
-            try:
-                return (
-                    re.search(r"^\s*\[workspace\]", cargo.read_text(encoding="utf-8"), re.M)
-                    is not None
-                )
-            except OSError:
-                return False
-        return False
+        return _rust_workspace(root)
     return False
 
 

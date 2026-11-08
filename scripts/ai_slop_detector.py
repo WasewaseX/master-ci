@@ -28,6 +28,7 @@ from slop_categories import (  # noqa: F401
     CHECK_CATEGORIES,
     category_of,
 )
+from slop_cognitive import check_cognitive  # noqa: F401
 from slop_commentary import (  # noqa: F401
     check_unknown_directives,
 )
@@ -146,6 +147,7 @@ def scan_code_file(
     findings.extend(check_placeholder_impl(path, text))
     findings.extend(check_py_ast(path, text, family))
     findings.extend(check_bloat(path, text, family, rel, comments))
+    findings.extend(check_cognitive(path, text, ext))
     findings.extend(check_exceptions_js_family(path, text, family))
     findings.extend(check_go(path, text, family, rel))
     findings.extend(check_rust(path, text, family))
@@ -200,31 +202,35 @@ def provenance_findings(path: Path, text: str) -> list[Finding]:
     return []
 
 
+def _classify_source(base: Path, path: Path, globs: list[str], counts: dict) -> None:
+    """Bucket one source file into the test inventory counters."""
+    try:
+        rel = path.relative_to(base).as_posix()
+    except ValueError:
+        rel = path.as_posix()
+    if is_ignored(rel, globs):
+        return
+    parts = PurePosixPath(rel).parts
+    if any("fixture" in part.lower() for part in parts):
+        return
+    if is_test_path(rel):
+        counts["tests"] += 1
+    else:
+        counts["sources"].append(rel)
+
+
 def inventory_findings(
     root: Path,
     files: list[Path],
     globs: list[str],
 ) -> list[Finding]:
-    sources: list[str] = []
-    tests = 0
     base = root if root.is_dir() else root.parent
+    counts: dict = {"tests": 0, "sources": []}
     for path in files:
-        if path.suffix.lower() not in CODE_EXTS:
-            continue
-        try:
-            rel = path.relative_to(base).as_posix()
-        except ValueError:
-            rel = path.as_posix()
-        if is_ignored(rel, globs):
-            continue
-        parts = PurePosixPath(rel).parts
-        if any("fixture" in part.lower() for part in parts):
-            continue
-        if is_test_path(rel):
-            tests += 1
-        else:
-            sources.append(rel)
-    if len(sources) >= MIN_SOURCES_FOR_INVENTORY and tests == 0:
+        if path.suffix.lower() in CODE_EXTS:
+            _classify_source(base, path, globs, counts)
+    sources: list[str] = counts["sources"]
+    if len(sources) >= MIN_SOURCES_FOR_INVENTORY and counts["tests"] == 0:
         return [
             Finding(
                 path=sources[0],
@@ -273,6 +279,54 @@ def _scan_one_file(path: Path, suffix: str, rel: str, ctx: ScanContext) -> list[
     return findings
 
 
+def _file_findings(
+    root: Path,
+    files: list[Path],
+    globs: list[str],
+    ctx: ScanContext,
+) -> list[Finding]:
+    findings: list[Finding] = []
+    for path in files:
+        try:
+            rel = path.relative_to(root).as_posix() if root.is_dir() else path.name
+        except ValueError:
+            rel = path.as_posix()
+        if is_ignored(rel, globs):
+            continue
+        findings.extend(_scan_one_file(path, path.suffix.lower(), rel, ctx))
+    return findings
+
+
+def _repo_level_findings(
+    root: Path,
+    files: list[Path],
+    globs: list[str],
+    provenance: bool,
+) -> list[Finding]:
+    """Whole-repo views: duplication, dependency and architecture checks."""
+    findings: list[Finding] = []
+    findings.extend(scan_duplicates(files))
+    findings.extend(check_unused_declarations(root, files, globs))
+    findings.extend(check_unused_dependencies(root, files))
+    findings.extend(check_architecture_rules(root, files, globs))
+    findings.extend(check_unknown_directives(root, files, globs))
+    if provenance:
+        findings.extend(inventory_findings(root, files, globs))
+    return findings
+
+
+def _apply_suppression(
+    findings: list[Finding],
+    disabled: set[str],
+    scoped: dict,
+) -> list[Finding]:
+    if disabled:
+        findings = [f for f in findings if f.check.lower() not in disabled]
+    if scoped:
+        findings = [f for f in findings if not _scoped_out(f, scoped)]
+    return findings
+
+
 def scan(
     root: Path,
     phrases: dict,
@@ -282,36 +336,16 @@ def scan(
     files = iter_files(root)
     globs, disabled, scoped = load_ignore_rules(root)
     globs = globs + list(extra_globs or [])
-    py_manifests = collect_py_dependencies(root if root.is_dir() else root.parent)
-    js_deps = collect_js_dependencies(root if root.is_dir() else root.parent)
-    findings: list[Finding] = []
-    for path in files:
-        try:
-            rel = path.relative_to(root).as_posix() if root.is_dir() else path.name
-        except ValueError:
-            rel = path.as_posix()
-        if is_ignored(rel, globs):
-            continue
-        findings.extend(
-            _scan_one_file(
-                path,
-                path.suffix.lower(),
-                rel,
-                ScanContext(phrases, py_manifests, js_deps, provenance),
-            )
-        )
-    findings.extend(scan_duplicates(files))
-    findings.extend(check_unused_declarations(root, files, globs))
-    findings.extend(check_unused_dependencies(root, files))
-    findings.extend(check_architecture_rules(root, files, globs))
-    findings.extend(check_unknown_directives(root, files, globs))
-    if provenance:
-        findings.extend(inventory_findings(root, files, globs))
-    if disabled:
-        findings = [f for f in findings if f.check.lower() not in disabled]
-    if scoped:
-        findings = [f for f in findings if not _scoped_out(f, scoped)]
-    return findings
+    base = root if root.is_dir() else root.parent
+    ctx = ScanContext(
+        phrases,
+        collect_py_dependencies(base),
+        collect_js_dependencies(base),
+        provenance,
+    )
+    findings = _file_findings(root, files, globs, ctx)
+    findings.extend(_repo_level_findings(root, files, globs, provenance))
+    return _apply_suppression(findings, disabled, scoped)
 
 
 # The CLI layer (argument parsing, exit-code contract, gate math) lives in

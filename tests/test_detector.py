@@ -22,6 +22,28 @@ spec.loader.exec_module(mod)
 PHRASES = mod.load_phrases()
 
 
+def _analyzer_available(module: str, flag: str) -> bool:
+    """True when an optional analyzer is importable in this environment."""
+    import importlib
+
+    try:
+        return bool(getattr(importlib.import_module(module), flag))
+    except (ImportError, AttributeError):
+        return False
+
+
+HAVE_LIZARD = _analyzer_available("slop_lizard", "_LIZARD_OK")
+HAVE_TREE_SITTER = _analyzer_available("slop_cognitive", "_TS_OK")
+
+needs_lizard = pytest.mark.skipif(
+    not HAVE_LIZARD, reason="lizard not installed: parse path degrades to the line scanner"
+)
+needs_tree_sitter = pytest.mark.skipif(
+    not HAVE_TREE_SITTER,
+    reason="tree-sitter not installed: cognitive check stays silent by design",
+)
+
+
 def slop_code() -> str:
     """Build a slop fixture at runtime so this file stays detector-clean."""
     phrases = PHRASES["code_phrases"][:8]
@@ -1036,28 +1058,30 @@ def test_every_offender_reported_not_just_worst(tmp_path):
 # facts where a parse exists; the line scanner only where it does not.
 
 
+@needs_lizard
 def test_parse_counts_code_not_comment_lines(tmp_path):
     code = "".join(f"  step{i} = a + {i};\n" for i in range(60))
     comments = "".join(f"  // narrative line {i} that pads the file out\n" for i in range(40))
     padded = "function padded(a) {\n" + comments + code + "}\n"
-    dense = (
-        "function dense(a) {\n"
-        + "".join(f"  step{i} = a + {i};\n" for i in range(90))
-        + "}\n"
-    )
+    dense = "function dense(a) {\n" + "".join(f"  step{i} = a + {i};\n" for i in range(90)) + "}\n"
     findings = scan(tmp_path, {"p.js": padded, "d.js": dense})
     god = {Path(f.path).name: f for f in findings if f.check == "god-function"}
     assert "p.js" not in god, "comment padding must not pass as function length"
     assert "d.js" in god and "non-comment lines" in god["d.js"].message
 
 
+@needs_lizard
 def test_high_cyclomatic_flagged_across_languages(tmp_path):
     js = (
         "function h(a) {\n"
         + "".join(f"  if (a > {i}) {{ a -= {i}; }}\n" for i in range(20))
         + "  return a;\n}\n"
     )
-    py = "def h(a):\n" + "".join(f"    if a > {i}:\n        a -= {i}\n" for i in range(20)) + "    return a\n"
+    py = (
+        "def h(a):\n"
+        + "".join(f"    if a > {i}:\n        a -= {i}\n" for i in range(20))
+        + "    return a\n"
+    )
     findings = scan(tmp_path, {"h.js": js, "h.py": py})
     hits = [f for f in findings if f.check == "high-cyclomatic"]
     assert len(hits) == 2, "the complexity budget applies to every parsed family"
@@ -1098,6 +1122,72 @@ def test_high_cyclomatic_registry_contract():
     assert "high-cyclomatic" in mod.ADVISORY_ONLY_CHECKS
     assert mod.category_of("high-cyclomatic") == "maintainability"
     assert "high-cyclomatic" in mod.REMEDIES
+
+
+# Cognitive complexity (v1.20): Sonar-style reader effort, measured on
+# real tree-sitter syntax trees across the parsed languages. Strings are
+# assembled where a fixture would otherwise trip the detector's own scan.
+
+
+@needs_tree_sitter
+def test_cognitive_flagged_in_python_and_js(tmp_path):
+    py = (
+        "def h(a):\n"
+        + "".join(f"    if a > {i}:\n        a -= {i}\n" for i in range(18))
+        + "    return a\n"
+    )
+    js = (
+        "function h(a) {\n"
+        + "".join(f"  if (a > {i}) {{ a -= {i}; }}\n" for i in range(18))
+        + "  return a;\n}\n"
+    )
+    findings = scan(tmp_path, {"h.py": py, "h.js": js})
+    hits = [f for f in findings if f.check == "high-cognitive"]
+    assert len(hits) == 2, "the cognitive budget applies to every parsed family"
+    assert all(f.advisory for f in hits)
+    assert {Path(f.path).suffix for f in hits} == {".py", ".js"}
+
+
+def test_cognitive_clean_function_stays_silent(tmp_path):
+    js = "function small(a) {\n  if (a > 1) { return 1; }\n  return 0;\n}\n"
+    findings = scan(tmp_path, {"s.js": js})
+    assert not [f for f in findings if f.check == "high-cognitive"]
+
+
+@needs_tree_sitter
+def test_cognitive_closure_resets_nesting(tmp_path):
+    deep = "".join("  if (a) { " * 6 + "work();" + " }" * 6)
+    js = f"function outer(a) {{\n  if (a) {{\n    const f = () => {{\n{deep}\n    }};\n  }}\n}}\n"
+    findings = scan(tmp_path, {"c.js": js})
+    cog = [f for f in findings if f.check == "high-cognitive"]
+    assert cog and "outer" not in cog[0].message, (
+        "the enclosing function must not inherit the closure's depth"
+    )
+
+
+def test_cognitive_parser_missing_reports_nothing(tmp_path, monkeypatch):
+    import slop_cognitive
+
+    py = (
+        "def h(a):\n"
+        + "".join(f"    if a > {i}:\n        a -= {i}\n" for i in range(18))
+        + "    return a\n"
+    )
+    monkeypatch.setattr(slop_cognitive, "_TS_OK", False)
+    findings = scan(tmp_path, {"h.py": py})
+    assert not [f for f in findings if f.check == "high-cognitive"], (
+        "no tree means no guesswork: the check stays silent"
+    )
+
+
+def test_high_cognitive_registry_contract():
+    assert "high-cognitive" in mod.STRUCTURAL_BUDGET_CHECKS
+    assert "high-cognitive" in mod.ADVISORY_ONLY_CHECKS
+    assert mod.category_of("high-cognitive") == "maintainability"
+    assert "high-cognitive" in mod.REMEDIES
+    mod.enforce_structural_budget()
+    assert mod.is_blocking("high-cognitive")
+    mod.ENFORCED_CHECKS.discard("high-cognitive")
 
 
 # Blanket suppression: a *scoped* `# type: ignore[code]` names its rule -

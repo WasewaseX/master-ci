@@ -131,34 +131,52 @@ def normalize_file(path: Path) -> tuple[bool, str]:
     return True, "normalized"
 
 
+def _readable_text(path: Path) -> str | None:
+    """The file's text, or None when unreadable, binary or oversized."""
+    raw = _safe_read(path, MAX_TEXT_BYTES)
+    if raw is None or not raw or b"\0" in raw[:8192] or len(raw) >= MAX_TEXT_BYTES:
+        return None
+    try:
+        return raw.decode("utf-8")
+    except (UnicodeDecodeError, OSError):
+        return None
+
+
+def _count_dry_run(content: str, path: Path, counters: dict) -> None:
+    counters["scanned"] += 1
+    if _fix_text(content, path.suffix) != content:
+        counters["changed"] += 1
+
+
+def _record_normalize(ok: bool, reason: str, counters: dict, skipped: dict) -> None:
+    if ok:
+        counters["changed"] += 1
+        counters["scanned"] += 1
+    elif reason == "already-clean":
+        counters["scanned"] += 1
+    else:
+        skipped[reason] = skipped.get(reason, 0) + 1
+
+
 def scan_generic(root: Path, dry_run: bool) -> dict:
     """Normalize every text file, or only count when dry_run."""
-    scanned = 0
-    changed = 0
+    counters = {"scanned": 0, "changed": 0}
     skipped: dict[str, int] = {}
     for name in find_files(root, lambda p: True):
         path = root / name
-        raw = _safe_read(path, MAX_TEXT_BYTES)
-        if raw is None or not raw or b"\0" in raw[:8192] or len(raw) >= MAX_TEXT_BYTES:
-            continue
-        try:
-            content = raw.decode("utf-8")
-        except (UnicodeDecodeError, OSError):
+        content = _readable_text(path)
+        if content is None:
             continue
         if dry_run:
-            scanned += 1
-            if _fix_text(content, path.suffix) != content:
-                changed += 1
+            _count_dry_run(content, path, counters)
             continue
         ok, reason = normalize_file(path)
-        if ok:
-            changed += 1
-            scanned += 1
-        elif reason == "already-clean":
-            scanned += 1
-        else:
-            skipped[reason] = skipped.get(reason, 0) + 1
-    return {"files_scanned": scanned, "files_changed": changed, "skipped": skipped}
+        _record_normalize(ok, reason, counters, skipped)
+    return {
+        "files_scanned": counters["scanned"],
+        "files_changed": counters["changed"],
+        "skipped": skipped,
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -90,24 +90,33 @@ def _parse_forbidden(data: dict) -> tuple[tuple[str, str], ...]:
     return tuple(out)
 
 
-def _parse_layers(data: dict) -> tuple[LayerRule, ...]:
-    out: list[LayerRule] = []
-    for idx, layer in enumerate(_rule_list(data, "layers"), 1):
-        where = f"layers[{idx}]"
-        if not isinstance(layer, dict):
-            raise ArchConfigError(f"{where} must be an object")
-        name = _text(layer, "name", where)
-        paths = layer.get("paths")
-        if (
-            not isinstance(paths, list)
-            or not paths
-            or not all(isinstance(p, str) and p.strip() for p in paths)
-        ):
-            raise ArchConfigError(f"{where}: paths must be a non-empty list of globs")
-        deny = layer.get("must_not_import", [])
-        if not isinstance(deny, list) or not all(isinstance(d, str) and d.strip() for d in deny):
-            raise ArchConfigError(f"{where}: must_not_import must be a list of layer names")
-        out.append(LayerRule(name, tuple(paths), tuple(deny)))
+def _layer_paths(layer: dict, where: str) -> tuple[str, ...]:
+    paths = layer.get("paths")
+    if (
+        not isinstance(paths, list)
+        or not paths
+        or not all(isinstance(p, str) and p.strip() for p in paths)
+    ):
+        raise ArchConfigError(f"{where}: paths must be a non-empty list of globs")
+    return tuple(paths)
+
+
+def _layer_deny(layer: dict, where: str) -> tuple[str, ...]:
+    deny = layer.get("must_not_import", [])
+    if not isinstance(deny, list) or not all(isinstance(d, str) and d.strip() for d in deny):
+        raise ArchConfigError(f"{where}: must_not_import must be a list of layer names")
+    return tuple(deny)
+
+
+def _one_layer(layer: object, where: str) -> LayerRule:
+    """One declared layer, with its paths and denial list validated."""
+    if not isinstance(layer, dict):
+        raise ArchConfigError(f"{where} must be an object")
+    name = _text(layer, "name", where)
+    return LayerRule(name, _layer_paths(layer, where), _layer_deny(layer, where))
+
+
+def _checked_layers(out: list[LayerRule]) -> tuple[LayerRule, ...]:
     # A must_not_import naming a layer nobody declares can never match, so
     # the rule would be inert while looking enforced - reject it here.
     declared = {layer.name for layer in out}
@@ -119,6 +128,14 @@ def _parse_layers(data: dict) -> tuple[LayerRule, ...]:
                 f"layer(s): {', '.join(unknown)}"
             )
     return tuple(out)
+
+
+def _parse_layers(data: dict) -> tuple[LayerRule, ...]:
+    out = [
+        _one_layer(layer, f"layers[{idx}]")
+        for idx, layer in enumerate(_rule_list(data, "layers"), 1)
+    ]
+    return _checked_layers(out)
 
 
 def _parse_required(data: dict) -> tuple[PatternRule, ...]:

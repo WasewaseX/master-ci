@@ -33,7 +33,6 @@ from slop_patterns import (
     PROVIDER_ID_VALUE,
     SELF_TOOL_DIRECTIVE,
     SUPPRESSION_DIRECTIVE,
-    TOOL_CONFIG_GLOBS,
     TOOL_MANIFEST_FILES,
     _strip_strings,
 )
@@ -263,30 +262,93 @@ def _directive_tool(line: str) -> str | None:
     return None
 
 
-def _configured_tools(root: Path) -> set[str]:
-    """Tools the repo configures: root config files or manifest mentions."""
-    configured: set[str] = set()
-    try:
-        names = {p.name for p in root.iterdir()}
-    except OSError:
-        names = set()
-    for tool in DIRECTIVE_TOOLS:
-        if any(fnmatch.fnmatch(name, glob) for name in names for glob in TOOL_CONFIG_GLOBS):
-            configured.add(tool)
+# Per-tool root config file globs: a suppression comment only suppresses
+# something when THIS tool has a config, not when any lint config exists.
+_TOOL_CONFIG_GLOBS = {
+    "eslint": (".eslintrc*", "eslint.config.*"),
+    "prettier": (".prettierrc*", "prettier.config.*"),
+    "biome": ("biome.json*",),
+    "stylelint": (".stylelintrc*", "stylelint.config.*"),
+    "pylint": (".pylintrc",),
+    "flake8": (".flake8",),
+    "mypy": ("mypy.ini", ".mypy.ini"),
+    "ruff": ("ruff.toml", ".ruff.toml"),
+    "pyright": ("pyrightconfig.json",),
+    "rubocop": (".rubocop.yml",),
+    "shellcheck": (".shellcheckrc",),
+    "yamllint": (".yamllint*", "yamllint.yaml"),
+    "markdownlint": (".markdownlint*",),
+    "hadolint": (".hadolint.yaml", "hadolint.yaml"),
+    "tslint": ("tslint.json",),
+    "jshint": (".jshintrc",),
+}
+
+
+def _root_configured(names: set[str]) -> set[str]:
+    """Tools whose own config file sits at the repo root."""
+    return {
+        tool
+        for tool, globs in _TOOL_CONFIG_GLOBS.items()
+        if any(fnmatch.fnmatch(name, glob) for name in names for glob in globs)
+    }
+
+
+def _manifest_configured(root: Path) -> set[str]:
+    """Tools named in a manifest or workflow file."""
     candidates = [root / name for name in TOOL_MANIFEST_FILES]
     workflows = root / ".github" / "workflows"
     if workflows.is_dir():
         candidates.extend(workflows.glob("*.yml"))
         candidates.extend(workflows.glob("*.yaml"))
+    configured: set[str] = set()
     for candidate in candidates:
         try:
             text = candidate.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        for tool in DIRECTIVE_TOOLS:
-            if re.search(rf"\b{tool}\b", text, re.IGNORECASE):
-                configured.add(tool)
+        configured.update(
+            tool for tool in DIRECTIVE_TOOLS if re.search(rf"\b{tool}\b", text, re.IGNORECASE)
+        )
     return configured
+
+
+def _configured_tools(root: Path) -> set[str]:
+    """Tools the repo configures: root config files or manifest mentions."""
+    try:
+        names = {p.name for p in root.iterdir()}
+    except OSError:
+        names = set()
+    configured = _root_configured(names)
+    configured.update(_manifest_configured(root))
+    return configured
+
+
+def _file_directive_findings(path: Path, configured: set[str]) -> list[Finding]:
+    """Unknown directives in one file: at most one report per file."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    # String literals may name a directive (regex tables, docs);
+    # only real comment lines can suppress anything.
+    for idx, raw in enumerate(_strip_strings(text).splitlines(), start=1):
+        tool = _directive_tool(raw)
+        if tool is None or tool in configured:
+            continue
+        return [
+            Finding(
+                path=str(path),
+                line=idx,
+                check="unknown-directive",
+                message=(
+                    f"suppression names {tool}, but {tool} is not "
+                    "configured in this repo - it suppresses nothing"
+                ),
+                weight=1,
+                advisory=True,
+            )
+        ]
+    return []
 
 
 def check_unknown_directives(root: Path, files: list[Path], globs: list[str]) -> list[Finding]:
@@ -302,31 +364,9 @@ def check_unknown_directives(root: Path, files: list[Path], globs: list[str]) ->
             continue
         if is_ignored(rel, globs):
             continue
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        # String literals may name a directive (regex tables, docs);
-        # only real comment lines can suppress anything.
-        for idx, raw in enumerate(_strip_strings(text).splitlines(), start=1):
-            tool = _directive_tool(raw)
-            if tool is not None and tool not in configured:
-                findings.append(
-                    Finding(
-                        path=str(path),
-                        line=idx,
-                        check="unknown-directive",
-                        message=(
-                            f"suppression names {tool}, but {tool} is not "
-                            "configured in this repo - it suppresses nothing"
-                        ),
-                        weight=1,
-                        advisory=True,
-                    )
-                )
-                if len(findings) >= 3:
-                    return findings
-                break
+        findings.extend(_file_directive_findings(path, configured))
+        if len(findings) >= 3:
+            break
     return findings
 
 

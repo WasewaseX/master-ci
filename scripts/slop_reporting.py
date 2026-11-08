@@ -147,6 +147,26 @@ def advisory_score(findings: list[Finding]) -> int:
 # ---------------------------------------------------------------------------
 
 
+def _category_row(cat: str, findings: list[Finding]) -> tuple[str, dict]:
+    """One dimension's scorecard over its own findings only."""
+    subset = [f for f in findings if category_of(f.check) == cat]
+    per_file: dict[str, list[Finding]] = {}
+    for item in subset:
+        per_file.setdefault(item.path, []).append(item)
+    score, grade, verdict = project_score([file_deficit(v) for v in per_file.values()])
+    return (
+        cat,
+        {
+            "blocking": sum(f.weight for f in subset if not f.advisory),
+            "advisory": sum(f.weight for f in subset if f.advisory),
+            "count": len(subset),
+            "score": score,
+            "grade": grade,
+            "verdict": verdict,
+        },
+    )
+
+
 def category_breakdown(findings: list[Finding]) -> list[tuple[str, dict]]:
     """Per-dimension scores, always in CATEGORY_ORDER.
 
@@ -155,27 +175,7 @@ def category_breakdown(findings: list[Finding]) -> list[tuple[str, dict]]:
     AI integrity, and a slop-free-looking repo with swallowed exceptions
     cannot hide behind a clean slop score.
     """
-    rows: list[tuple[str, dict]] = []
-    for cat in CATEGORY_ORDER:
-        subset = [f for f in findings if category_of(f.check) == cat]
-        per_file: dict[str, list[Finding]] = {}
-        for item in subset:
-            per_file.setdefault(item.path, []).append(item)
-        score, grade, verdict = project_score([file_deficit(v) for v in per_file.values()])
-        rows.append(
-            (
-                cat,
-                {
-                    "blocking": sum(f.weight for f in subset if not f.advisory),
-                    "advisory": sum(f.weight for f in subset if f.advisory),
-                    "count": len(subset),
-                    "score": score,
-                    "grade": grade,
-                    "verdict": verdict,
-                },
-            )
-        )
-    return rows
+    return [_category_row(cat, findings) for cat in CATEGORY_ORDER]
 
 
 def ai_integrity_score(findings: list[Finding]) -> tuple[int, str, str]:

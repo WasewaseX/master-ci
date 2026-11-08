@@ -25,6 +25,10 @@ REMEDIES = {
         "Split the function along its decision axes; complexity 15+ resists "
         "review, testing and safe change"
     ),
+    "high-cognitive": (
+        "Flatten the nesting and name the branches; cognitive 15+ is code a "
+        "reviewer has to re-read to trust"
+    ),
     "bloat-comment-ratio": (
         "Delete comments that narrate the code; keep only the ones that "
         "explain intent or constraints"
@@ -223,6 +227,7 @@ STRUCTURAL_BUDGET_CHECKS = frozenset(
         "deep-nesting",
         "chained-dict-get",
         "high-cyclomatic",
+        "high-cognitive",
     }
 )
 
@@ -250,6 +255,7 @@ ADVISORY_ONLY_CHECKS = frozenset(
         "god-function",
         "deep-nesting",
         "high-cyclomatic",
+        "high-cognitive",
         "mutable-default",
         "star-import",
         "unwrap-density",

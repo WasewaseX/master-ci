@@ -24,19 +24,22 @@ def check_phantom_imports(path: Path, text: str, family: str) -> list[Finding]:
     return []
 
 
+def _import_aliases(node: ast.AST) -> list[tuple[str, int]]:
+    """(bound name, line) for one import statement."""
+    if isinstance(node, ast.Import):
+        return [(alias.asname or alias.name.split(".")[0], node.lineno) for alias in node.names]
+    if isinstance(node, ast.ImportFrom) and node.module:
+        return [
+            (alias.asname or alias.name, node.lineno) for alias in node.names if alias.name != "*"
+        ]
+    return []
+
+
 def _py_imported_names(tree: ast.AST) -> list[tuple[str, int]]:
     """Collect (bound name, line) for every import in the module."""
     imported: list[tuple[str, int]] = []
     for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                name = alias.asname or alias.name.split(".")[0]
-                imported.append((name, node.lineno))
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            for alias in node.names:
-                if alias.name != "*":
-                    name = alias.asname or alias.name
-                    imported.append((name, node.lineno))
+        imported.extend(_import_aliases(node))
     return imported
 
 
@@ -223,6 +226,15 @@ def collect_js_dependencies(root: Path) -> set[str]:
     return deps
 
 
+def _is_declared(top: str, declared: set[str]) -> bool:
+    """True when the module is declared, under any spelling convention."""
+    norm = top.lower().replace("_", "-")
+    aliased = PY_IMPORT_ALIASES.get(top, "").lower()
+    if norm in declared or (aliased and aliased in declared):
+        return True
+    return norm.replace("-", "") in {d.replace("-", "") for d in declared}
+
+
 def _py_undeclared_findings(
     path: Path,
     text: str,
@@ -239,13 +251,7 @@ def _py_undeclared_findings(
         if top in seen:
             continue
         seen.add(top)
-        norm = top.lower().replace("_", "-")
-        if top in STD_LIB_NAMES or top in local:
-            continue
-        aliased = PY_IMPORT_ALIASES.get(top, "").lower()
-        if norm in declared or (aliased and aliased in declared):
-            continue
-        if norm.replace("-", "") in {d.replace("-", "") for d in declared}:
+        if top in STD_LIB_NAMES or top in local or _is_declared(top, declared):
             continue
         findings.append(
             _finding(

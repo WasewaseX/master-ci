@@ -284,6 +284,27 @@ Profile presets (quick / standard / strict / custom) only change the
   does not carry. A related accuracy fix: a *scoped* `# type:
   ignore[code]` names its rule and no longer counts toward
   `blanket-suppression` - only bare suppressions do.
+- **v1.20 - cognitive complexity across languages:** the second
+  tree-backed measure, on top of the unified parse. `slop_cognitive.py`
+  reads real tree-sitter syntax trees (one mature parser, grammars for
+  Python, JS/TS/JSX/TSX, Go, JVM, C#, C/C++, Ruby, PHP, Rust, Swift,
+  Dart and Kotlin/Scala) and scores every function the way a reader
+  experiences it, following Sonar's model: control structures cost 1
+  plus their nesting depth, branch labels (else, case arms) cost 1,
+  each new run of the same logical operator costs 1, direct recursion
+  costs 1, and a nested function resets the nesting counter - a reader
+  starts over inside a closure. The new `high-cognitive` check reports
+  functions over the budget of 15 (Sonar's own "moderately complex"
+  threshold); advisory by default, escalated by `--enforce-bloat`
+  alongside the other structural budgets, categorized under
+  **Maintainability**. Where no tree is available - the optional
+  parser is missing, the file is SFC markup, or the source is too
+  malformed to parse - the check reports nothing rather than guessing
+  from line shapes. Wiring this gate in held the template's own
+  codebase to its own standard: fourteen engine functions (and one
+  contract test) were flattened below the budget before release, and
+  the dogfood self-scan is 0 findings, all seven dimensions A(0), at
+  max strictness.
 - **Round-7 scanaislop adoption (blocking-grade, opt-in):** the
   "Custom Architecture Rules" from the scanaislop docs. A
   `.ai-integrity-arch.json` at the scan root declares the project's

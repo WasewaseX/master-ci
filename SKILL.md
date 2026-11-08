@@ -16,11 +16,11 @@ drift.
 ## Install (one command)
 
 Clone the repository into your skills directory, pinned to the current
-release tag (v1.19.0 - one clear stable baseline, kept in lockstep with
+release tag (v1.20.0 - one clear stable baseline, kept in lockstep with
 the MCP server version and the GitHub Release):
 
 ```bash
-git clone --depth 1 --branch v1.19.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+git clone --depth 1 --branch v1.20.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
 ```
 
 MCP clients configure it the same way Claude Desktop does:
@@ -42,8 +42,8 @@ If your client has no MCP support, call the engines directly as CLI:
 for the scan and `python3 <skills-dir>/master-ci/scripts/fix_engine.py
 --root <repo> --tier safe` for fixes. Pass `--enforce-bloat` to escalate
 the structural-budget family (file size, parameter count, comment ratio,
-banners, function length, nesting, chained dict-gets, cyclomatic
-complexity) from advisory to
+banners, function length, nesting, chained dict-gets, cyclomatic and
+cognitive complexity) from advisory to
 blocking - the same flag the CI template's `strict` profile passes, and
 the same standards the template's own codebase passes under.
 

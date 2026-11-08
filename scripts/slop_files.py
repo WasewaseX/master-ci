@@ -25,6 +25,27 @@ def load_phrases() -> dict:
         return json.load(handle)
 
 
+def _scannable_name(path: Path) -> bool:
+    """Name-level filters: skip dirs, dotfiles and generated trees."""
+    if path.name in SKIP_DIRS or path.name.startswith("."):
+        return False
+    return not SKIP_PATTERN.search(path.name)
+
+
+def _readable_source(path: Path) -> bool:
+    """Size and encoding gates: text we can actually scan."""
+    suffix = path.suffix.lower()
+    if suffix not in CODE_EXTS and suffix not in DOC_EXTS and suffix not in UI_EXTS:
+        return False
+    try:
+        if path.stat().st_size > MAX_FILE_BYTES:
+            return False
+        path.read_text(encoding="utf-8", errors="strict")
+    except (OSError, UnicodeDecodeError):
+        return False
+    return True
+
+
 def iter_files(root: Path) -> list[Path]:
     files: list[Path] = []
     if root.is_file():
@@ -35,21 +56,31 @@ def iter_files(root: Path) -> list[Path]:
         rel_parts = path.relative_to(root).parts
         if any(part in SKIP_DIRS or part.startswith(".") for part in rel_parts[:-1]):
             continue
-        if path.name in SKIP_DIRS or path.name.startswith("."):
-            continue
-        if SKIP_PATTERN.search(path.name):
-            continue
-        suffix = path.suffix.lower()
-        if suffix not in CODE_EXTS and suffix not in DOC_EXTS and suffix not in UI_EXTS:
-            continue
-        try:
-            if path.stat().st_size > MAX_FILE_BYTES:
-                continue
-            path.read_text(encoding="utf-8", errors="strict")
-        except (OSError, UnicodeDecodeError):
+        if not _scannable_name(path) or not _readable_source(path):
             continue
         files.append(path)
     return files
+
+
+def _ignore_lines(ignore_path: Path) -> list[str]:
+    try:
+        return ignore_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+
+
+def _rule_from_line(
+    line: str, globs: list[str], disabled: set[str], scoped: dict[str, list[str]]
+) -> None:
+    if line.lower().startswith("check:"):
+        parts = line.split(":", 2)
+        check_id = parts[1].strip().lower()
+        if len(parts) == 3 and parts[2].strip():
+            scoped.setdefault(check_id, []).append(parts[2].strip())
+        else:
+            disabled.add(check_id)
+    else:
+        globs.append(line.rstrip("/"))
 
 
 def load_ignore_rules(root: Path) -> tuple[list[str], set[str], dict[str, list[str]]]:
@@ -64,25 +95,11 @@ def load_ignore_rules(root: Path) -> tuple[list[str], set[str], dict[str, list[s
     disabled: set[str] = set()
     scoped: dict[str, list[str]] = {}
     ignore_path = root if root.is_dir() else root.parent
-    ignore_path = ignore_path / IGNORE_FILE
-    if ignore_path.is_file():
-        try:
-            lines = ignore_path.read_text(encoding="utf-8").splitlines()
-        except OSError:
-            lines = []
-        for raw in lines:
-            line = raw.strip()
-            if not line or line.startswith("#"):
-                continue
-            if line.lower().startswith("check:"):
-                parts = line.split(":", 2)
-                check_id = parts[1].strip().lower()
-                if len(parts) == 3 and parts[2].strip():
-                    scoped.setdefault(check_id, []).append(parts[2].strip())
-                else:
-                    disabled.add(check_id)
-            else:
-                globs.append(line.rstrip("/"))
+    for raw in _ignore_lines(ignore_path / IGNORE_FILE):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        _rule_from_line(line, globs, disabled, scoped)
     return globs, disabled, scoped
 
 

@@ -1094,7 +1094,7 @@ jobs:
           # the pin list is meant to word-split:
           # shellcheck disable=SC2046
           python -m pip install --quiet \
-            $(python3 _ci/scripts/tool_versions.py pip ruff mypy vulture lizard pytest)
+            $(python3 _ci/scripts/tool_versions.py pip ruff mypy vulture lizard pytest tree-sitter tree-sitter-language-pack)
       - name: Ruff lint
         run: |
           { [ -f ruff.toml ] || [ -f .ruff.toml ]; } || \

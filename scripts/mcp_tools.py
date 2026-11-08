@@ -15,7 +15,7 @@ from typing import Any
 
 SCRIPTS = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPTS.parent
-SERVER_VERSION = "1.19.0"
+SERVER_VERSION = "1.20.0"
 DEFAULT_REPO_SLUG = "WasewaseX/master-ci"
 DEFAULT_GH_API = "https://api.github.com"
 UPDATE_TIMEOUT_SECONDS = 10.0
@@ -155,6 +155,21 @@ def tool_scan_slop(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _git_names(root: Path, args: list[str], required: bool) -> list[str]:
+    """Output lines of one git name-only query; required failures raise."""
+    out = subprocess.run(
+        ["git", "-C", str(root), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if out.returncode != 0:
+        if required:
+            raise ValueError(f"git {' '.join(args)} failed: {out.stderr.strip()[:200]}")
+        return []
+    return [line for line in out.stdout.splitlines() if line]
+
+
 def _changed_files(root: Path, base: str, include_uncommitted: bool) -> list[str]:
     """Changed paths for scan_diff: git diff against base, optionally vs HEAD.
 
@@ -166,32 +181,10 @@ def _changed_files(root: Path, base: str, include_uncommitted: bool) -> list[str
     """
     paths: list[str] = []
     if base:
-        out = subprocess.run(
-            ["git", "-C", str(root), "diff", "--name-only", base],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if out.returncode != 0:
-            raise ValueError(f"git diff failed: {out.stderr.strip()[:200]}")
-        paths.extend(line for line in out.stdout.splitlines() if line)
+        paths.extend(_git_names(root, ["diff", "--name-only", base], required=True))
     if include_uncommitted:
-        out = subprocess.run(
-            ["git", "-C", str(root), "diff", "--name-only", "HEAD"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if out.returncode == 0:
-            paths.extend(line for line in out.stdout.splitlines() if line)
-    untracked = subprocess.run(
-        ["git", "-C", str(root), "ls-files", "--others", "--exclude-standard"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if untracked.returncode == 0:
-        paths.extend(line for line in untracked.stdout.splitlines() if line)
+        paths.extend(_git_names(root, ["diff", "--name-only", "HEAD"], required=False))
+    paths.extend(_git_names(root, ["ls-files", "--others", "--exclude-standard"], required=False))
     return sorted(set(paths))
 
 

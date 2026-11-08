@@ -77,6 +77,7 @@ CHECK_CATEGORIES: dict[str, str] = {
     # Maintainability: design debt and hygiene, judged per codebase.
     "bloat-param-count": "maintainability",
     "high-cyclomatic": "maintainability",
+    "high-cognitive": "maintainability",
     "mutable-default": "maintainability",
     "star-import": "maintainability",
     "range-len-loop": "maintainability",

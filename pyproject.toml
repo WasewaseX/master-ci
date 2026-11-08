@@ -8,8 +8,15 @@ extend-exclude = ["_ci", "fixtures"]
 # pyyaml backs the optional live filter loading in path_filters.py and
 # tool_versions.py; both fall back to bundled JSON when it is absent.
 # lizard backs the unified syntax-tree parse in slop_lizard.py; without
-# it the structural budgets degrade to the line scanner.
-scanner = ["pyyaml>=6.0", "lizard>=1.17"]
+# it the structural budgets degrade to the line scanner. tree-sitter
+# backs the cognitive-complexity measure in slop_cognitive.py; without
+# it that check reports nothing rather than guessing.
+scanner = [
+    "pyyaml>=6.0",
+    "lizard>=1.17",
+    "tree-sitter>=0.21",
+    "tree-sitter-language-pack>=0.6",
+]
 # the contract-test suite (tests/) runs under stock pytest.
 test = ["pytest>=8.0"]
 

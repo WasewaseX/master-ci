@@ -911,34 +911,40 @@ def test_event_filters_are_clean_pattern_lists():
     filters are lists, patterns carry no stray brackets, and the
     self-loop workflows push-target exactly the default branch.
     """
-    filter_keys = (
-        "branches",
-        "branches-ignore",
-        "tags",
-        "tags-ignore",
-        "paths",
-        "paths-ignore",
-    )
-    for wf in WORKFLOWS:
+
+    def assert_clean_filter(wf_name: str, event: str, key: str, value) -> None:
+        assert isinstance(value, list) and all(isinstance(p, str) for p in value), (
+            f"{wf_name}: {event}.{key} must be a list of strings, got {value!r}"
+        )
+        for pattern in value:
+            assert "[" not in pattern and "]" not in pattern, (
+                f"{wf_name}: {event}.{key} pattern {pattern!r} contains a stray "
+                "bracket - this repository does not use character-class globs"
+            )
+
+    def assert_trigger_filters(wf) -> None:
         data = load(wf)
         trigger = data[True] if True in data else data.get("on") or {}
         if not isinstance(trigger, dict):
-            continue
+            return
+        filter_keys = (
+            "branches",
+            "branches-ignore",
+            "tags",
+            "tags-ignore",
+            "paths",
+            "paths-ignore",
+        )
         for event, spec in trigger.items():
             if not isinstance(spec, dict):
                 continue
             for key in filter_keys:
-                value = spec.get(key)
-                if value is None:
-                    continue
-                assert isinstance(value, list) and all(isinstance(p, str) for p in value), (
-                    f"{wf.name}: {event}.{key} must be a list of strings, got {value!r}"
-                )
-                for pattern in value:
-                    assert "[" not in pattern and "]" not in pattern, (
-                        f"{wf.name}: {event}.{key} pattern {pattern!r} contains a stray "
-                        "bracket - this repository does not use character-class globs"
-                    )
+                if spec.get(key) is not None:
+                    assert_clean_filter(wf.name, event, key, spec[key])
+
+    for wf in WORKFLOWS:
+        assert_trigger_filters(wf)
+    assert WORKFLOWS, "the workflow inventory must not be empty"
 
 
 def test_self_loop_workflows_push_target_main():
@@ -1109,7 +1115,8 @@ def test_deploy_aws_is_oidc_first_and_fails_closed():
 def test_pin_resolver_contract():
     text = (WF_DIR / "master-ci.yml").read_text()
     assert (
-        "pip install --quiet \\\n            $(python3 _ci/scripts/tool_versions.py pip ruff mypy vulture lizard pytest)"
+        "pip install --quiet \\\n            $(python3 _ci/scripts/tool_versions.py"
+        " pip ruff mypy vulture lizard pytest tree-sitter tree-sitter-language-pack)"
     ) in text, "the multi-tool pin install must stay unquoted so pins word-split"
     assert "markdownlint-cli2@markdownlint-cli2" not in text, "double-prefixed npm package name"
     assert "markdownlint-cli2@" not in text, "docs job must take the resolver output verbatim"

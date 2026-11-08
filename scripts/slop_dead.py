@@ -101,6 +101,20 @@ def _deadness_texts(files: list[Path]) -> dict[Path, str]:
     return texts
 
 
+def _harvest_one(
+    candidates: dict[str, Candidate],
+    path: Path,
+    text: str,
+) -> None:
+    """Add one file's top-level definitions to the candidate map."""
+    if path.suffix.lower() == ".py":
+        for name, lineno in _py_toplevel_names(path, text):
+            candidates.setdefault(name, (path, lineno, None))
+    elif path.suffix.lower() in _JS_EXTS:
+        for match in _JS_EXPORT.finditer(text):
+            candidates.setdefault(match.group(1), (path, None, match.start()))
+
+
 def _harvest_candidates(
     root: Path,
     files: list[Path],
@@ -116,12 +130,7 @@ def _harvest_candidates(
             continue
         if is_ignored(rel, globs) or is_test_path(rel) or path not in texts:
             continue
-        if path.suffix.lower() == ".py":
-            for name, lineno in _py_toplevel_names(path, texts[path]):
-                candidates.setdefault(name, (path, lineno, None))
-        elif path.suffix.lower() in _JS_EXTS:
-            for match in _JS_EXPORT.finditer(texts[path]):
-                candidates.setdefault(match.group(1), (path, None, match.start()))
+        _harvest_one(candidates, path, texts[path])
     return candidates
 
 
