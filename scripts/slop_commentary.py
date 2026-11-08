@@ -35,6 +35,7 @@ from slop_patterns import (
     SUPPRESSION_DIRECTIVE,
     TOOL_CONFIG_GLOBS,
     TOOL_MANIFEST_FILES,
+    _strip_strings,
 )
 
 PROSE_BLOCK_MIN = 5  # consecutive narrating comments that become prose
@@ -305,7 +306,9 @@ def check_unknown_directives(root: Path, files: list[Path], globs: list[str]) ->
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        for idx, raw in enumerate(text.splitlines(), start=1):
+        # String literals may name a directive (regex tables, docs);
+        # only real comment lines can suppress anything.
+        for idx, raw in enumerate(_strip_strings(text).splitlines(), start=1):
             tool = _directive_tool(raw)
             if tool is not None and tool not in configured:
                 findings.append(

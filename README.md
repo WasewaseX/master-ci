@@ -81,7 +81,7 @@ which keeps its baseline reproducible across template releases:
 ```yaml
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v1.15.0
+      template_ref: v1.16.0
 ```
 
 ### Required check
@@ -297,7 +297,7 @@ Advisory rules (never fail a build; reported, annotated, SARIF `warning`):
 | Suppression abuse | `lint-escape`, `blanket-suppression`, `ts-suppression` |
 | Code smells | `god-function` (>100 lines, every language family), `deep-nesting` (>5 levels, every family), `bloat-long-file` (>400 lines), `bloat-param-count` (>7 parameters), `bloat-comment-ratio` (>50% comments), `bloat-banner-comments` (bunched banner padding), `placeholder-naming`, `debug-print`, `unwrap-density`, `go-error-assigned-blank` |
 | Credentials | `placeholder-credential` (fake keys gitleaks ignores) |
-| UI slop | `ui-ai-gradient`, `ui-gradient-text`, `ui-marketing-copy`, `ui-placeholder-copy`, `ui-emoji-decor` |
+| UI slop | `ui-ai-gradient`, `ui-gradient-text`, `ui-marketing-copy`, `ui-placeholder-copy`, `ui-emoji-decor`, `ui-eyebrow-label`, `ui-italic-serif-hero`, `ui-fake-stats`, `ui-generic-testimonial`, `ui-not-just-x`, `ui-triple-slogan`, `ui-glass-glow`, `ui-decorative-numbering`, `ui-placeholder-image`, `ui-identical-cards`, `ui-em-dash-overuse` |
 | Prose | `ai-prose`, `humanizer`, `em-dash-density`, `rule-of-three`, `rhetorical-questions`, `exclamations`, `md-emoji-headings`, `md-residue`, `step-comments`, `placeholder-note` |
 | Provenance | `ai-provenance` (generation banners, AI co-author trailers), `missing-tests` (repo inventory) |
 
@@ -597,7 +597,7 @@ carries a `SKILL.md`, so assistants with a skills directory can load it
 with one command:
 
 ```bash
-git clone --depth 1 --branch v1.15.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+git clone --depth 1 --branch v1.16.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
 ```
 
 MCP clients configure the same install like this:

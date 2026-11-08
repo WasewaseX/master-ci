@@ -12,6 +12,7 @@ from slop_patterns import (
     CREDIT_VALUE_PATTERN,
     EMPTY_CATCH,
     EMPTY_RESCUE,
+    EVAL_USAGE,
     GO_BLANK_ERR,
     GO_DEBUG_PRINT,
     GO_IGNORED_ERROR,
@@ -266,6 +267,17 @@ def check_js_slop(path: Path, text: str, family: str, rel: str) -> list[Finding]
                 match.start(),
                 "ts-suppression",
                 f"type-system bypass {match.group(0)!r}",
+                1,
+            )
+        )
+    for match in EVAL_USAGE.finditer(text):
+        findings.append(
+            _finding(
+                path,
+                text,
+                match.start(),
+                "eval-usage",
+                f"dynamic evaluation {match.group(0)!r} - the checker cannot see what runs",
                 1,
             )
         )

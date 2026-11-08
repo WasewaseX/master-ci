@@ -91,7 +91,7 @@ class FilterSet:
 
 def load_filters(workflow: Path) -> dict[str, FilterSet]:
     """Parse the filter table straight out of a master-ci workflow file."""
-    import yaml  # local import: only needed when a live workflow is parsed
+    import yaml  # type: ignore[import-untyped]  # local import: only needed when a live workflow is parsed
 
     data = yaml.safe_load(workflow.read_text(encoding="utf-8"))
     changes = data["jobs"]["changes"]
@@ -133,6 +133,10 @@ def stacks_for_paths(paths: list[str], filters: dict[str, FilterSet]) -> frozens
     return frozenset(fired)
 
 
+def stacks_for(path: str) -> frozenset[str]:
+    return frozenset(name for name, fs in FILTERS.items() if fs.matches(path))
+
+
 # module-level convenience for the regression suite (this repository)
 _REPO = Path(__file__).resolve().parents[1]
 _LIVE = _REPO / ".github" / "workflows" / "master-ci.yml"
@@ -140,7 +144,3 @@ if _LIVE.is_file():
     FILTERS = load_filters(_LIVE)
 else:  # pragma: no cover - only reachable when the module is vendored out
     FILTERS = load_fallback_filters()
-
-
-def stacks_for(path: str) -> frozenset[str]:
-    return frozenset(name for name, fs in FILTERS.items() if fs.matches(path))

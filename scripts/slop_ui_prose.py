@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 from pathlib import Path
 
 from slop_comments import phrase_findings
 from slop_model import Finding, _finding
-from slop_patterns import (
-    DOC_EXTS,
-    EMOJI_PATTERN,
-    MD_EMOJI_HEADING,
-    MD_RESIDUE,
+from slop_patterns import DOC_EXTS, EMOJI_PATTERN, MD_EMOJI_HEADING, MD_RESIDUE, WORD_PATTERN
+from slop_ui_patterns import (
+    UI_CARD_CLASS,
     UI_DECORATIVE_NUMBERS,
+    UI_EM_DASH_MIN,
     UI_EXTS,
     UI_EYEBROW,
     UI_FAKE_STATS,
@@ -24,8 +24,8 @@ from slop_patterns import (
     UI_MARKETING,
     UI_NOT_JUST,
     UI_PLACEHOLDER,
+    UI_PLACEHOLDER_IMAGE,
     UI_TRIPLE_SLOGAN,
-    WORD_PATTERN,
 )
 
 
@@ -127,6 +127,17 @@ def _design_sign_findings(path: Path, text: str) -> list[Finding]:
         add("ui-glass-glow", "2+ backdrop-blur glass effects in one file")
     if len(UI_DECORATIVE_NUMBERS.findall(text)) >= 3:
         add("ui-decorative-numbering", "3+ decorative zero-padded numbers (01/02/03)")
+    if UI_PLACEHOLDER_IMAGE.search(text):
+        add("ui-placeholder-image", "placeholder image service stands in for a real photo")
+    dashes = text.count("\u2014")
+    if dashes >= UI_EM_DASH_MIN:
+        add("ui-em-dash-overuse", f"{dashes} em dashes in one file (the em dash, everywhere)")
+    for cls, count in Counter(UI_CARD_CLASS.findall(text)).most_common(1):
+        if count >= 4:
+            add(
+                "ui-identical-cards",
+                f"same class string repeated {count}x - one template, not {count} designs",
+            )
     return findings
 
 

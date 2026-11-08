@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import ast
+from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 from slop_model import Finding, _finding
 from slop_patterns import ELIDED_PATTERNS, PLACEHOLDER_IMPL_PATTERNS, PLACEHOLDER_NOTE_PATTERNS
@@ -296,6 +298,47 @@ def _py_handler_findings(path: Path, node: ast.ExceptHandler) -> list[Finding]:
     ]
 
 
+def _py_eval_findings(path: Path, node: ast.Call) -> list[Finding]:
+    """scanaislop round-6: eval()/exec() compile strings nobody reviewed."""
+    if isinstance(node.func, ast.Name) and node.func.id in {"eval", "exec"}:
+        return [
+            Finding(
+                path=str(path),
+                line=node.lineno,
+                check="eval-usage",
+                message=f"dynamic {node.func.id}() on a runtime-built string",
+                weight=1,
+                advisory=True,
+            )
+        ]
+    return []
+
+
+def _py_star_import(path: Path, node: ast.ImportFrom) -> list[Finding]:
+    """`from x import *` hides what a module actually provides."""
+    if node.module and node.names and any(a.name == "*" for a in node.names):
+        return [
+            Finding(
+                path=str(path),
+                line=node.lineno,
+                check="star-import",
+                message=f"star import from {node.module!r}",
+                weight=1,
+                advisory=True,
+            )
+        ]
+    return []
+
+
+_PY_NODE_CHECKS: dict[type[ast.AST], object] = {
+    ast.FunctionDef: _py_def_findings,
+    ast.AsyncFunctionDef: _py_def_findings,
+    ast.ExceptHandler: _py_handler_findings,
+    ast.Call: _py_eval_findings,
+    ast.ImportFrom: _py_star_import,
+}
+
+
 def check_py_ast(path: Path, text: str, family: str) -> list[Finding]:
     """AST-backed Python checks: stubs, empty tests, exceptions, smells."""
     if family != "py":
@@ -306,22 +349,10 @@ def check_py_ast(path: Path, text: str, family: str) -> list[Finding]:
         return []
     findings: list[Finding] = []
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            findings.extend(_py_def_findings(path, node))
-        elif isinstance(node, ast.ExceptHandler):
-            findings.extend(_py_handler_findings(path, node))
-        elif isinstance(node, ast.ImportFrom) and node.module and node.names:
-            if any(a.name == "*" for a in node.names):
-                findings.append(
-                    Finding(
-                        path=str(path),
-                        line=node.lineno,
-                        check="star-import",
-                        message=f"star import from {node.module!r}",
-                        weight=1,
-                        advisory=True,
-                    )
-                )
+        handler = _PY_NODE_CHECKS.get(type(node))
+        if handler is not None:
+            fn = cast("Callable[[Path, ast.AST], list[Finding]]", handler)
+            findings.extend(fn(path, node))
     if _has_chained_dict_get(tree):
         findings.append(
             Finding(

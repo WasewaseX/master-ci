@@ -241,6 +241,23 @@ Profile presets (quick / standard / strict / custom) only change the
   `phantom-import` extends to Java imports (the simple name must appear
   outside its import lines; wildcard imports are exempt). Test sources
   are exempt from all three.
+- **Round-6 scanaislop adoption (advisory):** the last tells from the
+  four slop sources - dynamic evaluation plus the design signs the
+  earlier rounds had not yet covered. `eval-usage` reports `eval()` and
+  `new Function()` in JS/TS and AST-verified `eval()`/`exec()` call
+  nodes in Python (test sources are exempt on the JS side).
+  `ui-placeholder-image` flags the placeholder-image services
+  (picsum.photos, placehold.co, via.placeholder.com, pravatar.cc,
+  dummyimage.com, ...) that stand in for photos nobody chose (tenex
+  sign 5, noqode sign 7). `ui-identical-cards` reports a class string
+  of 30+ characters repeated four or more times in one frontend file -
+  one template multiplied, not N designed blocks (tenex sign 7, noqode
+  sign 3). `ui-em-dash-overuse` flags eight or more em dashes in one
+  frontend file ("the em dash, everywhere" - tenex sign 1). The UI
+  regex tables moved to `slop_ui_patterns.py`, keeping the shared
+  pattern module under the same 400-line budget the detector enforces
+  on others, and the unknown-directive scan now strips string literals
+  first so regex tables cannot self-report.
 - **Scoring refinements (scanaislop-aligned):** advisory pressure is
   tier-weighted - maintainability debts (bloat, god-function, deep
   nesting, dispatch ladders) press at 0.75x, mechanical residue

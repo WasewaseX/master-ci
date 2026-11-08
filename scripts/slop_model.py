@@ -262,6 +262,12 @@ ADVISORY_ONLY_CHECKS = frozenset(
         "unused-dependency",
         # scanaislop round-5 adoption (languages page): broad Java throws.
         "java-broad-throws",
+        # scanaislop round-6 adoption: dynamic evaluation and the
+        # placeholder-image / identical-cards / em-dash design tells.
+        "eval-usage",
+        "ui-placeholder-image",
+        "ui-identical-cards",
+        "ui-em-dash-overuse",
     }
 )
 

@@ -1415,3 +1415,118 @@ def test_jvm_slop_skips_test_sources(tmp_path):
     findings = scan(tmp_path, {"src/test/java/FetcherTest.java": java})
     checks = {f.check for f in findings}
     assert not (checks & {"java-broad-throws", "debug-print"})
+
+
+# scanaislop round-6: dynamic evaluation (eval / new Function / exec) plus
+# the design tells still missing from round-2's UI family - placeholder
+# image services, identical card grids, em-dash overuse (tenex sign 1).
+
+
+def test_round6_checks_all_advisory():
+    for check in ("eval-usage", "ui-placeholder-image", "ui-identical-cards", "ui-em-dash-overuse"):
+        assert check in mod.ADVISORY_ONLY_CHECKS
+        assert check not in mod.BLOCKING_CHECKS
+
+
+def test_eval_usage_js(tmp_path):
+    findings = scan(tmp_path, {"a.js": "const v = eval(userInput);\n"})
+    hits = [f for f in findings if f.check == "eval-usage"]
+    assert len(hits) == 1 and "eval" in hits[0].message
+    assert hits[0].advisory
+
+
+def test_eval_usage_new_function(tmp_path):
+    findings = scan(tmp_path, {"a.ts": "const f = new Function('x', 'return x');\n"})
+    assert any(f.check == "eval-usage" for f in findings)
+
+
+def test_eval_usage_python(tmp_path):
+    code = "def run(expr):\n    return eval(expr)\n"
+    findings = scan(tmp_path, {"r.py": code})
+    hits = [f for f in findings if f.check == "eval-usage"]
+    assert len(hits) == 1 and hits[0].line == 2
+
+
+def test_eval_usage_clean_code_silent(tmp_path):
+    findings = scan(tmp_path, {"c.py": "def add(a, b):\n    return a + b\n\nprint(add(1, 2))\n"})
+    assert not any(f.check == "eval-usage" for f in findings)
+
+
+def test_placeholder_image_service(tmp_path):
+    html = '<img src="https://picsum.photos/800/600" alt="team">\n'
+    findings = scan(tmp_path, {"index.html": html})
+    hits = [f for f in findings if f.check == "ui-placeholder-image"]
+    assert len(hits) == 1 and hits[0].advisory
+
+
+def test_placeholder_image_covers_major_services(tmp_path):
+    for host in ("placehold.co", "via.placeholder.com", "pravatar.cc", "dummyimage.com"):
+        html = f'<img src="https://{host}/300" alt="x">\n'
+        findings = scan(tmp_path, {"index.html": html})
+        assert any(f.check == "ui-placeholder-image" for f in findings), host
+
+
+def test_real_image_url_not_flagged(tmp_path):
+    html = '<img src="/assets/team-photo.jpg" alt="our team">\n'
+    findings = scan(tmp_path, {"index.html": html})
+    assert not any(f.check == "ui-placeholder-image" for f in findings)
+
+
+def test_identical_cards_fire(tmp_path):
+    card = 'className="rounded-xl bg-white p-6 shadow-md hover:scale-105 transition"'
+    body = "\n".join(f'<div className="card">{card}</div>' for _ in range(6))
+    findings = scan(tmp_path, {"grid.tsx": body})
+    hits = [f for f in findings if f.check == "ui-identical-cards"]
+    assert len(hits) == 1 and "6x" in hits[0].message
+
+
+def test_distinct_classes_not_flagged(tmp_path):
+    rows = [
+        f'className="rounded-xl bg-{c}-100 p-6 shadow-md transition hover:shadow-lg"'
+        for c in ("slate", "emerald", "amber", "sky", "rose", "violet")
+    ]
+    body = "\n".join(f'<div className="card">{r}</div>' for r in rows)
+    findings = scan(tmp_path, {"grid.tsx": body})
+    assert not any(f.check == "ui-identical-cards" for f in findings)
+
+
+def test_em_dash_overuse_ui(tmp_path):
+    html = "<p>" + ("one — two — " * 6) + "</p>\n"  # 12 em dashes
+    findings = scan(tmp_path, {"copy.html": html})
+    hits = [f for f in findings if f.check == "ui-em-dash-overuse"]
+    assert len(hits) == 1 and "12" in hits[0].message
+
+
+def test_few_em_dashes_not_flagged(tmp_path):
+    html = "<p>one — two — three</p>\n"
+    findings = scan(tmp_path, {"copy.html": html})
+    assert not any(f.check == "ui-em-dash-overuse" for f in findings)
+
+
+def test_sibling_modules_not_undeclared(tmp_path):
+    # Flat script layout: a file in scripts/ importing its sibling must
+    # not be flagged - the repo-root scan walks one directory down.
+    findings = scan(
+        tmp_path,
+        {
+            "scripts/alpha.py": "import beta\n\nprint(beta.run())\n",
+            "scripts/beta.py": "def run():\n    return 1\n",
+        },
+    )
+    assert not [f for f in findings if f.check == "undeclared-import"]
+
+
+def test_dependency_groups_declare_imports(tmp_path):
+    (tmp_path / "pyproject.toml").write_text(
+        '[dependency-groups]\nscanner = ["pyyaml>=6.0"]\n',
+        encoding="utf-8",
+    )
+    findings = scan(tmp_path, {"t.py": "import yaml\n\nprint(yaml)\n"})
+    assert not [f for f in findings if f.check == "undeclared-import"]
+
+
+def test_directive_in_string_literal_not_flagged(tmp_path):
+    # A regex table mentioning eslint-disable is not a suppression.
+    code = 'PATTERN = re.compile(r"(?://)\\s*eslint-disable(?:\\s|$)")\n'
+    findings = scan(tmp_path, {"p.py": code})
+    assert not [f for f in findings if f.check == "unknown-directive"]

@@ -4,6 +4,13 @@ line-length = 100
 # broken formatting - the detector scans them, the formatter does not.
 extend-exclude = ["_ci", "fixtures"]
 
+[dependency-groups]
+# pyyaml backs the optional live filter loading in path_filters.py and
+# tool_versions.py; both fall back to bundled JSON when it is absent.
+scanner = ["pyyaml>=6.0"]
+# the contract-test suite (tests/) runs under stock pytest.
+test = ["pytest>=8.0"]
+
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
 ignore = ["E501"]

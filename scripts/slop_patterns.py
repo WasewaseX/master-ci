@@ -6,6 +6,10 @@ import re
 import sys
 from pathlib import Path
 
+# The UI design-tell regexes live in slop_ui_patterns (noqode/tenex
+# translations); UI_EXTS is re-exported here for the existing importers.
+from slop_ui_patterns import UI_EXTS  # noqa: F401
+
 
 def _line_of(text: str, pos: int) -> int:
     """1-based line number for a character offset."""
@@ -80,7 +84,6 @@ CODE_EXTS = {
     ".svelte",
     ".astro",
 }
-UI_EXTS = {".css", ".scss", ".less", ".html", ".htm"}
 DOC_EXTS = {".md", ".mdx", ".rst", ".txt"}
 
 FAMILY_OF_EXT = {
@@ -197,6 +200,9 @@ RUST_STUB = re.compile(r"\b(?:todo|unimplemented)!\s*\(")
 RUST_UNWRAP = re.compile(r"\.unwrap\(\)")
 DEBUGGER_LEFT = re.compile(r"^\s*(?:debugger;\s*$|binding\.pry\b|byebug\b)", re.MULTILINE)
 JS_CONSOLE_LOG = re.compile(r"\bconsole\.log\s*\(")
+# scanaislop round-6 adoption: dynamic evaluation. eval() and new Function()
+# compile strings at runtime - the interpreter cannot check what runs.
+EVAL_USAGE = re.compile(r"\beval\s*\(|\bnew\s+Function\s*\(")
 TS_SUPPRESSION = re.compile(
     r"@(?:ts-ignore|ts-nocheck|ts-expect-error)|:\s*any\b"
     r"|\bas\s+unknown\s+as\b|\bas\s+any\b"
@@ -300,21 +306,6 @@ HARDCODED_RECORD_ID = re.compile(
     r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
     r"|[A-Za-z0-9][A-Za-z0-9_-]{14,})[\"']"
 )
-UI_GRADIENT = re.compile(
-    r"from-(?:purple|pink|blue|indigo|violet|fuchsia)-\d00\s+to-(?:pink|purple|rose|fuchsia|violet)-\d00"
-    r"|linear-gradient\([^)]*(?:667eea|764ba2|a855f7|ec4899|8b5cf6)",
-    re.IGNORECASE,
-)
-UI_GRADIENT_TEXT = re.compile(r"bg-clip-text|text-transparent\s+bg-gradient")
-UI_MARKETING = re.compile(
-    r"revolutioniz\w*|game-?chang\w*|next-gen(?:eration)?\b|seamless(?:ly)?\b|"
-    r"cutting-edge|10,000\+|99\.9% uptime|happy users|trusted by thousands",
-    re.IGNORECASE,
-)
-UI_PLACEHOLDER = re.compile(
-    r"lorem ipsum|your (?:company|name|logo) here|yourusername|yourbrand|example\.com",
-    re.IGNORECASE,
-)
 MD_EMOJI_HEADING = re.compile(r"^#{1,6}\s+[^\n]*" + EMOJI_PATTERN.pattern, re.MULTILINE)
 MD_RESIDUE = re.compile(
     r"certainly!|here's (?:a|the) (?:comprehensive|revised|detailed|complete)|"
@@ -380,28 +371,3 @@ STD_LIB_NAMES = frozenset(getattr(sys, "stdlib_module_names", ()))
 
 
 TEST_DIRS = {"test", "tests", "spec", "specs", "__tests__"}
-
-
-# ---------------------------------------------------------------------------
-# Generic-AI design tells (tenex "8 signs", noqode "design IA generique")
-# ---------------------------------------------------------------------------
-UI_EYEBROW = re.compile(
-    r"""(?:class(?:Name)?\s*=\s*["'{][^"'}]*\b(?:eyebrow|overline|kicker)\b"""
-    r"""|\.(?:eyebrow|overline|kicker)\s*[{,])""",
-    re.IGNORECASE,
-)
-UI_ITALIC_HEADLINE = re.compile(r"<h[1-3][^>]*>[^<]*<(?:em|i)\b", re.IGNORECASE)
-UI_FAKE_STATS = re.compile(
-    r"\b\d[\d,.]*\s*\+?\s*(?:happy\s+)?"
-    r"(?:customers|users|teams|businesses|developers|companies|downloads|projects|integrations)\b"
-    r"|\btrusted by\b[^.\n]{0,40}\d",
-    re.IGNORECASE,
-)
-UI_GENERIC_TESTIMONIAL = re.compile(
-    r"[A-Z][a-z]+,\s+(?:CEO|CTO|COO|CMO|CFO|founder|co-founder"
-    r"|marketing director|head of [a-z]{3,25})\b"
-)
-UI_NOT_JUST = re.compile(r"\bnot (?:just|only)\b[^.!?\n]{1,40},\s*it'?s\b", re.IGNORECASE)
-UI_TRIPLE_SLOGAN = re.compile(r"\b[A-Z][a-z]+\. [A-Z][a-z]+\. [A-Z][a-z]+\.")
-UI_GLASS = re.compile(r"backdrop-filter:\s*blur|backdrop-blur\b")
-UI_DECORATIVE_NUMBERS = re.compile(r"\b0[1-9]\b")

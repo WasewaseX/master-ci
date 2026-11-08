@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from slop_model import Finding, _finding
-from slop_patterns import NODE_BUILTINS, PY_IMPORT_ALIASES, STD_LIB_NAMES
+from slop_patterns import NODE_BUILTINS, PY_IMPORT_ALIASES, SKIP_DIRS, STD_LIB_NAMES
 
 
 def check_phantom_imports(path: Path, text: str, family: str) -> list[Finding]:
@@ -142,7 +142,9 @@ def _parse_py_dep_tables(content: str, declared: set[str]) -> None:
 
 
 def _local_modules(root: Path) -> set[str]:
-    """Top-level importable module names in the project tree."""
+    """Importable module names in the project tree: top-level files,
+    packages, src layouts, and modules one directory down (flat script
+    layouts like scripts/ or src/, whose files import their siblings)."""
     local: set[str] = set()
     for entry in sorted(root.iterdir()):
         if entry.is_dir() and entry.name.startswith("."):
@@ -155,6 +157,21 @@ def _local_modules(root: Path) -> set[str]:
                     local.add(sub.name)
         elif entry.suffix == ".py":
             local.add(entry.stem)
+        if entry.is_dir() and entry.name in SKIP_DIRS:
+            continue
+        if entry.is_dir() and not (entry / "__init__.py").exists():
+            # Flat sibling layout: modules beside the importer resolve
+            # when the interpreter runs from that directory.
+            for py in sorted(entry.glob("*.py")):
+                local.add(py.stem)
+            for nested in sorted(entry.iterdir()):
+                if (
+                    nested.is_dir()
+                    and nested.name not in SKIP_DIRS
+                    and not nested.name.startswith(".")
+                ):
+                    for py in sorted(nested.glob("*.py")):
+                        local.add(py.stem)
     return local
 
 
