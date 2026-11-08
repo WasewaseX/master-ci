@@ -165,6 +165,25 @@ on:
         required: false
         type: number
         default: 5
+      coverage_min:
+        description: >-
+          Measured coverage floor in percent (0 = off). Above 0, the
+          Python/Go/Node stacks run tests under coverage and upload the
+          report as an artifact; ai-integrity consumes it and fails below
+          the floor. A requested floor with no report fails closed
+          (exit 2), never silently passes.
+        required: false
+        type: number
+        default: 0
+      diff_base:
+        description: >-
+          Git ref (e.g. origin/main) defining the new-code coverage
+          window: the same coverage_min floor then applies to the lines
+          the change adds (merge-base diff). Empty disables the
+          new-code gate.
+        required: false
+        type: string
+        default: ''
       scorecard_publish:
         description: Run and publish OSSF Scorecard (badge/API). false skips the whole job, so id-token is not needed.
         required: false
@@ -221,6 +240,8 @@ jobs:
       enforce_bloat: ${{ steps.profile.outputs.enforce_bloat }}
       ai_slop_max: ${{ steps.profile.outputs.ai_slop_max }}
       ai_slop_ceiling: ${{ steps.profile.outputs.ai_slop_ceiling }}
+      coverage_min: ${{ inputs.coverage_min }}
+      diff_base: ${{ inputs.diff_base }}
     steps:
       - name: Validate caller inputs
         env:
@@ -238,6 +259,8 @@ jobs:
           RUN_PHP: ${{ inputs.run_php }}
           RUN_DOCKER: ${{ inputs.run_docker }}
           SELECT: ${{ inputs.select }}
+          COVERAGE_MIN: ${{ inputs.coverage_min }}
+          DIFF_BASE: ${{ inputs.diff_base }}
         run: |
           # Untrusted caller input never reaches a checkout ref unvalidated,
           # and a typo must fail the run - never silently skip a stack.
@@ -285,6 +308,17 @@ jobs:
               done ;;
           esac
           echo "caller inputs validated (profile=$PROFILE)"
+          case "$COVERAGE_MIN" in
+            '') COVERAGE_MIN=0 ;;
+            *[!0-9.]*) die "coverage_min must be a non-negative number (got '$COVERAGE_MIN')" ;;
+          esac
+          for ref in $(printf '%s' "$DIFF_BASE"); do
+            [ -z "$ref" ] && continue
+            case "$ref" in
+              -*|*..*|*[!A-Za-z0-9._/-]*)
+                die "diff_base contains unsafe characters or sequences; use a branch, tag or commit SHA" ;;
+            esac
+          done
       - name: Resolve helper repo and ref
         id: repo
         env:
@@ -807,6 +841,8 @@ jobs:
       AI_CEILING: ${{ needs.meta.outputs.ai_slop_ceiling }}
       FAIL_SLOP: ${{ needs.meta.outputs.fail_ai_slop }}
       ENFORCE_BLOAT: ${{ needs.meta.outputs.enforce_bloat }}
+      COVERAGE_MIN: ${{ needs.meta.outputs.coverage_min }}
+      DIFF_BASE: ${{ needs.meta.outputs.diff_base }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Fetch master-ci helpers
@@ -817,16 +853,46 @@ jobs:
           path: _ci
           fetch-depth: 1
           persist-credentials: false
+      - name: Download coverage reports
+        # Stack jobs upload coverage-* artifacts when coverage_min > 0.
+        # continue-on-error: absent artifacts stay absent - the gate's own
+        # fail-closed discovery is what reports a missing report (exit 2),
+        # so the download must not mask it with its own error class.
+        if: env.COVERAGE_MIN != '0' && env.COVERAGE_MIN != ''
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: coverage-*
+          merge-multiple: true
+          path: coverage-reports
+      - name: Fetch diff base for the new-code gate
+        # The new-code gate diffs against diff_base (merge-base); the
+        # default shallow checkout does not carry other branches. A fetch
+        # failure fails loudly - the gate would exit 2 anyway.
+        if: env.DIFF_BASE != ''
+        run: git fetch --depth=1 origin "$DIFF_BASE"
       - name: Run AI-integrity heuristics
         run: |
           ENFORCE_ARGS=""
           if [ "$ENFORCE_BLOAT" = "true" ]; then
             ENFORCE_ARGS="--enforce-bloat"
           fi
+          COV_ARGS=""
+          if [ -n "$COVERAGE_MIN" ] && [ "$COVERAGE_MIN" != "0" ]; then
+            while IFS= read -r report; do
+              COV_ARGS="$COV_ARGS --coverage-report $report"
+            done < <(find coverage-reports -type f \
+              \( -name 'coverage.json' -o -name '*.xml' -o -name 'cover.out' \) 2>/dev/null)
+            COV_ARGS="$COV_ARGS --min-coverage $COVERAGE_MIN"
+            if [ -n "$DIFF_BASE" ]; then
+              COV_ARGS="$COV_ARGS --min-new-coverage $COVERAGE_MIN --diff-base $DIFF_BASE"
+            fi
+          fi
           python3 _ci/scripts/ai_slop_detector.py . \
             --max-score "$AI_MAX" \
             --max-slop-score "$AI_CEILING" \
             $ENFORCE_ARGS \
+            $COV_ARGS \
             --report-file ai_report.md \
             --sarif ai_integrity.sarif \
             --annotate
@@ -834,6 +900,12 @@ jobs:
           if [ -f ai_report.md ]; then
             echo "### AI integrity heuristics" >> "$GITHUB_STEP_SUMMARY"
             cat ai_report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ "$rc" -eq 2 ]; then
+            # Fail-closed configuration errors (invalid architecture config,
+            # unevaluable coverage gate) are never advisory: a gate that
+            # could not be evaluated must fail the run.
+            exit 2
           fi
           if [ "$FAIL_SLOP" != "true" ] && [ "$rc" -ne 0 ]; then
             echo "fail_on_ai_slop=false - reporting without failing"
@@ -992,6 +1064,8 @@ jobs:
       && ((inputs.run_node == 'auto' && needs.changes.outputs.node == 'true') || inputs.run_node == 'true')
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 25
+    env:
+      COVERAGE_MIN: ${{ needs.meta.outputs.coverage_min }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Fetch master-ci helpers
@@ -1047,6 +1121,20 @@ jobs:
             else
               echo "No test script defined in $1 - skipping"
             fi
+            # COVERAGE_MIN > 0 opts into measured test assurance via the
+            # project's own test:coverage script (c8/jest --coverage with a
+            # cobertura reporter). A project without one contributes no
+            # report; the ai-integrity gate is fail-closed on absence.
+            if [ -n "$COVERAGE_MIN" ] && [ "$COVERAGE_MIN" != "0" ]; then
+              if node -e "process.exit(require('./package.json').scripts && require('./package.json').scripts['test:coverage'] ? 0 : 1)"; then
+                if [ -f pnpm-lock.yaml ]; then pnpm run test:coverage
+                elif [ -f yarn.lock ]; then yarn run test:coverage
+                else npm run test:coverage --silent
+                fi
+              else
+                echo "No test:coverage script in $1 - no coverage report from this project"
+              fi
+            fi
             cd "$GITHUB_WORKSPACE"
           }
           while IFS= read -r dir; do
@@ -1054,6 +1142,15 @@ jobs:
             echo "Testing $dir"
             test_one "$dir"
           done < "$RUNNER_TEMP/node-projects.txt"
+      - name: Upload coverage reports
+        # Cobertura XML only: other dialects (clover, istanbul JSON) do not
+        # parse as cobertura and would fail the gate as corrupt instead.
+        if: env.COVERAGE_MIN != '0' && env.COVERAGE_MIN != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-node
+          path: "**/coverage/cobertura*.xml"
+          if-no-files-found: ignore
 
   # ---------------------------------------------------------------------------
   # Python stack: lint, format, types, dead code, complexity, tests
@@ -1069,6 +1166,7 @@ jobs:
     env:
       CX_MAX: ${{ inputs.complexity_max }}
       CX_ENFORCE: ${{ needs.meta.outputs.enforce_complexity }}
+      COVERAGE_MIN: ${{ needs.meta.outputs.coverage_min }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Fetch master-ci helpers
@@ -1140,17 +1238,40 @@ jobs:
           fi
       - name: Run pytest
         run: |
+          # COVERAGE_MIN > 0 opts the stack into measured test assurance:
+          # the suite runs under coverage.py and the report is uploaded for
+          # the ai-integrity coverage gate (fail-closed when absent).
+          COV_RUNNER=""
+          if [ -n "$COVERAGE_MIN" ] && [ "$COVERAGE_MIN" != "0" ]; then
+            python -m pip install --quiet coverage
+            COV_RUNNER="python -m coverage run -m"
+          fi
+          run_pytest() {
+            if [ -n "$COV_RUNNER" ]; then
+              $COV_RUNNER pytest -q
+              python -m coverage json -o coverage.json
+            else
+              python -m pytest -q
+            fi
+          }
           if [ -d tests ]; then
             # test suites that parse workflow YAML need PyYAML; it ships with
             # many toolchains but is not a pytest dependency - install on miss
             python -c "import yaml" 2>/dev/null || python -m pip install --quiet pyyaml
-            python -m pytest -q
+            run_pytest
           elif find . -maxdepth 3 \( -name 'test_*.py' -o -name '*_test.py' \) \
             -not -path './_ci/*' -not -path './node_modules/*' | grep -q .; then
-            python -m pytest -q
+            run_pytest
           else
             echo "No tests found - skipping pytest"
           fi
+      - name: Upload coverage report
+        if: env.COVERAGE_MIN != '0' && env.COVERAGE_MIN != '' && hashFiles('coverage.json') != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-python
+          path: coverage.json
+          if-no-files-found: ignore
 
   # ---------------------------------------------------------------------------
   # Rust stack: format, clippy, advisories, licenses, tests (shared cache)
@@ -1310,7 +1431,25 @@ jobs:
         run: go build ./...
       - name: Test (race detector, shuffled)
         if: steps.detect.outputs.manifest == 'true'
-        run: go test -race -shuffle=on ./...
+        env:
+          COVERAGE_MIN: ${{ needs.meta.outputs.coverage_min }}
+        run: |
+          # COVERAGE_MIN > 0 opts into measured test assurance: the same
+          # race+shuffle run also emits the native coverprofile consumed
+          # by the ai-integrity coverage gate.
+          if [ -n "$COVERAGE_MIN" ] && [ "$COVERAGE_MIN" != "0" ]; then
+            go test -race -shuffle=on -coverprofile=cover.out ./...
+            go tool cover -func=cover.out >/dev/null
+          else
+            go test -race -shuffle=on ./...
+          fi
+      - name: Upload coverage report
+        if: steps.detect.outputs.manifest == 'true' && needs.meta.outputs.coverage_min != '0' && needs.meta.outputs.coverage_min != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-go
+          path: cover.out
+          if-no-files-found: ignore
 
   # ---------------------------------------------------------------------------
   # JVM stack (Java, Kotlin, Scala riding Maven or Gradle): wrapper validation,

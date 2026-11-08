@@ -15,12 +15,16 @@ CRITICAL verdicts), FixMySlop's rule-with-remedy + baseline + SARIF flow,
 and slopdetector.org's explainable, evidence-first prose checks.
 
 Contract:
-- Exit code 1 when the *blocking* score exceeds --max-score, or when the
+- Exit code 1 when the *blocking* score exceeds --max-score, when the
     AI-integrity dimension score exceeds --max-slop-score (the
-    scanaislop-style PR gate; default 100 keeps the CLI advisory-only).
-- Exit code 2 when an architecture config is present but invalid: the
-    config is fail-closed, so a rule set that cannot be honored fails
-    the run instead of being silently skipped.
+    scanaislop-style PR gate; default 100 keeps the CLI advisory-only),
+    or when a requested coverage gate is breached (--min-coverage,
+    --min-new-coverage).
+- Exit code 2 when configuration cannot be honored: an architecture
+    config that is present but invalid, or a coverage gate that cannot
+    be evaluated (no report, an unparseable report, a missing diff
+    base). Fail-closed: a rule set or gate that cannot be evaluated
+    fails the run instead of being silently skipped.
 - Blocking-grade signals are deterministic content defects (elided code,
     stubs, empty tests, swallowed exceptions, chatbot residue in comments);
     --enforce-bloat adds the structural-budget family (file size, parameter
@@ -46,9 +50,10 @@ import argparse
 import sys
 from pathlib import Path
 
+from coverage_gate import CoverageGateError, run_gate
 from slop_arch import ArchConfigError
 from slop_files import load_phrases
-from slop_model import enforce_structural_budget
+from slop_model import Finding, enforce_structural_budget
 from slop_reporting import (
     advisory_score,
     ai_integrity_score,
@@ -135,7 +140,80 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "repository test inventory (missing-tests); default on"
         ),
     )
+    _add_coverage_args(parser)
     return parser.parse_args(argv)
+
+
+def _add_coverage_args(parser: argparse.ArgumentParser) -> None:
+    """The measured-coverage gates: floors, diff window, report paths."""
+    parser.add_argument(
+        "--min-coverage",
+        type=float,
+        default=0.0,
+        help=(
+            "Fail (exit 1) when measured coverage in a coverage.json / "
+            "coverage.xml / cover.out report is below this percent. With "
+            "no report found the gate cannot be evaluated and the run "
+            "fails closed (exit 2). Default 0 = off"
+        ),
+    )
+    parser.add_argument(
+        "--min-new-coverage",
+        type=float,
+        default=0.0,
+        help=(
+            "Fail (exit 1) when coverage over the lines added vs "
+            "--diff-base is below this percent; per-file breaches are "
+            "reported as low-new-coverage findings. Default 0 = off"
+        ),
+    )
+    parser.add_argument(
+        "--diff-base",
+        default="",
+        metavar="REF",
+        help=(
+            "Git ref defining the new-code window (merge-base diff, e.g. "
+            "origin/main); required when --min-new-coverage is set"
+        ),
+    )
+    parser.add_argument(
+        "--coverage-report",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help=(
+            "Coverage report to consume (repeatable); default: "
+            "auto-discover coverage.json, coverage.xml, cover.out at the root"
+        ),
+    )
+
+
+def _coverage_gate(args: argparse.Namespace, findings: list) -> tuple[int, list[str]]:
+    """Run the requested coverage gates; SystemExit(2) when unevaluable.
+
+    Returns (exit contribution, report sections); gate findings are
+    appended to `findings` as advisory low-new-coverage entries.
+    """
+    if args.min_coverage <= 0 and args.min_new_coverage <= 0:
+        return 0, []
+    try:
+        gate = run_gate(
+            args.root,
+            min_coverage=args.min_coverage,
+            min_new_coverage=args.min_new_coverage,
+            diff_base=args.diff_base,
+            report_paths=args.coverage_report,
+        )
+    except CoverageGateError as exc:
+        # Fail closed: a gate that cannot be evaluated must fail the
+        # run, not silently pass. Exit 2 = configuration error.
+        print(f"ai-integrity: coverage gate rejected: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
+    findings.extend(
+        Finding(path=path, line=line, check="low-new-coverage", message=message, weight=1)
+        for path, line, message in gate.findings
+    )
+    return gate.exit_code, gate.sections
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -160,6 +238,7 @@ def main(argv: list[str] | None = None) -> int:
     suppressed = 0
     if args.baseline:
         findings, suppressed = apply_baseline(findings, args.baseline)
+    gate_exit, gate_sections = _coverage_gate(args, findings)
     if args.write_baseline:
         write_baseline(args.write_baseline, findings)
         print(
@@ -168,7 +247,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
     if args.report_file:
-        write_report(args.report_file, args.root, findings, suppressed=suppressed)
+        write_report(
+            args.report_file,
+            args.root,
+            findings,
+            suppressed=suppressed,
+            extra_sections=gate_sections,
+        )
     if args.sarif:
         write_sarif(args.sarif, findings)
     if args.annotate:
@@ -184,7 +269,11 @@ def main(argv: list[str] | None = None) -> int:
         f"ceiling={args.max_slop_score:g} dims: {dims}"
         + (" enforce=bloat" if args.enforce_bloat else "")
     )
-    failed = blocking_score(findings) > args.max_score or ai_score > args.max_slop_score
+    failed = (
+        blocking_score(findings) > args.max_score
+        or ai_score > args.max_slop_score
+        or gate_exit == 1
+    )
     return 1 if failed else 0
 
 

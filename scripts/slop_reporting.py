@@ -52,6 +52,7 @@ TIERED_CHECKS: dict[str, float] = {
     "ts-suppression": TIER_MECHANICAL,
     "blanket-suppression": TIER_MECHANICAL,
     "missing-tests": TIER_MECHANICAL,
+    "low-new-coverage": TIER_MECHANICAL,
     "em-dash-density": TIER_STYLE,
     "md-emoji-headings": TIER_STYLE,
     "exclamations": TIER_STYLE,
@@ -288,6 +289,7 @@ def write_report(
     root: Path,
     findings: list[Finding],
     suppressed: int = 0,
+    extra_sections: list[str] | None = None,
 ) -> None:
     blocking = [f for f in findings if not f.advisory]
     advisory = [f for f in findings if f.advisory]
@@ -311,6 +313,7 @@ def write_report(
         "",
     ]
     lines += _report_dimensions(category_breakdown(findings))
+    lines += extra_sections or []
     lines += _report_rule_table(Counter(f.check for f in findings))
     lines += _report_fix_first(blocking)
     lines += _report_blocking_table(blocking)

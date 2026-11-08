@@ -1,0 +1,98 @@
+# =============================================================================
+# Mutation Testing - weekly proof that the tests can fail
+# =============================================================================
+# Roadmap item 4's second half: coverage says which lines ran; mutation
+# says whether the assertions would notice a defect. Full mutation runs
+# are too slow for every push, so this is the scheduled counterpart to
+# the PR-time coverage gate.
+#
+# Opt-in by declaration: the job runs mutmut when pyproject.toml declares
+# [tool.mutmut] (or setup.cfg [mutmut]), and Stryker when a
+# stryker.conf.* is committed. A repo without either config skips - and
+# a tool that exits nonzero on surviving mutants fails the run, which is
+# the weekly signal to review the tests.
+# =============================================================================
+
+name: Mutation Testing
+
+on:
+  schedule:
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mutation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Detect mutation config
+        id: detect
+        run: |
+          # Opt-in by declaration, never by guessing: mutating code in a
+          # repo that never asked for it would burn an hour of CI on noise.
+          tool=none
+          if grep -q '^\[tool\.mutmut\]' pyproject.toml 2>/dev/null \
+            || grep -q '^\[mutmut\]' setup.cfg 2>/dev/null; then
+            tool=mutmut
+          elif ls stryker.conf.json stryker.conf.js stryker.conf.mjs stryker.conf.cjs >/dev/null 2>&1; then
+            tool=stryker
+          fi
+          echo "tool=$tool" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        if: steps.detect.outputs.tool == 'mutmut'
+        with:
+          python-version: '3.13'
+      - name: Mutate (mutmut)
+        if: steps.detect.outputs.tool == 'mutmut'
+        run: |
+          python -m pip install --quiet --upgrade mutmut
+          mutmut run
+          # Survivors are the deliverable: hand reviewers the list, then
+          # the nonzero exit from `mutmut run` has already failed the job.
+          mutmut results | tee mutmut-results.txt
+      - name: Mutate (Stryker)
+        if: steps.detect.outputs.tool == 'stryker'
+        run: npx --yes @stryker-mutator/core run
+      - name: Upload survivor report
+        if: always() && steps.detect.outputs.tool == 'mutmut' && hashFiles('mutmut-results.txt') != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: mutation-survivors
+          path: mutmut-results.txt
+          if-no-files-found: ignore
+      - name: Upload Stryker reports
+        if: always() && steps.detect.outputs.tool == 'stryker' && hashFiles('reports/**') != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: mutation-stryker-reports
+          path: reports/
+          if-no-files-found: ignore
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Mutation testing"
+            echo ""
+            case "$TOOL" in
+              none)
+                echo "No mutation config declared - opt in with [tool.mutmut] in"
+                echo "pyproject.toml or a stryker.conf.json. Nothing ran; this is not"
+                echo "a pass or a fail." ;;
+              mutmut)
+                echo "mutmut ran; surviving mutants (if any) are listed above and in"
+                echo "the mutation-survivors artifact. Each survivor is an assertion"
+                echo "gap: a defect that shape would ship unnoticed." ;;
+              stryker)
+                echo "Stryker ran; the HTML report is in the mutation-stryker-reports"
+                echo "artifact. A low mutation score means the tests execute code but" 
+                echo "do not verify behavior." ;;
+            esac
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          TOOL: ${{ steps.detect.outputs.tool }}

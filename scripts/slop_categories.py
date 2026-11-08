@@ -98,6 +98,7 @@ CHECK_CATEGORIES: dict[str, str] = {
     "empty-test": "test-assurance",
     "tautological-test": "test-assurance",
     "missing-tests": "test-assurance",
+    "low-new-coverage": "test-assurance",
     # Dependency health: the manifest against the imports.
     "undeclared-import": "dependency-health",
     "unused-dependency": "dependency-health",

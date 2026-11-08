@@ -18,7 +18,9 @@ Profile presets (quick / standard / strict / custom) only change the
   `profile` must be one of the four presets, every `run_*` stack toggle
   must be `auto`, `true` or `false`, and every `select` token must be a
   known job name (unknown names fail the run - a typo can never silently
-  skip a check). Mutable helper refs (`main`/`master`) print a pinning
+  skip a check). `coverage_min` must be a non-negative number;
+  `diff_base` gets the same ref-character validation as `template_ref`.
+  Mutable helper refs (`main`/`master`) print a pinning
   warning. Invalid input fails `meta`, and every job that consumes helpers
   is gated on `meta` succeeding - so an untrusted ref can never reach a
   checkout.
@@ -360,6 +362,40 @@ Profile presets (quick / standard / strict / custom) only change the
   contribution saturates at 40 points per file (`MAX_PER_RULE`), so one
   noisy rule can never dominate a deficit. Blocking weight is never
   tiered: strict signals stay strict.
+- **v1.21 coverage gates - test assurance from inventory to proof:**
+  before this release the test-assurance dimension could only report
+  test *inventory* (`empty-test`, `tautological-test`, `missing-tests`);
+  now it can report measured *proof*. Setting `coverage_min` above 0
+  makes the Python, Go and Node stacks run their suites under coverage
+  (Python via `coverage run`/`coverage json`, Go via
+  `-coverprofile=cover.out`, Node via the project's own
+  `test:coverage` script emitting Cobertura XML) and upload the report
+  as an artifact; the `ai-integrity` job downloads the reports and the
+  detector consumes them through `scripts/coverage_gate.py`, which
+  parses all three dialects (Python `coverage.json`, Cobertura XML,
+  Go `cover.out`) and renders a "Test assurance: measured coverage"
+  table into the markdown report. The floor gates **every** report -
+  in a polyglot repo each stack measures its own slice, and every
+  slice must clear the bar. Setting `diff_base` (e.g. `origin/main`)
+  additionally applies the same floor to the **new-code window**:
+  the gate intersects the merge-base diff's added lines with each
+  report's line data, and per-file breaches surface as advisory
+  `low-new-coverage` findings (test-assurance dimension, SARIF,
+  annotations) plus a worst-files table. Fail-closed contract (same
+  semantics as the v1.18 architecture config): a requested floor with
+  no report, an unparseable report, or a new-code gate without a diff
+  base exits **2** with the reason on stderr - a gate that cannot be
+  evaluated never silently passes, and exit 2 fails the CI step even
+  when `fail_on_ai_slop` is false (only gate *scores* are
+  advisory-controlled). Known limits: Node coverage
+  must be Cobertura (clover or istanbul JSON dialects fail as corrupt
+  rather than being guessed); Go module-prefixed paths match diff
+  paths by suffix; a changed file absent from the report counts as
+  0% new-code coverage. Companion on the schedule side:
+  `.github/workflows/mutation.yml` runs mutmut (Python, when
+  `[tool.mutmut]` is declared) or Stryker (Node, when a
+  `stryker.conf.*` is committed) weekly - coverage says which lines
+  ran, mutation says whether the assertions would notice.
 - **Disable:** `profile: quick` keeps the whole job advisory; with
   `profile: custom` set `fail_on_ai_slop: false` explicitly. Provenance
   and test inventory can be turned off with `--no-provenance`; the

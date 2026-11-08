@@ -144,6 +144,10 @@ REMEDIES = {
         "Add tests for the source files, or move generated vendored code "
         "behind an interface and ignore the directory"
     ),
+    "low-new-coverage": (
+        "Test the lines this change adds before merging; uncovered new code "
+        "is unverified code, and the floor keeps the gap from growing silently"
+    ),
     "unused-declaration": (
         "Delete it or wire it in; a definition nothing references is dead "
         "weight the next reader must still understand"
@@ -313,6 +317,10 @@ ADVISORY_ONLY_CHECKS = frozenset(
         "ui-placeholder-image",
         "ui-identical-cards",
         "ui-em-dash-overuse",
+        # v1.21 roadmap item 4: measured test assurance. The gate itself
+        # fails the build below the floor; the per-file findings stay
+        # advisory so the dimension table carries the detail.
+        "low-new-coverage",
     }
 )
 

@@ -25,6 +25,11 @@ def load_phrases() -> dict:
         return json.load(handle)
 
 
+def read_text_lax(path: Path) -> str:
+    """Best-effort decode for content sniffing; replacement chars on bad bytes."""
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
 def _scannable_name(path: Path) -> bool:
     """Name-level filters: skip dirs, dotfiles and generated trees."""
     if path.name in SKIP_DIRS or path.name.startswith("."):
