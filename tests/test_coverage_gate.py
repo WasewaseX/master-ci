@@ -1,13 +1,6 @@
 """Contract tests for the coverage gates (roadmap item 4).
 
-Covers the documented contract:
-- the three report parsers (coverage.json, Cobertura XML, Go coverprofile)
-- fail-closed semantics: a requested gate that cannot be evaluated is
-  exit 2, never a silent pass
-- the overall floor gates every report; the new-code floor gates the
-  merge-base diff's added lines
-- low-new-coverage findings land in the test-assurance dimension and
-  stay advisory
+Covers the documented contract: the three report parsers (coverage.json, Cobertura XML, Go coverprofile), fail-closed semantics (a requested gate that cannot be evaluated is exit 2, never a silent pass), the overall floor gating every report, the new-code floor gating the merge-base diff's added lines, and low-new-coverage findings landing advisory in the test-assurance dimension.
 """
 
 from __future__ import annotations
