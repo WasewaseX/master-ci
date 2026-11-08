@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Workspace discovery: enumerate independent projects per language family.
 
-The workflow's path filters trigger on nested manifests (``**/package.json``),
-but language jobs historically analyzed root manifests only - a nested
-project triggered a job that then reported success after skipping every
-analysis step. This module makes project discovery explicit:
+The workflow's path filters trigger on nested manifests
+(``**/package.json``), but language jobs historically analyzed root
+manifests only - a nested project triggered a job that then reported
+success after skipping every analysis step. This module makes project
+discovery explicit:
 
 - root manifests with workspace semantics (npm/pnpm/yarn workspaces,
-  ``go.work``, Cargo ``[workspace]``) collapse to a single ``.`` project,
+    ``go.work``, Cargo ``[workspace]``) collapse to a single ``.``
+    project,
 - every other manifest directory becomes its own project,
 - jobs loop over the inventory so no project can be silently skipped.
 

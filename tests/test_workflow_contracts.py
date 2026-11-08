@@ -1100,3 +1100,38 @@ def test_deploy_aws_is_oidc_first_and_fails_closed():
     assert "verdict" in (job.get("outputs") or {}), "the deployment must report a verdict"
     deploy_concurrency = data.get("concurrency") or {}
     assert deploy_concurrency.get("group"), "deploys must be serialized"
+
+
+# v1.11.1: the pins resolver, the license-free secrets scan and the
+# shipped defaults that keep zero-config consumers green.
+
+
+def test_pin_resolver_contract():
+    text = (WF_DIR / "master-ci.yml").read_text()
+    assert (
+        "pip install --quiet \\\n            $(python3 _ci/scripts/tool_versions.py pip ruff mypy vulture lizard pytest)"
+    ) in text, "the multi-tool pin install must stay unquoted so pins word-split"
+    assert "markdownlint-cli2@markdownlint-cli2" not in text, "double-prefixed npm package name"
+    assert "markdownlint-cli2@" not in text, "docs job must take the resolver output verbatim"
+    assert "gitleaks/gitleaks-action" not in text, (
+        "gitleaks-action v3 demands a paid license; the pinned CLI replaces it"
+    )
+    assert "gitleaks detect --source ." in text, "secrets scan runs the checksum-pinned CLI"
+    assert "GITLEAKS_LICENSE" not in text
+
+
+def test_rust_job_ships_default_deny_policy():
+    data = load(WF_DIR / "master-ci.yml")
+    rust = data["jobs"]["rust"]
+    assert any("cargo-deny policy" in str(s.get("name", "")) for s in rust["steps"]), (
+        "cargo-deny's empty default allow list must be overridden by a shipped policy"
+    )
+    deny = (ROOT / "configs" / "deny.toml").read_text()
+    assert '"MIT"' in deny, "MIT must be explicitly allowed"
+    assert "version = 2" in deny, "cargo-deny config schema v2"
+
+
+def test_default_editorconfig_grants_go_tabs():
+    text = (ROOT / "configs" / ".editorconfig").read_text()
+    go_section = text.split("[*.go]")[1].split("[")[0] if "[*.go]" in text else ""
+    assert "indent_style = tab" in go_section, "gofmt mandates tabs; the default must allow them"

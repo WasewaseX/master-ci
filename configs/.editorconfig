@@ -11,6 +11,10 @@ indent_size = 2
 [*.py]
 indent_size = 4
 
+[*.go]
+indent_style = tab
+indent_size = unset
+
 [*.md]
 indent_style = unset
 indent_size = unset
