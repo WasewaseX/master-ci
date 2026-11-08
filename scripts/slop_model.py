@@ -144,6 +144,10 @@ REMEDIES = {
         "Remove the dependency from the manifest or add the import that "
         "justifies it; declared weight slows every install"
     ),
+    "java-broad-throws": (
+        "Throw the specific exception type; a broad Exception hides every "
+        "failure mode behind one signature"
+    ),
 }
 BLOCKING_CHECKS = frozenset(
     {
@@ -256,6 +260,8 @@ ADVISORY_ONLY_CHECKS = frozenset(
         # whose occurrences are exactly its own definition is reported.
         "unused-declaration",
         "unused-dependency",
+        # scanaislop round-5 adoption (languages page): broad Java throws.
+        "java-broad-throws",
     }
 )
 

@@ -44,6 +44,7 @@ from slop_family import (  # noqa: F401
     check_exceptions_js_family,
     check_go,
     check_js_slop,
+    check_jvm_slop,
     check_placeholder_credential,
     check_placeholder_names,
     check_rust,
@@ -141,6 +142,7 @@ def scan_code_file(
     findings.extend(check_rust(path, text, family))
     findings.extend(check_debug_left(path, text, family, rel))
     findings.extend(check_js_slop(path, text, family, rel))
+    findings.extend(check_jvm_slop(path, text, family, rel))
     findings.extend(check_residue(path, text, family, rel, comments))
     findings.extend(check_ui_slop(path, text, ext))
     findings.extend(check_blanket_suppression(path, text))

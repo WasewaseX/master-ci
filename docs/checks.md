@@ -232,6 +232,15 @@ Profile presets (quick / standard / strict / custom) only change the
   (gunicorn, uvloop, ...) are allowlisted. Both checks cap at 8 findings
   per scan and are disabled by design when the scan root is a single
   file.
+- **Round-5 scanaislop adoption (advisory):** the languages page's Java
+  column. `debug-print` now covers `System.out`/`System.err` leftovers
+  (alongside Go's `fmt.Print*` and JS's `console.log`),
+  `java-broad-throws` reports `throws Exception` / `throws Throwable`
+  signatures (the specific type belongs in the signature; catch blocks
+  that only print were already covered by `print-stacktrace-only`), and
+  `phantom-import` extends to Java imports (the simple name must appear
+  outside its import lines; wildcard imports are exempt). Test sources
+  are exempt from all three.
 - **Scoring refinements (scanaislop-aligned):** advisory pressure is
   tier-weighted - maintainability debts (bloat, god-function, deep
   nesting, dispatch ladders) press at 0.75x, mechanical residue

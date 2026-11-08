@@ -24,6 +24,75 @@ from slop_patterns import (
     _strip_strings,
 )
 
+# scanaislop round-5 (languages page, Java column): System.out leftovers,
+# broad throws, and unused imports.
+JVM_DEBUG_PRINT = re.compile(r"\bSystem\.(?:out|err)\.print(?:ln|f)?\s*\(")
+JVM_BROAD_THROWS = re.compile(r"\bthrows\s+(?:[\w.]+\.)?(?:Exception|Throwable)\b")
+JVM_IMPORT = re.compile(r"^\s*import\s+(?:static\s+)?([\w.]+)\s*;", re.MULTILINE)
+
+
+def _is_test_rel(rel: str) -> bool:
+    lowered = rel.lower()
+    return ".test." in lowered or ".spec." in lowered or "/test" in lowered
+
+
+def check_jvm_slop(path: Path, text: str, family: str, rel: str) -> list[Finding]:
+    """Java-column signals from scanaislop's languages page (advisory)."""
+    if family != "jvm" or not path.suffix.lower() == ".java" or _is_test_rel(rel):
+        return []
+    findings: list[Finding] = []
+    prints = len(JVM_DEBUG_PRINT.findall(text))
+    if prints:
+        findings.append(
+            Finding(
+                path=str(path),
+                line=1,
+                check="debug-print",
+                message=f"System.out debug output ({prints}x)",
+                weight=1,
+                advisory=True,
+            )
+        )
+    for match in JVM_BROAD_THROWS.finditer(text):
+        findings.append(
+            _finding(
+                path,
+                text,
+                match.start(),
+                "java-broad-throws",
+                f"broad {match.group(0).split()[-1]} thrown - declare the specific type",
+                1,
+            )
+        )
+    findings.extend(_jvm_phantom_imports(path, text))
+    return findings
+
+
+def _jvm_phantom_imports(path: Path, text: str) -> list[Finding]:
+    """Imported simple names that never appear outside their import lines."""
+    imported: list[tuple[str, int]] = []
+    for match in JVM_IMPORT.finditer(text):
+        name = match.group(1).split(".")[-1]
+        if name != "*":
+            imported.append((name, match.start()))
+    if not imported:
+        return []
+    body = "\n".join(line for line in text.splitlines() if not line.strip().startswith("import "))
+    findings: list[Finding] = []
+    for name, pos in imported[:40]:
+        if not re.search(rf"\b{re.escape(name)}\b", body):
+            findings.append(
+                _finding(
+                    path,
+                    text,
+                    pos,
+                    "phantom-import",
+                    f"import {name!r} is never used",
+                    1,
+                )
+            )
+    return findings[:5]
+
 
 def check_exceptions_js_family(path: Path, text: str, family: str) -> list[Finding]:
     findings: list[Finding] = []

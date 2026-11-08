@@ -1360,3 +1360,58 @@ def test_deadness_checks_respect_ignore_globs(tmp_path):
     )
     findings = mod.scan(tmp_path, mod.load_phrases())
     assert not [f for f in findings if f.check == "unused-declaration"]
+
+
+# scanaislop round-5 (languages page, Java column): System.out leftovers,
+# broad throws, unused imports - advisory signals for the JVM family.
+
+
+def test_jvm_slop_signals_fire(tmp_path):
+    java = (
+        "import java.util.List;\n"
+        "import java.util.NoSuchElement;\n"
+        "\n"
+        "public class Fetcher {\n"
+        "    public List<String> fetch() throws Exception {\n"
+        '        System.out.println("fetching");\n'
+        "        return List.of();\n"
+        "    }\n"
+        "}\n"
+    )
+    findings = scan(tmp_path, {"src/Fetcher.java": java})
+    checks = {f.check for f in findings}
+    assert "java-broad-throws" in checks
+    assert "debug-print" in checks
+    phantom = [f for f in findings if f.check == "phantom-import"]
+    assert len(phantom) == 1 and "NoSuchElement" in phantom[0].message
+    assert all(f.advisory for f in findings if f.check == "java-broad-throws")
+
+
+def test_jvm_slop_clean_java_is_silent(tmp_path):
+    java = (
+        "import java.util.List;\n"
+        "import java.io.IOException;\n"
+        "\n"
+        "public class Reader {\n"
+        "    public List<String> read() throws IOException {\n"
+        "        return List.of();\n"
+        "    }\n"
+        "}\n"
+    )
+    findings = scan(tmp_path, {"src/Reader.java": java})
+    checks = {f.check for f in findings}
+    assert not (checks & {"java-broad-throws", "debug-print", "phantom-import"})
+
+
+def test_jvm_slop_skips_test_sources(tmp_path):
+    java = (
+        "import java.util.List;\n"
+        "public class FetcherTest {\n"
+        "    public void run() throws Exception {\n"
+        "        System.out.println(1);\n"
+        "    }\n"
+        "}\n"
+    )
+    findings = scan(tmp_path, {"src/test/java/FetcherTest.java": java})
+    checks = {f.check for f in findings}
+    assert not (checks & {"java-broad-throws", "debug-print"})
