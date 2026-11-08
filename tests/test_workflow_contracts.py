@@ -412,8 +412,8 @@ def test_template_ref_fails_closed_for_foreign_callers():
     assert "ref: ${{ inputs.template_ref }}" not in text, (
         "helper checkouts must consume the resolved ref, not the raw input"
     )
-    assert text.count("ref: ${{ needs.meta.outputs.template_ref }}") == 8, (
-        "all eight helper checkouts must use the resolved ref"
+    assert text.count("ref: ${{ needs.meta.outputs.template_ref }}") == 9, (
+        "all nine helper checkouts must use the resolved ref"
     )
 
 

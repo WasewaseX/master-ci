@@ -841,8 +841,6 @@ jobs:
       AI_CEILING: ${{ needs.meta.outputs.ai_slop_ceiling }}
       FAIL_SLOP: ${{ needs.meta.outputs.fail_ai_slop }}
       ENFORCE_BLOAT: ${{ needs.meta.outputs.enforce_bloat }}
-      COVERAGE_MIN: ${{ needs.meta.outputs.coverage_min }}
-      DIFF_BASE: ${{ needs.meta.outputs.diff_base }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Fetch master-ci helpers
@@ -853,69 +851,16 @@ jobs:
           path: _ci
           fetch-depth: 1
           persist-credentials: false
-      - name: Download coverage reports
-        # Stack jobs upload coverage-* artifacts when coverage_min > 0.
-        # continue-on-error: absent artifacts stay absent - the gate's own
-        # fail-closed discovery is what reports a missing report (exit 2),
-        # so the download must not mask it with its own error class.
-        if: env.COVERAGE_MIN != '0' && env.COVERAGE_MIN != ''
-        continue-on-error: true
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          pattern: coverage-*
-          merge-multiple: true
-          path: coverage-reports
-      - name: Fetch diff base for the new-code gate
-        # The new-code gate diffs against diff_base (merge-base); the
-        # default shallow checkout does not carry other branches. A
-        # remote-tracking name (origin/main) must be materialized as a
-        # real ref before `git diff origin/main...HEAD` can resolve; a
-        # branch, tag or SHA is fetched by its own name. A fetch failure
-        # fails loudly - the gate would exit 2 anyway.
-        if: env.DIFF_BASE != ''
-        run: |
-          set -e
-          if git rev-parse --verify --quiet "$DIFF_BASE" >/dev/null; then
-            echo "diff base $DIFF_BASE already resolvable"
-            exit 0
-          fi
-          case "$DIFF_BASE" in
-            origin/*)
-              branch="${DIFF_BASE#origin/}"
-              git fetch --depth=1 origin "+refs/heads/$branch:refs/remotes/origin/$branch"
-              ;;
-            refs/*)
-              git fetch --depth=1 origin "+$DIFF_BASE:$DIFF_BASE"
-              ;;
-            *)
-              git fetch --depth=1 origin "+refs/heads/$DIFF_BASE:refs/remotes/origin/$DIFF_BASE" \
-                || git fetch --depth=1 origin "+refs/tags/$DIFF_BASE:refs/tags/$DIFF_BASE" \
-                || git fetch --depth=1 origin "$DIFF_BASE"
-              ;;
-          esac
-          git rev-parse --verify "$DIFF_BASE" >/dev/null
       - name: Run AI-integrity heuristics
         run: |
           ENFORCE_ARGS=""
           if [ "$ENFORCE_BLOAT" = "true" ]; then
             ENFORCE_ARGS="--enforce-bloat"
           fi
-          COV_ARGS=""
-          if [ -n "$COVERAGE_MIN" ] && [ "$COVERAGE_MIN" != "0" ]; then
-            while IFS= read -r report; do
-              COV_ARGS="$COV_ARGS --coverage-report $report"
-            done < <(find coverage-reports -type f \
-              \( -name 'coverage.json' -o -name '*.xml' -o -name 'cover.out' \) 2>/dev/null)
-            COV_ARGS="$COV_ARGS --min-coverage $COVERAGE_MIN"
-            if [ -n "$DIFF_BASE" ]; then
-              COV_ARGS="$COV_ARGS --min-new-coverage $COVERAGE_MIN --diff-base $DIFF_BASE"
-            fi
-          fi
           python3 _ci/scripts/ai_slop_detector.py . \
             --max-score "$AI_MAX" \
             --max-slop-score "$AI_CEILING" \
             $ENFORCE_ARGS \
-            $COV_ARGS \
             --report-file ai_report.md \
             --sarif ai_integrity.sarif \
             --annotate
@@ -941,6 +886,99 @@ jobs:
         with:
           sarif_file: ai_integrity.sarif
           category: ai-integrity
+
+  # ---------------------------------------------------------------------------
+  # Coverage gate: measured test assurance, consumed after the stacks run.
+  # Runs only when coverage_min > 0; waits for the coverage-producing
+  # stacks (skipped stacks are fine - their artifact is simply absent,
+  # and the gate's own fail-closed discovery reports a floor with no
+  # report as exit 2).
+  # ---------------------------------------------------------------------------
+  coverage-gate:
+    needs: [meta, python, go-test, node-test]
+    if: >-
+      always() && needs.meta.result == 'success'
+      && needs.python.result != 'failure'
+      && needs.go-test.result != 'failure'
+      && needs.node-test.result != 'failure'
+      && needs.meta.outputs.coverage_min != '0'
+      && needs.meta.outputs.coverage_min != ''
+    runs-on: ${{ inputs.runs_on }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      COVERAGE_MIN: ${{ needs.meta.outputs.coverage_min }}
+      DIFF_BASE: ${{ needs.meta.outputs.diff_base }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch master-ci helpers
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ needs.meta.outputs.template_repo }}
+          ref: ${{ needs.meta.outputs.template_ref }}
+          path: _ci
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Download coverage reports
+        # continue-on-error: absent artifacts stay absent - the gate's own
+        # fail-closed discovery is what reports a missing report (exit 2),
+        # so the download must not mask it with its own error class.
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: coverage-*
+          merge-multiple: true
+          path: coverage-reports
+      - name: Fetch diff base for the new-code gate
+        # The new-code gate diffs against diff_base (merge-base); the
+        # default shallow checkout does not carry other branches. A
+        # remote-tracking name (origin/main) must be materialized as a
+        # real ref before `git diff origin/main...HEAD` can resolve; a
+        # branch, tag or SHA is fetched by its own name.
+        if: env.DIFF_BASE != ''
+        run: |
+          set -e
+          if git rev-parse --verify --quiet "$DIFF_BASE" >/dev/null; then
+            echo "diff base $DIFF_BASE already resolvable"
+            exit 0
+          fi
+          case "$DIFF_BASE" in
+            origin/*)
+              branch="${DIFF_BASE#origin/}"
+              git fetch --depth=1 origin "+refs/heads/$branch:refs/remotes/origin/$branch"
+              ;;
+            refs/*)
+              git fetch --depth=1 origin "+$DIFF_BASE:$DIFF_BASE"
+              ;;
+            *)
+              git fetch --depth=1 origin "+refs/heads/$DIFF_BASE:refs/remotes/origin/$DIFF_BASE" \
+                || git fetch --depth=1 origin "+refs/tags/$DIFF_BASE:refs/tags/$DIFF_BASE" \
+                || git fetch --depth=1 origin "$DIFF_BASE"
+              ;;
+          esac
+          git rev-parse --verify "$DIFF_BASE" >/dev/null
+      - name: Evaluate coverage gates
+        run: |
+          GATE_ARGS=""
+          while IFS= read -r report; do
+            GATE_ARGS="$GATE_ARGS --coverage-report $report"
+          done < <(find coverage-reports -type f \
+            \( -name 'coverage.json' -o -name '*.xml' -o -name 'cover.out' \) 2>/dev/null)
+          GATE_ARGS="$GATE_ARGS --min-coverage $COVERAGE_MIN"
+          if [ -n "$DIFF_BASE" ]; then
+            GATE_ARGS="$GATE_ARGS --min-new-coverage $COVERAGE_MIN --diff-base $DIFF_BASE"
+          fi
+          # Exit 1 = a floor is breached, exit 2 = the gate cannot be
+          # evaluated (no report / corrupt report / fetch failure). Both
+          # fail the run: a requested gate is a contract, not advice.
+          python3 _ci/scripts/coverage_gate.py . $GATE_ARGS | tee gate-report.md
+          rc=${PIPESTATUS[0]}
+          if [ -f gate-report.md ]; then
+            echo "### Coverage gate" >> "$GITHUB_STEP_SUMMARY"
+            cat gate-report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$rc"
 
   # ---------------------------------------------------------------------------
   # Documentation: markdown lint
@@ -2077,7 +2115,12 @@ jobs:
   # Dashboard comment on pull requests
   # ---------------------------------------------------------------------------
   dashboard:
-    needs: [changes, meta, hygiene, secrets, ai-integrity, docs, node-lint, node-test, python, rust, go-lint, go-test, java, cpp, csharp, ruby, php, docker, security, deps-review, scorecard]
+    needs:
+      [
+        changes, meta, hygiene, secrets, ai-integrity, docs, node-lint,
+        node-test, python, rust, go-lint, go-test, java, cpp, csharp, ruby,
+        php, docker, security, deps-review, scorecard, coverage-gate,
+      ]
     if: always() && github.event_name == 'pull_request'
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 5
@@ -2164,7 +2207,12 @@ jobs:
   # Single required check: fails when any non-skipped job failed
   # ---------------------------------------------------------------------------
   ci-success:
-    needs: [changes, meta, hygiene, secrets, ai-integrity, docs, node-lint, node-test, python, rust, go-lint, go-test, java, cpp, csharp, ruby, php, docker, security, deps-review, scorecard]
+    needs:
+      [
+        changes, meta, hygiene, secrets, ai-integrity, docs, node-lint,
+        node-test, python, rust, go-lint, go-test, java, cpp, csharp, ruby,
+        php, docker, security, deps-review, scorecard, coverage-gate,
+      ]
     if: always()
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 5
@@ -2204,6 +2252,7 @@ jobs:
               "security",
               "deps-review",
               "scorecard",
+              "coverage-gate",
           ]
           labels = {
               "changes": "Change detection",
@@ -2227,6 +2276,7 @@ jobs:
               "security": "Security",
               "deps-review": "Dependency review",
               "scorecard": "Scorecard",
+              "coverage-gate": "Coverage gate",
           }
           icon = {
               "success": ":white_check_mark:",

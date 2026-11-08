@@ -370,8 +370,9 @@ Profile presets (quick / standard / strict / custom) only change the
   (Python via `coverage run`/`coverage json`, Go via
   `-coverprofile=cover.out`, Node via the project's own
   `test:coverage` script emitting Cobertura XML) and upload the report
-  as an artifact; the `ai-integrity` job downloads the reports and the
-  detector consumes them through `scripts/coverage_gate.py`, which
+  as an artifact; the dedicated `coverage-gate` job - which waits for
+  the coverage-producing stacks - downloads the reports and consumes
+  them through `scripts/coverage_gate.py` (standalone CLI), which
   parses all three dialects (Python `coverage.json`, Cobertura XML,
   Go `cover.out`) and renders a "Test assurance: measured coverage"
   table into the markdown report. The floor gates **every** report -

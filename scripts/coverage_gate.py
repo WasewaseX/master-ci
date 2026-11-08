@@ -31,8 +31,10 @@ line data, so "coverage" means the lines this change actually added.
 
 from __future__ import annotations
 
+import argparse
 import json
 import subprocess
+import sys
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -186,11 +188,13 @@ STANDARD_REPORTS = ("coverage.json", "coverage.xml", "cover.out")
 
 def discover_reports(root: Path, explicit: list[str]) -> list[CoverageReport]:
     """Explicit paths win; otherwise the standard names at the root."""
-    candidates = (
-        [Path(p) for p in explicit]
-        if explicit
-        else [root / name for name in STANDARD_REPORTS if (root / name).exists()]
-    )
+    if explicit:
+        candidates = [Path(p) for p in explicit]
+        missing = [str(p) for p in candidates if not p.exists()]
+        if missing:
+            raise CoverageGateError(f"coverage report(s) not found: {', '.join(missing)}")
+    else:
+        candidates = [root / name for name in STANDARD_REPORTS if (root / name).exists()]
     return [parse_report(path) for path in candidates]
 
 
@@ -393,3 +397,34 @@ def run_gate(
         if view.total_percent < min_new_coverage and view.changed_total:
             exit_code = 1
     return GateResult(exit_code, findings, sections)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Standalone gate entry for the CI job that runs after the stacks."""
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("root", type=Path, help="Repo path the reports belong to")
+    parser.add_argument("--min-coverage", type=float, default=0.0)
+    parser.add_argument("--min-new-coverage", type=float, default=0.0)
+    parser.add_argument("--diff-base", default="")
+    parser.add_argument("--coverage-report", action="append", default=[])
+    args = parser.parse_args(argv)
+    try:
+        gate = run_gate(
+            args.root,
+            min_coverage=args.min_coverage,
+            min_new_coverage=args.min_new_coverage,
+            diff_base=args.diff_base,
+            report_paths=args.coverage_report,
+        )
+    except CoverageGateError as exc:
+        print(f"coverage gate rejected: {exc}", file=sys.stderr)
+        return 2
+    for path, line, message in gate.findings:
+        print(f"::warning file={path},line={line}::[low-new-coverage] {message}")
+    if gate.sections:
+        print("\n".join(gate.sections))
+    return gate.exit_code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
