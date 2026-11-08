@@ -57,6 +57,9 @@ jobs:
       - name: Fixture - empty project passes
         run: |
           python3 scripts/ai_slop_detector.py fixtures/empty-project --max-score 8
+      - name: Fixture - empty project passes with structural-budget enforcement
+        run: |
+          python3 scripts/ai_slop_detector.py fixtures/empty-project --max-score 8 --enforce-bloat
       - name: Fixture - prose-heavy project is advisory only
         run: |
           python3 scripts/ai_slop_detector.py fixtures/prose-heavy --max-score 0

@@ -9,7 +9,7 @@ import re
 from collections import Counter
 from pathlib import Path
 
-from slop_model import BLOCKING_CHECKS, REMEDIES, Finding
+from slop_model import REMEDIES, Finding, is_blocking
 from slop_patterns import IGNORE_FILE, MAX_ANNOTATIONS, TOOL_NAME
 
 # scanaislop-aligned scoring (scanaislop.com/docs/scoring): per-rule
@@ -149,7 +149,7 @@ def advisory_score(findings: list[Finding]) -> int:
 def _report_rule_table(rule_counts: Counter) -> list[str]:
     lines = ["| Rule | Findings | Severity |", "|---|---|---|"]
     for check, count in rule_counts.most_common():
-        severity = "blocking" if check in BLOCKING_CHECKS else "advisory"
+        severity = "blocking" if is_blocking(check) else "advisory"
         lines.append(f"| {check} | {count} | {severity} |")
     return lines
 
@@ -267,8 +267,8 @@ def write_sarif(path: str, findings: list[Finding]) -> None:
         {
             "id": check,
             "shortDescription": {"text": REMEDIES.get(check, check)},
-            "defaultConfiguration": {"level": "error" if check in BLOCKING_CHECKS else "warning"},
-            "properties": {"security-severity": "8.0" if check in BLOCKING_CHECKS else "3.0"},
+            "defaultConfiguration": {"level": "error" if is_blocking(check) else "warning"},
+            "properties": {"security-severity": "8.0" if is_blocking(check) else "3.0"},
         }
         for check in rules
     ]

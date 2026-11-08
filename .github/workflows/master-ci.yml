@@ -217,6 +217,10 @@ jobs:
       enforce_duplication: ${{ steps.profile.outputs.enforce_duplication }}
       enforce_complexity: ${{ steps.profile.outputs.enforce_complexity }}
       deps_fail_severity: ${{ steps.profile.outputs.deps_fail_severity }}
+      fail_ai_slop: ${{ steps.profile.outputs.fail_ai_slop }}
+      enforce_bloat: ${{ steps.profile.outputs.enforce_bloat }}
+      ai_slop_max: ${{ steps.profile.outputs.ai_slop_max }}
+      ai_slop_ceiling: ${{ steps.profile.outputs.ai_slop_ceiling }}
     steps:
       - name: Validate caller inputs
         env:
@@ -359,35 +363,51 @@ jobs:
         env:
           PROFILE: ${{ inputs.profile }}
           SEMGREP_INPUT: ${{ inputs.semgrep_config }}
+          AI_MAX_IN: ${{ inputs.ai_slop_max_score }}
+          AI_CEIL_IN: ${{ inputs.ai_slop_max_deficit }}
+          FAIL_SLOP_IN: ${{ inputs.fail_on_ai_slop }}
         run: |
           # Profile presets (see docs/checks.md). `custom` uses the raw inputs:
           #   quick    - fast signal, everything advisory except secrets +
           #              critical dependency findings
-          #   standard - recommended: deterministic gates enforced, loud
-          #              scanners advisory
-          #   strict   - production: also enforce Trivy HIGH/CRITICAL
+          #   standard - recommended: deterministic gates enforced (including
+          #              the AI-integrity blocking score and the slop-score
+          #              ceiling), loud scanners advisory
+          #   strict   - production: also enforce Trivy HIGH/CRITICAL and
+          #              hold every PR to the structural-budget standards
+          #              (--enforce-bloat; tightened AI caps 4/20)
           #   custom   - raw inputs, all gates enforced
           case "$PROFILE" in
             quick)
               semgrep_packs='p/default'
               enforce_osv=false; enforce_trivy=false
               enforce_duplication=false; enforce_complexity=false
-              deps_fail_severity=critical ;;
+              deps_fail_severity=critical
+              fail_ai_slop=false; enforce_bloat=false
+              ai_slop_max="$AI_MAX_IN"; ai_slop_ceiling="$AI_CEIL_IN" ;;
             strict)
               semgrep_packs="$SEMGREP_INPUT"
               enforce_osv=true; enforce_trivy=true
               enforce_duplication=true; enforce_complexity=true
-              deps_fail_severity=high ;;
+              deps_fail_severity=high
+              fail_ai_slop=true; enforce_bloat=true
+              # Hardened posture: tighter AI-integrity caps than the caller
+              # defaults. strict is a statement - override per-job if needed.
+              ai_slop_max=4; ai_slop_ceiling=20 ;;
             custom)
               semgrep_packs="$SEMGREP_INPUT"
               enforce_osv=true; enforce_trivy=false
               enforce_duplication=true; enforce_complexity=true
-              deps_fail_severity=high ;;
+              deps_fail_severity=high
+              fail_ai_slop="$FAIL_SLOP_IN"; enforce_bloat=false
+              ai_slop_max="$AI_MAX_IN"; ai_slop_ceiling="$AI_CEIL_IN" ;;
             *)  # standard
               semgrep_packs="$SEMGREP_INPUT"
               enforce_osv=true; enforce_trivy=false
               enforce_duplication=true; enforce_complexity=true
-              deps_fail_severity=high ;;
+              deps_fail_severity=high
+              fail_ai_slop=true; enforce_bloat=false
+              ai_slop_max="$AI_MAX_IN"; ai_slop_ceiling="$AI_CEIL_IN" ;;
           esac
           {
             echo "semgrep_packs=$semgrep_packs"
@@ -396,6 +416,10 @@ jobs:
             echo "enforce_duplication=$enforce_duplication"
             echo "enforce_complexity=$enforce_complexity"
             echo "deps_fail_severity=$deps_fail_severity"
+            echo "fail_ai_slop=$fail_ai_slop"
+            echo "enforce_bloat=$enforce_bloat"
+            echo "ai_slop_max=$ai_slop_max"
+            echo "ai_slop_ceiling=$ai_slop_ceiling"
           } >> "$GITHUB_OUTPUT"
 
   # ---------------------------------------------------------------------------
@@ -767,9 +791,10 @@ jobs:
       contents: read
       security-events: write
     env:
-      AI_MAX: ${{ inputs.ai_slop_max_score }}
-      AI_CEILING: ${{ inputs.ai_slop_max_deficit }}
-      FAIL_SLOP: ${{ inputs.fail_on_ai_slop }}
+      AI_MAX: ${{ needs.meta.outputs.ai_slop_max }}
+      AI_CEILING: ${{ needs.meta.outputs.ai_slop_ceiling }}
+      FAIL_SLOP: ${{ needs.meta.outputs.fail_ai_slop }}
+      ENFORCE_BLOAT: ${{ needs.meta.outputs.enforce_bloat }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Fetch master-ci helpers
@@ -782,9 +807,14 @@ jobs:
           persist-credentials: false
       - name: Run AI-integrity heuristics
         run: |
+          ENFORCE_ARGS=""
+          if [ "$ENFORCE_BLOAT" = "true" ]; then
+            ENFORCE_ARGS="--enforce-bloat"
+          fi
           python3 _ci/scripts/ai_slop_detector.py . \
             --max-score "$AI_MAX" \
             --max-slop-score "$AI_CEILING" \
+            $ENFORCE_ARGS \
             --report-file ai_report.md \
             --sarif ai_integrity.sarif \
             --annotate

@@ -34,6 +34,12 @@ def tool_list_checks(_args: dict[str, Any]) -> dict[str, Any]:
     return {
         "detector": {
             "blocking_checks": sorted(detector.BLOCKING_CHECKS),
+            "structural_budget_checks": sorted(detector.STRUCTURAL_BUDGET_CHECKS),
+            "enforce_flag": (
+                "--enforce-bloat escalates the structural-budget family "
+                "(bloat-*, god-function, deep-nesting, chained-dict-get) "
+                "to blocking-grade severity"
+            ),
             "phrase_categories": {name: len(entries) for name, entries in phrases.items()},
             "phrases": phrases,
             "remedies": dict(detector.REMEDIES),

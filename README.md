@@ -81,7 +81,7 @@ which keeps its baseline reproducible across template releases:
 ```yaml
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v1.11.3
+      template_ref: v1.12.0
 ```
 
 ### Required check
@@ -357,7 +357,7 @@ tag as the workflow for reproducible CI.
 | Duplication gate | advisory | **fail** | **fail** | **fail** |
 | Complexity gate | advisory | **fail** | **fail** | **fail** |
 | deps-review severity | critical | high | high | high |
-| AI-integrity | advisory | advisory | advisory | advisory |
+| AI-integrity gate | advisory | **fail** (blocking + slop ceiling) | **fail + structural budgets** (`--enforce-bloat`, caps 4/20) | raw `fail_on_ai_slop` input |
 
 ## Run only what you want (`select`)
 
@@ -399,7 +399,7 @@ how to disable, added time) live in [docs/checks.md](docs/checks.md).
 | `run_java` / `run_cpp` / `run_csharp` / `run_ruby` / `run_php` / `run_docker` | `auto` | Force a stack `true` / `false`, or auto-detect |
 | `select` | `''` | Comma-separated job names to run (empty = all). Unknown names fail in `meta` |
 | `semgrep_config` | `p/default p/security-audit p/secrets` | Semgrep packs (standard/strict/custom) |
-| `fail_on_ai_slop` | `false` | Fail on AI-integrity **blocking** score (advisory by default) |
+| `fail_on_ai_slop` | `false` | Raw input for `profile: custom`; `standard`/`strict` arm the AI-integrity gate themselves |
 | `ai_slop_max_score` | `8` | Blocking score cap |
 | `complexity_max` | `15` | Cyclomatic complexity gate |
 | `duplication_threshold_pct` | `5` | jscpd failure threshold |
@@ -597,7 +597,7 @@ carries a `SKILL.md`, so assistants with a skills directory can load it
 with one command:
 
 ```bash
-git clone --depth 1 --branch v1.11.3 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+git clone --depth 1 --branch v1.12.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
 ```
 
 MCP clients configure the same install like this:

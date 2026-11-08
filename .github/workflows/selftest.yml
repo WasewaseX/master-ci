@@ -94,3 +94,15 @@ jobs:
             echo "routinely by the selftest-negative.yml watchdog."
           } >> "$GITHUB_STEP_SUMMARY"
           exit $fail
+
+  # The template must satisfy its own structural-budget standards under
+  # the enforcement flag: the strict profile passes --enforce-bloat to the
+  # detector, so the dogfood scan must stay green with escalation armed.
+  enforce-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Self-scan under --enforce-bloat
+        run: |
+          python3 scripts/ai_slop_detector.py . --max-score 8 --enforce-bloat

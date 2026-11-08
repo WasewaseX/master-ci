@@ -10,6 +10,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+
 MOD_PATH = Path(__file__).resolve().parents[1] / "scripts" / "ai_slop_detector.py"
 spec = importlib.util.spec_from_file_location("ai_slop_detector", MOD_PATH)
 assert spec is not None and spec.loader is not None
@@ -1063,3 +1065,73 @@ def test_match_and_async_for_count_toward_nesting(tmp_path):
     )
     findings = scan_py(tmp_path, code)
     assert any(f.check == "deep-nesting" for f in findings)
+
+
+# ---------------------------------------------------------------------------
+# Structural-budget enforcement (--enforce-bloat / strict profile): the
+# advisory family escalates to blocking and the exit-code contract flips.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _reset_enforced_registry():
+    """Keep the global ENFORCED_CHECKS mutation from leaking across tests."""
+    yield
+    mod.ENFORCED_CHECKS.clear()
+
+
+def test_structural_budget_family_is_advisory_by_default(tmp_path):
+    code = "def wide(a, b, c, d, e, f, g, h):\n    return a + h\n"
+    findings = scan_py(tmp_path, code)
+    param_hits = [f for f in findings if f.check == "bloat-param-count"]
+    assert param_hits and all(f.advisory for f in param_hits)
+    assert not mod.is_blocking("bloat-param-count")
+
+
+def test_enforce_bloat_escalates_family_to_blocking(tmp_path):
+    code = "def wide(a, b, c, d, e, f, g, h):\n    return a + h\n"
+    findings = scan_py(tmp_path, code)
+    assert not any("bloat" in f.check and not f.advisory for f in findings)
+    mod.enforce_structural_budget()
+    findings = scan_py(tmp_path, code)
+    escalated = [f for f in findings if f.check == "bloat-param-count"]
+    assert escalated and all(not f.advisory for f in escalated)
+    assert mod.is_blocking("bloat-param-count")
+
+
+def test_enforce_bloat_flips_exit_code(tmp_path):
+    code = "def wide(a, b, c, d, e, f, g, h):\n    return a + h\n"
+    scan_py(tmp_path, code)
+    assert mod.main([str(tmp_path), "--max-score", "0"]) == 0
+    assert mod.main([str(tmp_path), "--max-score", "0", "--enforce-bloat"]) == 1
+
+
+def test_enforce_bloat_keeps_clean_project_green(tmp_path):
+    scan(tmp_path, {"a.py": "def add(a, b):\n    return a + b\n"})
+    assert mod.main([str(tmp_path), "--max-score", "0", "--enforce-bloat"]) == 0
+
+
+def test_repo_bloat_fixture_contract():
+    """fixtures/bloat-code: advisory alone, blocking under --enforce-bloat."""
+    fixture_root = Path(__file__).resolve().parent.parent / "fixtures" / "bloat-code"
+    findings = mod.scan(fixture_root, mod.load_phrases())
+    checks = {f.check for f in findings}
+    assert {
+        "bloat-long-file",
+        "bloat-param-count",
+        "bloat-comment-ratio",
+        "bloat-banner-comments",
+    } <= checks
+    assert all(f.advisory for f in findings if f.check.startswith("bloat-"))
+    mod.enforce_structural_budget()
+    escalated = mod.scan(fixture_root, mod.load_phrases())
+    assert all(not f.advisory for f in escalated if f.check.startswith("bloat-"))
+
+
+def test_blocking_set_export_includes_enforced_family():
+    # mcp_meta exports the structural-budget family so MCP clients can
+    # render the enforcement surface.
+    assert "bloat-param-count" in mod.STRUCTURAL_BUDGET_CHECKS
+    assert "god-function" in mod.STRUCTURAL_BUDGET_CHECKS
+    assert "chained-dict-get" in mod.STRUCTURAL_BUDGET_CHECKS
+    assert mod.is_blocking("empty-test")  # native blocking, flag or no flag

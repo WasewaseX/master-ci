@@ -105,10 +105,15 @@ Profile presets (quick / standard / strict / custom) only change the
   Security tab (category `ai-integrity`).
 - **Fails when:** the **blocking** score exceeds `ai_slop_max_score`, or
   the project slop score exceeds `ai_slop_max_deficit` (default 30, the
-  CLEAN/SUSPICIOUS boundary) - both only when `fail_on_ai_slop: true`.
-  Blocking signals are the deterministic content checks; everything
-  stylistic is advisory and is enforced through the aggregate score
-  ceiling instead of per-finding failures.
+  CLEAN/SUSPICIOUS boundary). The gate is armed by the profile: `standard`
+  and `strict` enforce it, `quick` reports only, `custom` follows the raw
+  `fail_on_ai_slop` input. Blocking signals are the deterministic content
+  checks; `strict` additionally passes `--enforce-bloat`, escalating the
+  structural-budget family (`bloat-long-file`, `bloat-param-count`,
+  `bloat-comment-ratio`, `bloat-banner-comments`, `god-function`,
+  `deep-nesting`, `chained-dict-get`) from advisory to blocking - file
+  size, parameter and comment budgets fail the PR outright. `strict`
+  also tightens the caps to `ai_slop_max=4` / ceiling `20`.
 - **False positives:** domain vocabulary overlapping the phrase list;
   abstract methods that raise NotImplementedError; intentional emoji.
   Tests asserting via a raises-style context (`with pytest.raises(...)`,
@@ -195,9 +200,10 @@ Profile presets (quick / standard / strict / custom) only change the
   contribution saturates at 40 points per file (`MAX_PER_RULE`), so one
   noisy rule can never dominate a deficit. Blocking weight is never
   tiered: strict signals stay strict.
-- **Disable:** `fail_on_ai_slop` defaults to `false` - the job reports,
-  annotates and uploads SARIF but never gates. Provenance and test
-  inventory can be turned off with `--no-provenance`.
+- **Disable:** `profile: quick` keeps the whole job advisory; with
+  `profile: custom` set `fail_on_ai_slop: false` explicitly. Provenance
+  and test inventory can be turned off with `--no-provenance`; the
+  CLI-level `--enforce-bloat` is what the strict profile passes.
 - **Time:** 10-60 seconds.
 
 ## `docs` - markdown lint

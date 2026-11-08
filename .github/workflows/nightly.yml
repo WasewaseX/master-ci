@@ -40,7 +40,7 @@ jobs:
           exit-code: '0'
       - name: Deep AI-integrity scan
         run: |
-          python3 scripts/ai_slop_detector.py . --max-score 8 --report-file /tmp/ai_report.md
+          python3 scripts/ai_slop_detector.py . --max-score 8 --enforce-bloat --report-file /tmp/ai_report.md
           cat /tmp/ai_report.md >> "$GITHUB_STEP_SUMMARY"
       - name: Nightly summary
         run: |

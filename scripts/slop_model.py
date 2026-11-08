@@ -145,8 +145,41 @@ BLOCKING_CHECKS = frozenset(
     }
 )
 
-# Structural-budget checks are judgment calls: a finding here can never
-# fail a build, no matter how a call site constructs the Finding.
+# The structural-budget family: the standards the detector holds its own
+# codebase to. Advisory by default (budget discipline is a judgment call
+# for most codebases), but escalatable to blocking by an explicit
+# enforcement decision (--enforce-bloat, or the strict CI profile).
+STRUCTURAL_BUDGET_CHECKS = frozenset(
+    {
+        "bloat-long-file",
+        "bloat-param-count",
+        "bloat-comment-ratio",
+        "bloat-banner-comments",
+        "god-function",
+        "deep-nesting",
+        "chained-dict-get",
+    }
+)
+
+# Mutated by the CLI (--enforce-bloat) BEFORE scanning, so every Finding
+# resolves escalated advisory-ness in __post_init__ and scoring, SARIF
+# and the report table agree on severity.
+ENFORCED_CHECKS: set[str] = set()
+
+
+def enforce_structural_budget() -> None:
+    """Escalate the structural-budget family to blocking-grade severity."""
+    ENFORCED_CHECKS.update(STRUCTURAL_BUDGET_CHECKS)
+
+
+def is_blocking(check: str) -> bool:
+    """True when a finding for `check` feeds the blocking score."""
+    return check in BLOCKING_CHECKS or check in ENFORCED_CHECKS
+
+
+# Judgment-call checks: a finding here can never fail a build on its own,
+# no matter how a call site constructs the Finding - unless the check is
+# also in ENFORCED_CHECKS (see is_blocking / __post_init__ below).
 ADVISORY_ONLY_CHECKS = frozenset(
     {
         "god-function",
@@ -204,7 +237,7 @@ class Finding:
     advisory: bool = field(default=False)
 
     def __post_init__(self) -> None:
-        if self.check in BLOCKING_CHECKS:
+        if is_blocking(self.check):
             self.advisory = False
         elif self.check in ADVISORY_ONLY_CHECKS:
             self.advisory = True
