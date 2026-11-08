@@ -719,7 +719,7 @@ jobs:
         run: |
           # jscpd: exact pin from configs/tool-versions.yml - a new
           # release must never change duplication behavior mid-CI
-          if npx --yes "jscpd@$(python3 _ci/scripts/tool_versions.py npm jscpd)" --silent --min-tokens 50 --threshold "$DUP_THRESHOLD" \
+          if npx --yes "$(python3 _ci/scripts/tool_versions.py npm jscpd)" --silent --min-tokens 50 --threshold "$DUP_THRESHOLD" \
             --reporters console \
             --ignore "**/_ci/**,**/fixtures/**,**/node_modules/**,**/.git/**,**/dist/**,**/build/**,**/target/**" .; then
             exit 0
@@ -905,7 +905,7 @@ jobs:
             if node -e "process.exit(require('./package.json').scripts && require('./package.json').scripts.lint ? 0 : 1)"; then
               npm run lint --silent
             else
-              npx --yes "@biomejs/biome@$(python3 _ci/scripts/tool_versions.py npm @biomejs/biome)" ci --no-errors-on-unmatched .
+              npx --yes "$(python3 _ci/scripts/tool_versions.py npm @biomejs/biome)" ci --no-errors-on-unmatched .
             fi
             cd "$GITHUB_WORKSPACE"
           }
@@ -935,7 +935,7 @@ jobs:
           while IFS= read -r dir; do
             [ -z "$dir" ] && continue
             echo "Depchecking $dir"
-            (cd "$dir" && npx --yes "depcheck@$(python3 _ci/scripts/tool_versions.py npm depcheck)" --ignores "@types/*,eslint*,prettier,biome*") \
+            (cd "$dir" && npx --yes "$(python3 _ci/scripts/tool_versions.py npm depcheck)" --ignores "@types/*,eslint*,prettier,biome*") \
               || echo "::warning::depcheck flagged unused or missing dependencies in $dir (advisory)"
           done < "$RUNNER_TEMP/node-projects.txt"
 

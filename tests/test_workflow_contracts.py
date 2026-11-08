@@ -1113,6 +1113,13 @@ def test_pin_resolver_contract():
     ) in text, "the multi-tool pin install must stay unquoted so pins word-split"
     assert "markdownlint-cli2@markdownlint-cli2" not in text, "double-prefixed npm package name"
     assert "markdownlint-cli2@" not in text, "docs job must take the resolver output verbatim"
+    # The resolver already emits <name>@<version>; prefixing it again
+    # produces jscpd@jscpd@5.4.2-style invalid tags. The pattern must
+    # never appear anywhere - it is how three npm sites broke at once.
+    assert "@$(python3 _ci/scripts/tool_versions.py" not in text, (
+        "double-prefixed resolver output - npx must take the resolver's "
+        "name@version output verbatim"
+    )
     assert "gitleaks/gitleaks-action" not in text, (
         "gitleaks-action v3 demands a paid license; the pinned CLI replaces it"
     )
