@@ -136,7 +136,7 @@ def check_unused_declarations(
                     advisory=True,
                 )
             )
-        else:
+        elif js_offset is not None:
             findings.append(
                 _finding(
                     path,
