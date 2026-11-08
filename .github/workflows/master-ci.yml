@@ -713,8 +713,14 @@ jobs:
         # download the maintained release binary directly (with retries)
         run: |
           [ -f .editorconfig ] || cp _ci/configs/.editorconfig .
-          curl -fsSL --retry 8 --retry-delay 4 --retry-max-time 300 --retry-all-errors -o /tmp/ec.tar.gz \
-            https://github.com/editorconfig-checker/editorconfig-checker/releases/download/v4.0.2/editorconfig-checker-linux-amd64.tar.gz
+          DL_OK=0
+          for _attempt in 1 2 3 4 5 6; do
+            if curl -fsSL --retry 4 --retry-delay 4 --retry-all-errors -o /tmp/ec.tar.gz \
+              https://github.com/editorconfig-checker/editorconfig-checker/releases/download/v4.0.2/editorconfig-checker-linux-amd64.tar.gz; then DL_OK=1; break; fi
+            echo "download attempt $_attempt failed; backing off 45s"
+            sleep 45
+          done
+          [ "$DL_OK" = "1" ] || { echo '::error::editorconfig-checker download failed after 6 attempts'; exit 1; }
           tar -xzf /tmp/ec.tar.gz -C /tmp
           chmod +x /tmp/editorconfig-checker
           /tmp/editorconfig-checker
@@ -770,8 +776,14 @@ jobs:
         # the checksum-pinned CLI keeps the same full-history scan
         # license-free. Commit a .gitleaks.toml to tune the rules.
         run: |
-          curl -fsSL --retry 8 --retry-delay 4 --retry-max-time 300 --retry-all-errors -o /tmp/gitleaks.tar.gz \
-            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          DL_OK=0
+          for _attempt in 1 2 3 4 5 6; do
+            if curl -fsSL --retry 4 --retry-delay 4 --retry-all-errors -o /tmp/gitleaks.tar.gz \
+              https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz; then DL_OK=1; break; fi
+            echo "download attempt $_attempt failed; backing off 45s"
+            sleep 45
+          done
+          [ "$DL_OK" = "1" ] || { echo '::error::gitleaks download failed after 6 attempts'; exit 1; }
           echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  /tmp/gitleaks.tar.gz" | sha256sum -c -
           tar -xzf /tmp/gitleaks.tar.gz -C /tmp
           chmod +x /tmp/gitleaks
@@ -1662,8 +1674,14 @@ jobs:
         if: steps.files.outputs.count != '0'
         # checksum recorded from the v2.12.0 release asset at adoption time
         run: |
-          curl -fsSL --retry 8 --retry-delay 4 --retry-max-time 300 --retry-all-errors -o /tmp/hadolint \
-            https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-linux-x86_64
+          DL_OK=0
+          for _attempt in 1 2 3 4 5 6; do
+            if curl -fsSL --retry 4 --retry-delay 4 --retry-all-errors -o /tmp/hadolint \
+              https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-linux-x86_64; then DL_OK=1; break; fi
+            echo "download attempt $_attempt failed; backing off 45s"
+            sleep 45
+          done
+          [ "$DL_OK" = "1" ] || { echo '::error::hadolint download failed after 6 attempts'; exit 1; }
           echo "56de6d5e5ec427e17b74fa48d51271c7fc0d61244bf5c90e828aab8362d55010  /tmp/hadolint" | sha256sum -c -
           chmod +x /tmp/hadolint
           rc=0
@@ -1772,8 +1790,14 @@ jobs:
           ignore-unfixed: true
       - name: OSV vulnerability scan
         run: |
-          curl -fsSL --retry 8 --retry-delay 4 --retry-max-time 300 --retry-all-errors -o osv-scanner \
-            https://github.com/google/osv-scanner/releases/download/v2.7.0/osv-scanner_linux_amd64
+          DL_OK=0
+          for _attempt in 1 2 3 4 5 6; do
+            if curl -fsSL --retry 4 --retry-delay 4 --retry-all-errors -o osv-scanner \
+              https://github.com/google/osv-scanner/releases/download/v2.7.0/osv-scanner_linux_amd64; then DL_OK=1; break; fi
+            echo "download attempt $_attempt failed; backing off 45s"
+            sleep 45
+          done
+          [ "$DL_OK" = "1" ] || { echo '::error::osv-scanner download failed after 6 attempts'; exit 1; }
           chmod +x osv-scanner
           rc=0
           ./osv-scanner scan source -r . --format sarif --output-file osv.sarif || rc=$?
