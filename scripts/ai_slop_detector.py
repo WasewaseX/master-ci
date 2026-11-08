@@ -21,6 +21,9 @@ if _HERE not in sys.path:
 from slop_bloat import (  # noqa: F401
     check_bloat,
 )
+from slop_commentary import (  # noqa: F401
+    check_unknown_directives,
+)
 from slop_comments import (  # noqa: F401
     extract_comments,
     phrase_findings,
@@ -283,6 +286,7 @@ def scan(
             )
         )
     findings.extend(scan_duplicates(files))
+    findings.extend(check_unknown_directives(root, files, globs))
     if provenance:
         findings.extend(inventory_findings(root, files, globs))
     if disabled:

@@ -206,6 +206,100 @@ BLANKET_SUPPRESS = re.compile(
     r"|#\s*type: ignore\s*#|nolint\b",
     re.IGNORECASE,
 )
+# scanaislop round-3: suppression comments naming a lint tool. Flagged
+# only when the named tool has no config in the repo, so the comment
+# suppresses nothing. The separator needs one char, keeping this source
+# (tool names in a pipe alternation) from matching itself.
+SUPPRESSION_DIRECTIVE = re.compile(
+    r"(?:#|//|/\*|<!--)[^\n]*?\b(?:eslint|biome|tslint|jshint|stylelint|"
+    r"pylint|flake8|mypy|ruff|pyright|rubocop|shellcheck|yamllint|"
+    r"markdownlint|hadolint|prettier)[\s:=-]+(?:ignore|disable|skip|off)\b",
+    re.IGNORECASE,
+)
+# Inline suppressions for this detector's own namespace: the real opt-out
+# mechanism is the ignore file, never an inline comment, so any inline
+# form is an invented directive that suppresses nothing.
+SELF_TOOL_DIRECTIVE = re.compile(r"(?:#|//)\s*master-ci[-_]?ignore\b", re.IGNORECASE)
+# Tools a repo is considered to configure: a config file with one of these
+# names at the root, or the tool name appearing in one of the manifest /
+# workflow files checked by the unknown-directive pass.
+TOOL_CONFIG_GLOBS = (
+    ".eslintrc*",
+    "eslint.config.*",
+    ".prettierrc*",
+    "prettier.config.*",
+    "biome.json*",
+    ".stylelintrc*",
+    "stylelint.config.*",
+    ".pylintrc",
+    ".flake8",
+    "mypy.ini",
+    ".mypy.ini",
+    "ruff.toml",
+    ".ruff.toml",
+    "pyrightconfig.json",
+    ".rubocop.yml",
+    ".shellcheckrc",
+    ".markdownlint*",
+    ".yamllint*",
+    "yamllint.yaml",
+    ".hadolint.yaml",
+    "hadolint.yaml",
+    "tslint.json",
+    ".jshintrc",
+)
+TOOL_MANIFEST_FILES = ("pyproject.toml", "package.json", "setup.cfg", "tox.ini")
+DIRECTIVE_TOOLS = (
+    "eslint",
+    "biome",
+    "tslint",
+    "jshint",
+    "stylelint",
+    "pylint",
+    "flake8",
+    "mypy",
+    "ruff",
+    "pyright",
+    "rubocop",
+    "shellcheck",
+    "yamllint",
+    "markdownlint",
+    "hadolint",
+    "prettier",
+)
+# scanaislop round-3: an empty named function body - a placeholder stubbed
+# to make a signature compile and never filled in. Expression arrows are
+# included; inline JSX props and class lifecycle no-ops are not matched.
+JS_EMPTY_FUNCTION = re.compile(
+    r"\bfunction\s+[A-Za-z_$][\w$]*\s*\([^)]*\)\s*\{\s*\}"
+    r"|\b(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*="
+    r"\s*(?:async\s+)?\([^)]*\)\s*=>\s*\{\s*\}"
+)
+# A function whose body is exactly one return forwarding the unmodified
+# parameters to another callable. Backreferences force the call arguments
+# to be the parameter list verbatim; the Python-side check additionally
+# rejects parameter lists containing defaults, rest or destructuring.
+JS_THIN_WRAPPER = re.compile(
+    r"\bfunction\s+[A-Za-z_$][\w$]*\s*\(([^)]*)\)\s*\{\s*"
+    r"return\s+[A-Za-z_$][\w$.]*\s*\(\s*\1\s*\)\s*;?\s*\}"
+    r"|\b(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*(?:async\s+)?"
+    r"\(([^)]*)\)\s*=>\s*[A-Za-z_$][\w$.]*\s*\(\s*\2\s*\)\s*;?"
+)
+# scanaislop round-3: environment-specific record identifiers baked into
+# source - a tenant or project id pasted as a literal. Provider-shaped
+# prefixes or UUID/long tokens on id-named bindings; the Python-side
+# check filters placeholder and digit-only values.
+PROVIDER_ID_VALUE = re.compile(
+    r"[\"']((?:sk_live|sk_test|pk_live|pk_test|rk_live|whsec)_[A-Za-z0-9]{10,}|"
+    r"(?:price|cus|sub|prod|plan|app|usr|org|team)_[A-Za-z0-9]{18,})[\"']"
+)
+HARDCODED_RECORD_ID = re.compile(
+    r"(?i)\b([\w$]*(?:tenant|org|project|workspace|account|consumer|"
+    r"merchant|customer|client|team|app|user|api|instance|cluster)[_-]?id"
+    r"|[\w$]*_id)\b\s*[:=]\s*[\"']"
+    r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+    r"|[A-Za-z0-9][A-Za-z0-9_-]{14,})[\"']"
+)
 UI_GRADIENT = re.compile(
     r"from-(?:purple|pink|blue|indigo|violet|fuchsia)-\d00\s+to-(?:pink|purple|rose|fuchsia|violet)-\d00"
     r"|linear-gradient\([^)]*(?:667eea|764ba2|a855f7|ec4899|8b5cf6)",

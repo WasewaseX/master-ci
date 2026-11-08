@@ -1135,3 +1135,119 @@ def test_blocking_set_export_includes_enforced_family():
     assert "god-function" in mod.STRUCTURAL_BUDGET_CHECKS
     assert "chained-dict-get" in mod.STRUCTURAL_BUDGET_CHECKS
     assert mod.is_blocking("empty-test")  # native blocking, flag or no flag
+
+
+# --- scanaislop round-3: thin wrappers, empty functions, baked ids,
+# invented suppressions. Directive strings are assembled at runtime so
+# this test source never contains a matchable suppression itself.
+
+
+def test_py_thin_wrapper_flagged(tmp_path):
+    code = "def send(payload, headers):\n    return deliver(payload, headers)\n"
+    findings = scan(tmp_path, {"svc.py": code})
+    hits = [f for f in findings if f.check == "thin-wrapper"]
+    assert hits and "deliver" in hits[0].message
+    assert hits[0].advisory
+
+
+def test_py_thin_wrapper_not_flagged_on_transformation(tmp_path):
+    code = "def send(payload):\n    return deliver(transform(payload))\n"
+    findings = scan(tmp_path, {"svc.py": code})
+    assert not any(f.check == "thin-wrapper" for f in findings)
+
+
+def test_py_thin_wrapper_allows_decorated_and_dunder(tmp_path):
+    code = (
+        "class S:\n"
+        "    @property\n"
+        "    def size(self):\n"
+        "        return len(self._items)\n"
+        "\n"
+        "    def __repr__(self):\n"
+        "        return format(self)\n"
+    )
+    findings = scan(tmp_path, {"svc.py": code})
+    assert not any(f.check == "thin-wrapper" for f in findings)
+
+
+def test_js_thin_wrapper_flagged_and_transform_exempt(tmp_path):
+    code = (
+        "function forward(a, b) { return delegate(a, b); }\n"
+        "const real = (a, b) => delegate(a, transform(b));\n"
+    )
+    findings = scan(tmp_path, {"app.js": code})
+    hits = [f for f in findings if f.check == "thin-wrapper"]
+    assert len(hits) == 1
+
+
+def test_js_empty_function_flagged(tmp_path):
+    code = "function handler(req) {}\nconst noop = (a, b) => {};\n"
+    findings = scan(tmp_path, {"app.js": code})
+    hits = [f for f in findings if f.check == "empty-function"]
+    assert hits and "2" in hits[0].message
+
+
+def test_js_empty_function_allows_documented_noop(tmp_path):
+    code = "function handler(req) {\n  // no-op by design\n}\n"
+    findings = scan(tmp_path, {"app.js": code})
+    assert not any(f.check == "empty-function" for f in findings)
+
+
+def test_hardcoded_id_flagged(tmp_path):
+    code = 'TENANT_ID = "acme-corp-prod-88231"\nplan = "price_Zx1Yw2Vu3Ba4C5d6E7f8"\n'
+    findings = scan(tmp_path, {"cfg.py": code})
+    hits = [f for f in findings if f.check == "hardcoded-id"]
+    assert hits and hits[0].advisory
+
+
+def test_hardcoded_id_skipped_in_tests(tmp_path):
+    code = 'TENANT_ID = "acme-corp-prod-88231"\n'
+    findings = scan(tmp_path, {"tests/test_cfg.py": code})
+    assert not any(f.check == "hardcoded-id" for f in findings)
+
+
+def test_hardcoded_id_allows_placeholders_and_words(tmp_path):
+    code = 'TENANT_ID = "your-tenant-here"\nalias = "master-ci-detector"\n'
+    findings = scan(tmp_path, {"cfg.py": code})
+    assert not any(f.check == "hardcoded-id" for f in findings)
+
+
+def _directive_comment():
+    # Assembled so this file never contains the literal directive.
+    return "# eslint-" + "disable-next-line no-undef"
+
+
+def test_unknown_directive_flagged_when_tool_absent(tmp_path):
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    code = _directive_comment() + "\nvalue = compute()\n"
+    findings = scan(tmp_path, {"app.py": code})
+    hits = [f for f in findings if f.check == "unknown-directive"]
+    assert hits and "eslint" in hits[0].message
+
+
+def test_unknown_directive_clear_when_tool_configured(tmp_path):
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    wf = tmp_path / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "ci.yml").write_text("jobs:\n  lint:\n    steps:\n      - run: eslint .\n")
+    code = _directive_comment() + "\nvalue = compute()\n"
+    findings = scan(tmp_path, {"app.py": code})
+    assert not any(f.check == "unknown-directive" for f in findings)
+
+
+def test_self_tool_directive_always_unknown(tmp_path):
+    # The detector's own opt-out is the ignore file, never an inline
+    # comment, so the inline form is flagged even when master-ci runs.
+    inline = "# master-ci-" + "ignore this file"
+    findings = scan(tmp_path, {"app.py": inline + "\nvalue = compute()\n"})
+    hits = [f for f in findings if f.check == "unknown-directive"]
+    assert hits and "master-ci" in hits[0].message
+
+
+def test_unknown_directive_respects_ignore_globs(tmp_path):
+    (tmp_path / ".ai-integrity-ignore").write_text("vendored/\n")
+    (tmp_path / "vendored").mkdir()
+    code = _directive_comment() + "\nvalue = compute()\n"
+    (tmp_path / "vendored" / "old.py").write_text(code, encoding="utf-8")
+    findings = mod.scan(tmp_path, mod.load_phrases())
+    assert not any(f.check == "unknown-directive" for f in findings)

@@ -191,6 +191,57 @@ def _py_has_assert(node: ast.AST) -> bool:
     return False
 
 
+def _py_forward_call(body: list[ast.stmt], params: list[str]) -> str | None:
+    """Target name when the body is one return forwarding exactly `params`."""
+    if len(body) != 1:
+        return None
+    stmt = body[0]
+    call: ast.Call | None = None
+    if isinstance(stmt, ast.Return) and isinstance(stmt.value, ast.Call):
+        call = stmt.value
+    elif (
+        isinstance(stmt, ast.Return)
+        and isinstance(stmt.value, ast.Await)
+        and isinstance(stmt.value.value, ast.Call)
+    ):
+        call = stmt.value.value
+    if call is None:
+        return None
+    names = [arg.id for arg in call.args if isinstance(arg, ast.Name)]
+    if len(names) != len(call.args) or call.keywords or names != params or not params:
+        return None
+    if isinstance(call.func, ast.Name):
+        return call.func.id
+    if isinstance(call.func, ast.Attribute):
+        return call.func.attr
+    return None
+
+
+def _py_thin_wrapper(path: Path, node) -> Finding | None:
+    """A function that exists only to forward its arguments unchanged."""
+    if node.name.startswith("__") or node.decorator_list:
+        return None  # dunders and decorator surfaces are intentional API
+    params = [a.arg for a in node.args.posonlyargs + node.args.args]
+    if node.args.vararg or node.args.kwarg or node.args.kwonlyargs or node.args.defaults:
+        return None
+    if params and params[0] == "self":
+        params = params[1:]
+    target = _py_forward_call(node.body, params)
+    if target is None:
+        return None
+    return Finding(
+        path=str(path),
+        line=node.lineno,
+        check="thin-wrapper",
+        message=(
+            f"function {node.name!r} only forwards its arguments to "
+            f"{target!r} - inline it or give it a reason to exist"
+        ),
+        weight=1,
+        advisory=True,
+    )
+
+
 def _py_def_findings(path: Path, node) -> list[Finding]:
     """FunctionDef branch: stub bodies, assertion-less tests, function smells."""
     findings: list[Finding] = []
@@ -204,6 +255,9 @@ def _py_def_findings(path: Path, node) -> list[Finding]:
                 weight=2,
             )
         )
+    thin = _py_thin_wrapper(path, node)
+    if thin is not None:
+        findings.append(thin)
     if node.name.startswith("test_") and not _py_has_assert(node):
         findings.append(
             Finding(

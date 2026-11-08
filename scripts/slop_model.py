@@ -117,6 +117,21 @@ REMEDIES = {
     "meta-comment": ("Delete comments that narrate the task history; the diff tells that story"),
     "prose-block": ("Cut the block to the one non-obvious why; the code already shows the what"),
     "hardcoded-url": ("Move the environment-specific URL to configuration or the environment"),
+    "hardcoded-id": (
+        "Load the record identifier from configuration or the environment; "
+        "source runs in every environment"
+    ),
+    "empty-function": (
+        "Fill in the body or delete the declaration; an empty signature compiles and does nothing"
+    ),
+    "thin-wrapper": (
+        "Inline the forwarding call; a wrapper must transform, log, guard "
+        "or otherwise earn its layer"
+    ),
+    "unknown-directive": (
+        "Delete the suppression comment or configure the tool it names; "
+        "a directive for an absent tool suppresses nothing"
+    ),
     "missing-tests": (
         "Add tests for the source files, or move generated vendored code "
         "behind an interface and ignore the directory"
@@ -215,6 +230,12 @@ ADVISORY_ONLY_CHECKS = frozenset(
         "meta-comment",
         "prose-block",
         "hardcoded-url",
+        # scanaislop round-3 adoption: forwarding shells, empty bodies,
+        # baked record ids, invented suppressions. Judgment calls.
+        "thin-wrapper",
+        "empty-function",
+        "hardcoded-id",
+        "unknown-directive",
         "ui-eyebrow-label",
         "ui-italic-serif-hero",
         "ui-fake-stats",

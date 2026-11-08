@@ -192,6 +192,24 @@ Profile presets (quick / standard / strict / custom) only change the
   (localhost/staging/internal URLs baked into non-test source). The
   TypeScript escape hatch covers `as any` and `as unknown as` via
   `ts-suppression`.
+- **Round-3 scanaislop adoption (advisory):** the third tranche from
+  scanaislop.com's pattern catalog. Wrappers and bodies: `thin-wrapper`
+  (a function whose body only forwards its arguments unchanged - Python
+  AST-verified, brace families via a conservative scanner; decorated
+  surfaces and dunders are exempt) and `empty-function` (a named
+  brace-family function with a literally empty body; documented no-ops
+  are exempt). Environment leakage: `hardcoded-id` (a tenant/project/
+  account identifier or provider-shaped token - Stripe-style prefixes,
+  UUIDs on id-named bindings - baked into non-test source; placeholders
+  and digit-only strings are filtered). Invented suppressions:
+  `unknown-directive` (a comment that suppresses in the name of a lint
+  tool the repo does not configure, or an inline `master-ci-ignore` -
+  the real opt-out is the ignore file, never an inline comment; tools
+  count as configured when a root config file or the manifests/
+  workflows name them). The doc phrase table also grew the
+  marketing-catchphrase set from noqode's copy signs: urgency filler
+  ("look no" + "further"), power verbs paired with "your", the
+  "not just X" pivot, and hustle-culture scene setting.
 - **Scoring refinements (scanaislop-aligned):** advisory pressure is
   tier-weighted - maintainability debts (bloat, god-function, deep
   nesting, dispatch ladders) press at 0.75x, mechanical residue
