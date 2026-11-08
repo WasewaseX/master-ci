@@ -267,7 +267,7 @@ Profile presets (quick / standard / strict / custom) only change the
   `must_not_import` - core code importing the UI layer fails the gate;
   import names resolve to layers through file stems and package
   directory names), `arch-missing-pattern` (`required_patterns`: every
-  file matching a glob must contain a regex - e.g. `^class ` in core
+  file matching a glob must contain a regex - e.g. `^class` in core
   modules, `from __future__ import annotations` everywhere). No config
   file means no findings, so existing consumers are unaffected - and a
   declared rule is a contract, not a judgment call, so violations are
