@@ -258,6 +258,22 @@ Profile presets (quick / standard / strict / custom) only change the
   pattern module under the same 400-line budget the detector enforces
   on others, and the unknown-directive scan now strips string literals
   first so regex tables cannot self-report.
+- **Round-7 scanaislop adoption (blocking-grade, opt-in):** the
+  "Custom Architecture Rules" from the scanaislop docs. A
+  `.ai-integrity-arch.json` at the scan root declares the project's
+  law; the detector enforces it deterministically. `arch-forbidden-import`
+  (`forbidden_imports`: module + reason - a module no file may import),
+  `arch-layer-violation` (`layers`: named path globs with
+  `must_not_import` - core code importing the UI layer fails the gate;
+  import names resolve to layers through file stems and package
+  directory names), `arch-missing-pattern` (`required_patterns`: every
+  file matching a glob must contain a regex - e.g. `^class ` in core
+  modules, `from __future__ import annotations` everywhere). No config
+  file means no findings, so existing consumers are unaffected - and a
+  declared rule is a contract, not a judgment call, so violations are
+  blocking-grade by construction. master-ci holds itself to this: the
+  template ships its own config (slop modules may not import MCP
+  modules; every engine module keeps PEP 563).
 - **Scoring refinements (scanaislop-aligned):** advisory pressure is
   tier-weighted - maintainability debts (bloat, god-function, deep
   nesting, dispatch ladders) press at 0.75x, mechanical residue

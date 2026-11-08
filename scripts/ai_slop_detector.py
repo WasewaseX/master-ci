@@ -18,6 +18,7 @@ _HERE = str(Path(__file__).resolve().parent)
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
+from slop_arch import check_architecture_rules  # noqa: F401
 from slop_bloat import (  # noqa: F401
     check_bloat,
 )
@@ -294,6 +295,7 @@ def scan(
     findings.extend(scan_duplicates(files))
     findings.extend(check_unused_declarations(root, files, globs))
     findings.extend(check_unused_dependencies(root, files))
+    findings.extend(check_architecture_rules(root, files, globs))
     findings.extend(check_unknown_directives(root, files, globs))
     if provenance:
         findings.extend(inventory_findings(root, files, globs))

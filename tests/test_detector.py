@@ -1530,3 +1530,76 @@ def test_directive_in_string_literal_not_flagged(tmp_path):
     code = 'PATTERN = re.compile(r"(?://)\\s*eslint-disable(?:\\s|$)")\n'
     findings = scan(tmp_path, {"p.py": code})
     assert not [f for f in findings if f.check == "unknown-directive"]
+
+
+# Opt-in architecture rules (.ai-integrity-arch.json): a declared rule is
+# a contract, so violations are blocking-grade. No config means silence.
+
+
+ARCH_CONFIG = {
+    "forbidden_imports": [{"module": "requests", "reason": "stdlib-only"}],
+    "layers": [
+        {"name": "core", "paths": ["src/core/*.py"], "must_not_import": ["ui"]},
+        {"name": "ui", "paths": ["src/ui/*.py"]},
+    ],
+    "required_patterns": [{"glob": "src/core/*.py", "pattern": "^class ", "reason": "class-based"}],
+}
+
+
+def write_arch(tmp_path, config=None):
+    import json
+
+    (tmp_path / ".ai-integrity-arch.json").write_text(
+        json.dumps(ARCH_CONFIG if config is None else config), encoding="utf-8"
+    )
+
+
+def test_arch_forbidden_import_blocks(tmp_path):
+    write_arch(tmp_path)
+    findings = scan(tmp_path, {"src/core/a.py": "import requests\n"})
+    hits = [f for f in findings if f.check == "arch-forbidden-import"]
+    assert len(hits) == 1 and "requests" in hits[0].message
+    assert not hits[0].advisory
+
+
+def test_arch_layer_violation_blocks(tmp_path):
+    write_arch(tmp_path)
+    code = "from ui import render\n\ndef run():\n    return render()\n"
+    findings = scan(
+        tmp_path,
+        {"src/core/b.py": code, "src/ui/view.py": "def render():\n    return 1\n"},
+    )
+    hits = [f for f in findings if f.check == "arch-layer-violation"]
+    assert len(hits) == 1 and "'core' imports layer 'ui'" in hits[0].message
+    assert not hits[0].advisory
+
+
+def test_arch_missing_pattern_blocks(tmp_path):
+    write_arch(tmp_path)
+    findings = scan(tmp_path, {"src/core/c.py": "def run():\n    return 1\n"})
+    hits = [f for f in findings if f.check == "arch-missing-pattern"]
+    assert len(hits) == 1 and "class-based" in hits[0].message
+    assert not hits[0].advisory
+
+
+def test_arch_compliant_code_is_silent(tmp_path):
+    write_arch(tmp_path)
+    code = "class Engine:\n    pass\n"
+    findings = scan(tmp_path, {"src/core/d.py": code})
+    assert not [f for f in findings if f.check.startswith("arch-")]
+
+
+def test_arch_without_config_is_silent(tmp_path):
+    findings = scan(tmp_path, {"src/core/a.py": "import requests\nfrom ui import x\n"})
+    assert not [f for f in findings if f.check.startswith("arch-")]
+
+
+def test_arch_malformed_config_is_silent(tmp_path):
+    (tmp_path / ".ai-integrity-arch.json").write_text("{not json", encoding="utf-8")
+    findings = scan(tmp_path, {"src/core/a.py": "import requests\n"})
+    assert not [f for f in findings if f.check.startswith("arch-")]
+
+
+def test_arch_checks_registered_blocking():
+    for check in ("arch-forbidden-import", "arch-layer-violation", "arch-missing-pattern"):
+        assert check in mod.BLOCKING_CHECKS

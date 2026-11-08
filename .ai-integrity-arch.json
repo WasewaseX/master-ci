@@ -1,0 +1,9 @@
+{
+  "layers": [
+    {"name": "core", "paths": ["scripts/slop_*.py"], "must_not_import": ["mcp"]},
+    {"name": "mcp", "paths": ["scripts/mcp_*.py"]}
+  ],
+  "required_patterns": [
+    {"glob": "scripts/*.py", "pattern": "^from __future__ import annotations", "reason": "PEP 563 in every module of the engine"}
+  ]
+}

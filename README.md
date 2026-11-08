@@ -81,7 +81,7 @@ which keeps its baseline reproducible across template releases:
 ```yaml
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v1.16.0
+      template_ref: v1.17.0
 ```
 
 ### Required check
@@ -300,6 +300,7 @@ Advisory rules (never fail a build; reported, annotated, SARIF `warning`):
 | UI slop | `ui-ai-gradient`, `ui-gradient-text`, `ui-marketing-copy`, `ui-placeholder-copy`, `ui-emoji-decor`, `ui-eyebrow-label`, `ui-italic-serif-hero`, `ui-fake-stats`, `ui-generic-testimonial`, `ui-not-just-x`, `ui-triple-slogan`, `ui-glass-glow`, `ui-decorative-numbering`, `ui-placeholder-image`, `ui-identical-cards`, `ui-em-dash-overuse` |
 | Prose | `ai-prose`, `humanizer`, `em-dash-density`, `rule-of-three`, `rhetorical-questions`, `exclamations`, `md-emoji-headings`, `md-residue`, `step-comments`, `placeholder-note` |
 | Provenance | `ai-provenance` (generation banners, AI co-author trailers), `missing-tests` (repo inventory) |
+| Architecture (opt-in) | `arch-forbidden-import`, `arch-layer-violation`, `arch-missing-pattern` - blocking-grade, declared in `.ai-integrity-arch.json`; no config, no findings |
 
 The provenance family is deliberately advisory: style is not evidence of
 authorship, and the goal is traceability and quality, never blame. Every
@@ -597,7 +598,7 @@ carries a `SKILL.md`, so assistants with a skills directory can load it
 with one command:
 
 ```bash
-git clone --depth 1 --branch v1.16.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+git clone --depth 1 --branch v1.17.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
 ```
 
 MCP clients configure the same install like this:

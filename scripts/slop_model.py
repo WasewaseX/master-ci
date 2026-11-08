@@ -148,6 +148,34 @@ REMEDIES = {
         "Throw the specific exception type; a broad Exception hides every "
         "failure mode behind one signature"
     ),
+    "eval-usage": (
+        "Parse the input with a real parser or map the cases explicitly; "
+        "eval compiles a string nobody reviewed"
+    ),
+    "ui-placeholder-image": (
+        "Ship a real product photo, screenshot or face; placeholder "
+        "services tell the reader nothing was chosen"
+    ),
+    "ui-identical-cards": (
+        "Vary the layout between sections or extract one intentional "
+        "component; six identical cards read as one template multiplied"
+    ),
+    "ui-em-dash-overuse": (
+        "Use periods, commas, colons or hyphens; a pile of em dashes is a "
+        "prose tell, not typography"
+    ),
+    "arch-forbidden-import": (
+        "Import the module the architecture config approves; a forbidden "
+        "import drags the wrong dependency direction into the codebase"
+    ),
+    "arch-layer-violation": (
+        "Route the call through the layer boundary the config declares "
+        "(an interface, an event, a service); layers leak by single imports"
+    ),
+    "arch-missing-pattern": (
+        "Add the declared structure or narrow the rule's glob; a required "
+        "pattern exists so readers can rely on it"
+    ),
 }
 BLOCKING_CHECKS = frozenset(
     {
@@ -169,6 +197,11 @@ BLOCKING_CHECKS = frozenset(
         "debugger-left",
         "rust-stub",
         "chatbot-residue",
+        # Opt-in architecture rules: a declared rule is a contract, not a
+        # judgment call - violations are blocking-grade by construction.
+        "arch-forbidden-import",
+        "arch-layer-violation",
+        "arch-missing-pattern",
     }
 )
 
