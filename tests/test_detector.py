@@ -1532,6 +1532,20 @@ def test_directive_in_string_literal_not_flagged(tmp_path):
     assert not [f for f in findings if f.check == "unknown-directive"]
 
 
+def test_noqa_import_is_not_phantom(tmp_path):
+    # Re-export surfaces (package __init__, library facades) import names
+    # they never call; a scoped noqa declares that intent, ruff F401 style.
+    code = "from slop_arch import ArchConfigError  # noqa: F401\n\ndef run():\n    return 1\n"
+    findings = scan(tmp_path, {"facade.py": code})
+    assert not [f for f in findings if f.check == "phantom-import"]
+
+
+def test_unmarked_unused_import_still_phantom(tmp_path):
+    code = "import os\n\ndef run():\n    return 1\n"
+    findings = scan(tmp_path, {"p.py": code})
+    assert [f for f in findings if f.check == "phantom-import"]
+
+
 # Opt-in architecture rules (.ai-integrity-arch.json): a declared rule is
 # a contract, so violations are blocking-grade. No config means silence.
 
@@ -1594,12 +1608,147 @@ def test_arch_without_config_is_silent(tmp_path):
     assert not [f for f in findings if f.check.startswith("arch-")]
 
 
-def test_arch_malformed_config_is_silent(tmp_path):
+def test_arch_malformed_config_fails_closed(tmp_path):
+    # v1.18: a config that exists but cannot be honored fails the run
+    # (exit 2 at the CLI) instead of being silently skipped.
     (tmp_path / ".ai-integrity-arch.json").write_text("{not json", encoding="utf-8")
-    findings = scan(tmp_path, {"src/core/a.py": "import requests\n"})
-    assert not [f for f in findings if f.check.startswith("arch-")]
+    with pytest.raises(mod.ArchConfigError):
+        scan(tmp_path, {"src/core/a.py": "import requests\n"})
+
+
+def test_arch_unknown_key_fails_closed(tmp_path):
+    write_arch(tmp_path, {"forbidden_importz": [{"module": "requests"}]})
+    with pytest.raises(mod.ArchConfigError) as exc:
+        scan(tmp_path, {})
+    assert "unknown key" in str(exc.value)
+
+
+def test_arch_empty_config_fails_closed(tmp_path):
+    write_arch(tmp_path, {})
+    with pytest.raises(mod.ArchConfigError) as exc:
+        scan(tmp_path, {})
+    assert "declares no rules" in str(exc.value)
+
+
+def test_arch_bad_module_name_fails_closed(tmp_path):
+    write_arch(tmp_path, {"forbidden_imports": [{"module": "not a module!"}]})
+    with pytest.raises(mod.ArchConfigError):
+        scan(tmp_path, {})
+
+
+def test_arch_undeclared_layer_reference_fails_closed(tmp_path):
+    # A must_not_import naming an undeclared layer could never match, so
+    # the rule would be inert while looking enforced.
+    write_arch(
+        tmp_path,
+        {"layers": [{"name": "core", "paths": ["src/core/*"], "must_not_import": ["web"]}]},
+    )
+    with pytest.raises(mod.ArchConfigError) as exc:
+        scan(tmp_path, {})
+    assert "undeclared layer" in str(exc.value)
+
+
+def test_arch_bad_regex_fails_closed(tmp_path):
+    write_arch(tmp_path, {"required_patterns": [{"glob": "*.py", "pattern": "(unclosed"}]})
+    with pytest.raises(mod.ArchConfigError) as exc:
+        scan(tmp_path, {})
+    assert "bad regex" in str(exc.value)
+
+
+def test_arch_array_root_fails_closed(tmp_path):
+    (tmp_path / ".ai-integrity-arch.json").write_text("[]", encoding="utf-8")
+    with pytest.raises(mod.ArchConfigError):
+        scan(tmp_path, {})
+
+
+def test_arch_empty_rule_list_fails_closed(tmp_path):
+    write_arch(tmp_path, {"forbidden_imports": []})
+    with pytest.raises(mod.ArchConfigError):
+        scan(tmp_path, {})
+
+
+def test_cli_exit_two_on_rejected_arch_config(tmp_path):
+    (tmp_path / ".ai-integrity-arch.json").write_text("{not json", encoding="utf-8")
+    assert mod.main([str(tmp_path), "--max-score", "8"]) == 2
 
 
 def test_arch_checks_registered_blocking():
     for check in ("arch-forbidden-import", "arch-layer-violation", "arch-missing-pattern"):
         assert check in mod.BLOCKING_CHECKS
+
+
+# Quality dimensions (v1.18): code-quality buckets are scored separately
+# from AI integrity, and --max-slop-score gates the AI-integrity
+# dimension only - a bloat-heavy repo cannot inflate (or mask) the slop
+# number, and slop cannot hide behind an otherwise healthy codebase.
+
+
+def test_every_check_has_a_category():
+    unmapped = set(mod.REMEDIES) - set(mod.CHECK_CATEGORIES)
+    assert not unmapped, f"checks without a dimension: {sorted(unmapped)}"
+
+
+def test_category_of_defaults_to_ai_integrity():
+    assert mod.category_of("some-future-check") == "ai-integrity"
+
+
+def test_category_labels_match_order():
+    assert set(mod.CATEGORY_LABELS) == set(mod.CATEGORY_ORDER)
+    assert list(mod.CATEGORY_ORDER)[-1] == "ai-integrity"
+
+
+def test_breakdown_covers_every_dimension_in_order():
+    rows = mod.category_breakdown([])
+    assert [name for name, _ in rows] == list(mod.CATEGORY_ORDER)
+    assert all(row["score"] == 0 and row["grade"] == "A" for _, row in rows)
+
+
+def test_dimensions_isolate_ai_integrity():
+    health = mod.Finding(path="a.py", line=1, check="bloat-long-file", message="long", weight=3)
+    slop = mod.Finding(path="b.py", line=1, check="chatbot-residue", message="residue", weight=1)
+    assert mod.ai_integrity_score([health, slop]) == mod.ai_integrity_score([slop])
+
+
+def test_code_health_leaves_slop_score_at_zero(tmp_path):
+    # A 440-line file of unused fillers: pure code-health findings. Under
+    # the pre-v1.18 whole-repo score this inflated the slop number; the
+    # dimension split must keep the AI-integrity score at 0.
+    body = "\n".join(f"def filler_{i}(a):\n    return a + {i}\n" for i in range(220))
+    (tmp_path / "big.py").write_text(body, encoding="utf-8")
+    findings = scan(tmp_path)
+    assert any(f.check == "bloat-long-file" for f in findings)
+    ai_score, _, _ = mod.ai_integrity_score(findings)
+    assert ai_score == 0
+
+
+def test_cli_slop_ceiling_ignores_code_health(tmp_path):
+    body = "\n".join(f"def filler_{i}(a):\n    return a + {i}\n" for i in range(220))
+    (tmp_path / "big.py").write_text(body, encoding="utf-8")
+    assert mod.main([str(tmp_path), "--max-score", "0", "--max-slop-score", "0"]) == 0
+
+
+def test_report_lists_all_seven_dimensions(tmp_path):
+    code = "def add(a, b):\n    return a + b\n\nprint(add(1, 2))\n"
+    findings = scan(tmp_path, {"a.py": code})
+    report = tmp_path / "report.md"
+    mod.write_report(str(report), tmp_path, findings)
+    text = report.read_text(encoding="utf-8")
+    assert "### Quality dimensions" in text
+    for label in (
+        "Architecture",
+        "Code health",
+        "Maintainability",
+        "Security",
+        "Test assurance",
+        "Dependency health",
+        "AI integrity",
+    ):
+        assert f"| {label} |" in text
+
+
+def test_arch_findings_report_under_architecture_dimension(tmp_path):
+    write_arch(tmp_path)
+    findings = scan(tmp_path, {"src/core/a.py": "import requests\n"})
+    rows = dict(mod.category_breakdown(findings))
+    assert rows["architecture"]["blocking"] > 0
+    assert rows["ai-integrity"]["count"] == 0

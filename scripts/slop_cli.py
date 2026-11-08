@@ -16,8 +16,11 @@ and slopdetector.org's explainable, evidence-first prose checks.
 
 Contract:
 - Exit code 1 when the *blocking* score exceeds --max-score, or when the
-    aggregate project slop score exceeds --max-slop-score (the
+    AI-integrity dimension score exceeds --max-slop-score (the
     scanaislop-style PR gate; default 100 keeps the CLI advisory-only).
+- Exit code 2 when an architecture config is present but invalid: the
+    config is fail-closed, so a rule set that cannot be honored fails
+    the run instead of being silently skipped.
 - Blocking-grade signals are deterministic content defects (elided code,
     stubs, empty tests, swallowed exceptions, chatbot residue in comments);
     --enforce-bloat adds the structural-budget family (file size, parameter
@@ -40,17 +43,19 @@ Contract:
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
+from slop_arch import ArchConfigError
 from slop_files import load_phrases
 from slop_model import enforce_structural_budget
 from slop_reporting import (
     advisory_score,
+    ai_integrity_score,
     annotate,
     apply_baseline,
     blocking_score,
-    file_deficit,
-    project_score,
+    category_breakdown,
     write_baseline,
     write_report,
     write_sarif,
@@ -71,8 +76,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=float,
         default=100.0,
         help=(
-            "Fail when the project slop score (0=clean, 100=awful) exceeds "
-            "this ceiling; the scanaislop-style PR gate. Default 100 = off"
+            "Fail when the AI-integrity dimension score (0=clean, 100=awful) "
+            "exceeds this ceiling; the scanaislop-style PR gate. Code-quality "
+            "dimensions are reported separately and never feed this gate. "
+            "Default 100 = off"
         ),
     )
     parser.add_argument(
@@ -143,7 +150,13 @@ def main(argv: list[str] | None = None) -> int:
     from ai_slop_detector import scan
 
     phrases = load_phrases()
-    findings = scan(args.root, phrases, extra_globs=args.ignore, provenance=args.provenance)
+    try:
+        findings = scan(args.root, phrases, extra_globs=args.ignore, provenance=args.provenance)
+    except ArchConfigError as exc:
+        # Fail closed: a declared rule set that cannot be honored must
+        # fail the run, not silently pass. Exit 2 = configuration error.
+        print(f"ai-integrity: architecture config rejected: {exc}", file=sys.stderr)
+        return 2
     suppressed = 0
     if args.baseline:
         findings, suppressed = apply_baseline(findings, args.baseline)
@@ -154,22 +167,24 @@ def main(argv: list[str] | None = None) -> int:
             f"-> {args.write_baseline}"
         )
         return 0
-    score, grade, verdict = project_score(
-        [file_deficit([f for f in findings if f.path == p]) for p in {f.path for f in findings}]
-    )
     if args.report_file:
         write_report(args.report_file, args.root, findings, suppressed=suppressed)
     if args.sarif:
         write_sarif(args.sarif, findings)
     if args.annotate:
         annotate(findings)
+    ai_score, ai_grade, ai_verdict = ai_integrity_score(findings)
+    dims = " ".join(
+        f"{name}={row['grade']}({row['score']})" for name, row in category_breakdown(findings)
+    )
     print(
         f"ai-integrity blocking={blocking_score(findings)} max={args.max_score} "
         f"advisory={advisory_score(findings)} findings={len(findings)} "
-        f"score={score}/100 grade={grade} verdict={verdict} "
-        f"ceiling={args.max_slop_score:g}" + (" enforce=bloat" if args.enforce_bloat else "")
+        f"slop={ai_score}/100 grade={ai_grade} verdict={ai_verdict} "
+        f"ceiling={args.max_slop_score:g} dims: {dims}"
+        + (" enforce=bloat" if args.enforce_bloat else "")
     )
-    failed = blocking_score(findings) > args.max_score or score > args.max_slop_score
+    failed = blocking_score(findings) > args.max_score or ai_score > args.max_slop_score
     return 1 if failed else 0
 
 

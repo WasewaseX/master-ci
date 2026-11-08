@@ -15,7 +15,7 @@ from typing import Any
 
 SCRIPTS = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPTS.parent
-SERVER_VERSION = "1.17.0"
+SERVER_VERSION = "1.18.0"
 DEFAULT_REPO_SLUG = "WasewaseX/master-ci"
 DEFAULT_GH_API = "https://api.github.com"
 UPDATE_TIMEOUT_SECONDS = 10.0
@@ -109,6 +109,7 @@ def tool_scan_slop(args: dict[str, Any]) -> dict[str, Any]:
             "path": f.path,
             "line": f.line,
             "check": f.check,
+            "category": detector.category_of(f.check),
             "message": f.message,
             "weight": f.weight,
             "advisory": f.advisory,
@@ -116,6 +117,15 @@ def tool_scan_slop(args: dict[str, Any]) -> dict[str, Any]:
         }
         for f in (blocking + advisory)[:MAX_FINDINGS_IN_RESPONSE]
     ]
+    dimensions = {
+        name: {
+            "blocking": row["blocking"],
+            "advisory": row["advisory"],
+            "score": row["score"],
+            "grade": row["grade"],
+        }
+        for name, row in detector.category_breakdown(findings)
+    }
     return {
         "path": str(root),
         "score": score,
@@ -124,11 +134,15 @@ def tool_scan_slop(args: dict[str, Any]) -> dict[str, Any]:
         "blocking_score": blocking_total,
         "blocking_gate": {"max_score": max_score, "would_fail_ci": would_fail},
         "advisory_score": detector.advisory_score(findings),
+        "dimensions": dimensions,
         "files_with_findings": len(per_file),
         "total_findings": len(findings),
         "truncated": len(findings) > MAX_FINDINGS_IN_RESPONSE,
         "findings": serialized,
-        "note": "blocking findings gate CI above max_score; advisory never gate",
+        "note": (
+            "blocking findings gate CI above max_score; advisory never gate; "
+            "the slop-score ceiling gates the ai-integrity dimension only"
+        ),
         "prompt": (
             f"AI-integrity scan of {root}: project score {score}/100 ({grade}, {verdict}), "
             f"blocking score {blocking_total} against the CI gate of {max_score} "

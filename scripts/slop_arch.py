@@ -5,6 +5,11 @@ docs, "Custom Architecture Rules"): forbidden imports, layer separation
 and required patterns. No config file means no findings - the rules
 exist only where a project declares them, and a declared rule is a
 contract, not a judgment call: violations are blocking-grade.
+
+The configuration itself is fail-closed (v1.18): a config that exists
+but cannot be honored raises :class:`ArchConfigError`, which the CLI
+turns into exit code 2. Silently skipping declared rules would tell the
+author their law is enforced while enforcing nothing.
 """
 
 from __future__ import annotations
@@ -22,6 +27,14 @@ PY_IMPORT_RE = re.compile(r"^\s*(?:import|from)\s+([A-Za-z_][\w.]*)", re.MULTILI
 JS_IMPORT_RE = re.compile(
     r"(?:import\s+[^'\"]*?from\s+|import\s+|require\s*\(\s*)[\"']([^\"']+)[\"']"
 )
+
+
+class ArchConfigError(ValueError):
+    """The architecture config exists but cannot be honored - fail closed."""
+
+
+_ALLOWED_KEYS = frozenset({"forbidden_imports", "layers", "required_patterns"})
+_MODULE_RE = re.compile(r"[@\w][\w./-]*")
 
 
 @dataclass(frozen=True)
@@ -45,50 +58,115 @@ class ArchConfig:
     required: tuple[PatternRule, ...]
 
 
+def _rule_list(data: dict, key: str) -> list:
+    value = data.get(key)
+    if value is None:
+        return []
+    if not isinstance(value, list) or not value:
+        raise ArchConfigError(f"{key} must be a non-empty list of rule objects")
+    return value
+
+
+def _text(rule: dict, key: str, where: str) -> str:
+    value = rule.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise ArchConfigError(f"{where}: {key!r} must be a non-empty string")
+    return value
+
+
 def _parse_forbidden(data: dict) -> tuple[tuple[str, str], ...]:
     out: list[tuple[str, str]] = []
-    for rule in data.get("forbidden_imports") or []:
-        module = rule.get("module") or ""
-        if module:
-            out.append((module, rule.get("reason") or "forbidden by architecture config"))
+    for idx, rule in enumerate(_rule_list(data, "forbidden_imports"), 1):
+        where = f"forbidden_imports[{idx}]"
+        if not isinstance(rule, dict):
+            raise ArchConfigError(f"{where} must be an object")
+        module = _text(rule, "module", where)
+        if not _MODULE_RE.fullmatch(module):
+            raise ArchConfigError(f"{where}: not a module or package name: {module!r}")
+        reason = rule.get("reason", "forbidden by architecture config")
+        if not isinstance(reason, str):
+            raise ArchConfigError(f"{where}: reason must be a string")
+        out.append((module, reason))
     return tuple(out)
 
 
 def _parse_layers(data: dict) -> tuple[LayerRule, ...]:
     out: list[LayerRule] = []
-    for layer in data.get("layers") or []:
-        name = layer.get("name") or ""
-        paths = tuple(layer.get("paths") or [])
-        if name and paths:
-            out.append(LayerRule(name, paths, tuple(layer.get("must_not_import") or [])))
+    for idx, layer in enumerate(_rule_list(data, "layers"), 1):
+        where = f"layers[{idx}]"
+        if not isinstance(layer, dict):
+            raise ArchConfigError(f"{where} must be an object")
+        name = _text(layer, "name", where)
+        paths = layer.get("paths")
+        if (
+            not isinstance(paths, list)
+            or not paths
+            or not all(isinstance(p, str) and p.strip() for p in paths)
+        ):
+            raise ArchConfigError(f"{where}: paths must be a non-empty list of globs")
+        deny = layer.get("must_not_import", [])
+        if not isinstance(deny, list) or not all(isinstance(d, str) and d.strip() for d in deny):
+            raise ArchConfigError(f"{where}: must_not_import must be a list of layer names")
+        out.append(LayerRule(name, tuple(paths), tuple(deny)))
+    # A must_not_import naming a layer nobody declares can never match, so
+    # the rule would be inert while looking enforced - reject it here.
+    declared = {layer.name for layer in out}
+    for layer in out:
+        unknown = sorted(set(layer.must_not_import) - declared)
+        if unknown:
+            raise ArchConfigError(
+                f"layer {layer.name!r}: must_not_import names undeclared "
+                f"layer(s): {', '.join(unknown)}"
+            )
     return tuple(out)
 
 
 def _parse_required(data: dict) -> tuple[PatternRule, ...]:
     out: list[PatternRule] = []
-    for rule in data.get("required_patterns") or []:
-        glob, pattern = rule.get("glob") or "", rule.get("pattern") or ""
-        if glob and pattern:
-            try:
-                compiled = re.compile(pattern, re.MULTILINE)
-            except re.error:
-                continue
-            out.append(PatternRule(glob, compiled, rule.get("reason") or ""))
+    for idx, rule in enumerate(_rule_list(data, "required_patterns"), 1):
+        where = f"required_patterns[{idx}]"
+        if not isinstance(rule, dict):
+            raise ArchConfigError(f"{where} must be an object")
+        glob = _text(rule, "glob", where)
+        pattern = _text(rule, "pattern", where)
+        try:
+            compiled = re.compile(pattern, re.MULTILINE)
+        except re.error as exc:
+            raise ArchConfigError(f"{where}: bad regex {pattern!r}: {exc}") from exc
+        out.append(PatternRule(glob, compiled, rule.get("reason") or ""))
     return tuple(out)
 
 
 def load_arch_config(root: Path) -> ArchConfig | None:
-    """Read `.ai-integrity-arch.json`; None when absent or unreadable."""
+    """Read `.ai-integrity-arch.json`; None when absent.
+
+    Fail-closed: present but unreadable, invalid, unknown-keyed or
+    rule-less configs raise :class:`ArchConfigError`.
+    """
     path = root / ARCH_CONFIG_NAME
     if not path.is_file():
         return None
     try:
-        data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
-    except (OSError, ValueError):
-        return None
+        raw = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        raise ArchConfigError(f"{ARCH_CONFIG_NAME}: unreadable: {exc}") from exc
+    try:
+        data = json.loads(raw)
+    except ValueError as exc:
+        raise ArchConfigError(f"{ARCH_CONFIG_NAME}: invalid JSON: {exc}") from exc
     if not isinstance(data, dict):
-        return None
-    return ArchConfig(_parse_forbidden(data), _parse_layers(data), _parse_required(data))
+        raise ArchConfigError(f"{ARCH_CONFIG_NAME}: top level must be an object")
+    unknown = sorted(set(data) - _ALLOWED_KEYS)
+    if unknown:
+        hint = ", ".join(sorted(_ALLOWED_KEYS))
+        raise ArchConfigError(f"{ARCH_CONFIG_NAME}: unknown key {unknown[0]!r}; allowed: {hint}")
+    cfg = ArchConfig(_parse_forbidden(data), _parse_layers(data), _parse_required(data))
+    if not (cfg.forbidden or cfg.layers or cfg.required):
+        raise ArchConfigError(
+            f"{ARCH_CONFIG_NAME} declares no rules; delete the file or declare "
+            "forbidden_imports, layers or required_patterns"
+        )
+    return cfg
 
 
 def _code_rels(root: Path, files: list[Path], globs: list[str]) -> list[tuple[Path, str]]:

@@ -81,7 +81,7 @@ which keeps its baseline reproducible across template releases:
 ```yaml
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v1.17.0
+      template_ref: v1.18.0
 ```
 
 ### Required check
@@ -266,6 +266,28 @@ Its model borrows from flamehaven01/ai-slop-detector (deficit scoring,
 conservative aggregation), FixMySlop (rule + remedy + baseline + SARIF
 flow) and slopdetector.org (explainable prose evidence).
 
+**Since v1.18 the scores are separated into quality dimensions** - AI
+slop and code health are different questions, and blending them makes
+both answers less credible. Every finding belongs to exactly one
+bucket, and each bucket is scored independently with the same deficit
+model:
+
+| Dimension | Contents |
+|---|---|
+| Architecture | `arch-*` - the repo's declared import law (opt-in, fail-closed config) |
+| Code health | exception handling, debug residue, dead code, structural bloat |
+| Maintainability | design debt, naming, suppression habits |
+| Security | `eval-usage`, placeholder credentials |
+| Test assurance | empty/tautological tests, missing test inventory |
+| Dependency health | undeclared imports, unused dependencies |
+| AI integrity | authorship and machine-prose signals - what `--max-slop-score` gates |
+
+The CLI prints every dimension grade on its summary line and the
+`--report-file` markdown carries a "Quality dimensions" table, so a
+bloat-heavy-but-slop-free repo grades A on the AI-integrity ceiling -
+and swallowed exceptions can never hide behind a clean slop score.
+`--max-score` still gates every blocking weight in every dimension.
+
 Blocking-grade rules (deterministic content defects; only fail a build when
 `fail_on_ai_slop: true`):
 
@@ -300,7 +322,7 @@ Advisory rules (never fail a build; reported, annotated, SARIF `warning`):
 | UI slop | `ui-ai-gradient`, `ui-gradient-text`, `ui-marketing-copy`, `ui-placeholder-copy`, `ui-emoji-decor`, `ui-eyebrow-label`, `ui-italic-serif-hero`, `ui-fake-stats`, `ui-generic-testimonial`, `ui-not-just-x`, `ui-triple-slogan`, `ui-glass-glow`, `ui-decorative-numbering`, `ui-placeholder-image`, `ui-identical-cards`, `ui-em-dash-overuse` |
 | Prose | `ai-prose`, `humanizer`, `em-dash-density`, `rule-of-three`, `rhetorical-questions`, `exclamations`, `md-emoji-headings`, `md-residue`, `step-comments`, `placeholder-note` |
 | Provenance | `ai-provenance` (generation banners, AI co-author trailers), `missing-tests` (repo inventory) |
-| Architecture (opt-in) | `arch-forbidden-import`, `arch-layer-violation`, `arch-missing-pattern` - blocking-grade, declared in `.ai-integrity-arch.json`; no config, no findings |
+| Architecture (opt-in) | `arch-forbidden-import`, `arch-layer-violation`, `arch-missing-pattern` - blocking-grade, declared in `.ai-integrity-arch.json`; no config, no findings; **fail-closed since v1.18** - an invalid config exits 2, it is never silently skipped |
 
 The provenance family is deliberately advisory: style is not evidence of
 authorship, and the goal is traceability and quality, never blame. Every
@@ -598,7 +620,7 @@ carries a `SKILL.md`, so assistants with a skills directory can load it
 with one command:
 
 ```bash
-git clone --depth 1 --branch v1.17.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+git clone --depth 1 --branch v1.18.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
 ```
 
 MCP clients configure the same install like this:
@@ -751,6 +773,29 @@ python -m pytest -q
 python3 scripts/ai_slop_detector.py . --max-score 8 --sarif /tmp/ai.sarif
 python3 scripts/ai_slop_detector.py . --write-baseline .ai-baseline.json   # accept current findings
 ```
+
+## Roadmap to v2.0 (deeper analysis, not more heuristics)
+
+The direction for v1.18 through v2.0, in priority order - the goal is
+understanding software, not stacking thirty more regex checks:
+
+| # | Priority | Status |
+|---|---|---|
+| 1 | Fail-closed architecture configuration | **done (v1.18)** - invalid configs exit 2, never silently skip |
+| 2 | Unified syntax-tree analysis across languages | planned - one tree model instead of per-language regex |
+| 3 | Cognitive complexity across languages | partially - cyclomatic gate (lizard) today, cognitive next |
+| 4 | Coverage and mutation testing | planned - test-assurance dimension goes from inventory to proof |
+| 5 | Full monorepo project discovery | partially - `discover_projects.py` first pass, manifest-aware next |
+| 6 | Native dependency and dead-code analysis | partially - import graph, unused declarations/dependencies today |
+| 7 | New-code quality gates | planned - dimension ceilings on changed lines only |
+| 8 | Full ten-stack canary verification | partially - canary repo today, all ten stacks next |
+
+Also since v1.18: the **quality-dimension split** - code health,
+maintainability, security, test assurance, dependency health and
+AI-integrity are reported and gated separately, because one blended
+number is less credible than six honest ones. The template stays a CI
+orchestration layer: mature semantic analyzers (CodeQL, Semgrep,
+lizard) are integrated, not reimplemented as regexes.
 
 ## License
 

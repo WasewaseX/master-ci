@@ -18,9 +18,15 @@ _HERE = str(Path(__file__).resolve().parent)
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
-from slop_arch import check_architecture_rules  # noqa: F401
+from slop_arch import ArchConfigError, check_architecture_rules  # noqa: F401
 from slop_bloat import (  # noqa: F401
     check_bloat,
+)
+from slop_categories import (  # noqa: F401
+    CATEGORY_LABELS,
+    CATEGORY_ORDER,
+    CHECK_CATEGORIES,
+    category_of,
 )
 from slop_commentary import (  # noqa: F401
     check_unknown_directives,
@@ -96,9 +102,11 @@ from slop_py_checks import (  # noqa: F401
 )
 from slop_reporting import (  # noqa: F401
     advisory_score,
+    ai_integrity_score,
     annotate,
     apply_baseline,
     blocking_score,
+    category_breakdown,
     check_tier,
     file_deficit,
     fingerprint,

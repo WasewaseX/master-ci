@@ -11,6 +11,9 @@ from pathlib import Path
 from slop_model import Finding, _finding
 from slop_patterns import NODE_BUILTINS, PY_IMPORT_ALIASES, SKIP_DIRS, STD_LIB_NAMES
 
+# Scoped suppression on an import line (ruff/flake8 F401 convention).
+_NOQA_RE = re.compile(r"#\s*noqa\b")
+
 
 def check_phantom_imports(path: Path, text: str, family: str) -> list[Finding]:
     """Imports that are never used in the file (advisory)."""
@@ -41,10 +44,16 @@ def _py_unused_import_findings(
     path: Path,
     body: str,
     imported: list[tuple[str, int]],
+    lines: list[str],
 ) -> list[Finding]:
     findings: list[Finding] = []
     for name, lineno in imported[:40]:
         if name in ("__future__", "annotations"):
+            continue
+        source = lines[lineno - 1] if 0 < lineno <= len(lines) else ""
+        if _NOQA_RE.search(source):
+            # A scoped noqa (ruff F401 convention) declares the unused
+            # import intentional: re-export surfaces, side-effect modules.
             continue
         if not re.search(rf"\b{re.escape(name)}\b", body):
             findings.append(
@@ -66,10 +75,9 @@ def _py_phantom_imports(path: Path, text: str) -> list[Finding]:
     except SyntaxError:
         return []
     imported = _py_imported_names(tree)
-    body = "\n".join(
-        line for line in text.splitlines() if not line.lstrip().startswith(("import ", "from "))
-    )
-    return _py_unused_import_findings(path, body, imported)
+    lines = text.splitlines()
+    body = "\n".join(line for line in lines if not line.lstrip().startswith(("import ", "from ")))
+    return _py_unused_import_findings(path, body, imported, lines)
 
 
 def _js_phantom_imports(path: Path, text: str) -> list[Finding]:

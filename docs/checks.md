@@ -274,6 +274,37 @@ Profile presets (quick / standard / strict / custom) only change the
   blocking-grade by construction. master-ci holds itself to this: the
   template ships its own config (slop modules may not import MCP
   modules; every engine module keeps PEP 563).
+- **v1.18 fail-closed architecture config:** a config that exists but
+  cannot be honored now fails the run instead of being silently
+  skipped - the CLI exits **2** (configuration error) with the reason on
+  stderr. Rejected: invalid JSON, a non-object root, unknown keys, empty
+  or malformed rule lists, rule objects missing required string fields,
+  a `module` that is not a module/package name, a `required_patterns`
+  regex that does not compile, a `must_not_import` naming a layer nobody
+  declared (that rule could never match, so it would look enforced while
+  enforcing nothing), and a config that declares no rules at all. A
+  missing config file stays opt-in silence.
+- **v1.18 quality dimensions - the scores are separated:** one number
+  for "how much machine slop" and another for "how healthy is the code"
+  is more credible than either blended. `category_breakdown` reports
+  seven independent dimensions, each scored with the same deficit model
+  over its own findings: **Architecture** (arch-*), **Code health**
+  (exception handling, debug residue, dead code, structural bloat),
+  **Maintainability** (design debt, naming, suppression habits),
+  **Security** (`eval-usage`, placeholder credentials), **Test
+  assurance** (empty/tautological tests, missing test inventory),
+  **Dependency health** (undeclared imports, unused dependencies), and
+  **AI integrity** (authorship and machine-prose signals - the slop
+  gate's home). `--max-slop-score` now gates the **AI-integrity
+  dimension only**; a bloat-heavy-but-slop-free repo grades A on the
+  ceiling, and `--max-score` still gates every blocking weight in every
+  dimension. The `--report-file` markdown gains a "Quality dimensions"
+  table, and the CLI summary line prints `slop=<score>/100` plus all
+  seven dimension grades.
+- **v1.18 scoped noqa exempts phantom imports:** an import line ending
+  in `# noqa` (ruff F401 convention) marks the unused import
+  intentional - re-export surfaces like package `__init__` facades - so
+  `phantom-import` skips it. Unmarked unused imports still report.
 - **Scoring refinements (scanaislop-aligned):** advisory pressure is
   tier-weighted - maintainability debts (bloat, god-function, deep
   nesting, dispatch ladders) press at 0.75x, mechanical residue

@@ -9,6 +9,7 @@ import re
 from collections import Counter
 from pathlib import Path
 
+from slop_categories import CATEGORY_LABELS, CATEGORY_ORDER, category_of
 from slop_model import REMEDIES, Finding, is_blocking
 from slop_patterns import IGNORE_FILE, MAX_ANNOTATIONS, TOOL_NAME
 
@@ -142,6 +143,53 @@ def advisory_score(findings: list[Finding]) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Quality dimensions: code quality never feeds the slop gate
+# ---------------------------------------------------------------------------
+
+
+def category_breakdown(findings: list[Finding]) -> list[tuple[str, dict]]:
+    """Per-dimension scores, always in CATEGORY_ORDER.
+
+    Each dimension is scored with the same deficit model over its own
+    findings only, so a bloat-heavy-but-slop-free repo still grades A on
+    AI integrity, and a slop-free-looking repo with swallowed exceptions
+    cannot hide behind a clean slop score.
+    """
+    rows: list[tuple[str, dict]] = []
+    for cat in CATEGORY_ORDER:
+        subset = [f for f in findings if category_of(f.check) == cat]
+        per_file: dict[str, list[Finding]] = {}
+        for item in subset:
+            per_file.setdefault(item.path, []).append(item)
+        score, grade, verdict = project_score([file_deficit(v) for v in per_file.values()])
+        rows.append(
+            (
+                cat,
+                {
+                    "blocking": sum(f.weight for f in subset if not f.advisory),
+                    "advisory": sum(f.weight for f in subset if f.advisory),
+                    "count": len(subset),
+                    "score": score,
+                    "grade": grade,
+                    "verdict": verdict,
+                },
+            )
+        )
+    return rows
+
+
+def ai_integrity_score(findings: list[Finding]) -> tuple[int, str, str]:
+    """Score, grade, verdict for the AI-integrity dimension alone.
+
+    This - not the whole-repo deficit - is what ``--max-slop-score``
+    gates since v1.18: code-quality findings must not inflate (or mask)
+    the slop number.
+    """
+    row = dict(category_breakdown(findings))["ai-integrity"]
+    return row["score"], row["grade"], row["verdict"]
+
+
+# ---------------------------------------------------------------------------
 # Reporting: summary, per-rule table, fix-first brief, SARIF
 # ---------------------------------------------------------------------------
 
@@ -214,6 +262,27 @@ def _report_top_files(deficits: dict[str, int]) -> list[str]:
     return lines
 
 
+def _report_dimensions(rows: list[tuple[str, dict]]) -> list[str]:
+    lines = [
+        "",
+        "### Quality dimensions",
+        "",
+        "Scored independently - AI integrity is the only dimension under the "
+        "slop-score gate; the others are reported so code quality and AI "
+        "slop never blur into one number.",
+        "",
+        "| Dimension | Blocking | Advisory | Score | Grade |",
+        "|---|---|---|---|---|",
+    ]
+    for name, row in rows:
+        lines.append(
+            f"| {CATEGORY_LABELS[name]} | {row['blocking']} | {row['advisory']} "
+            f"| {row['score']}/100 | {row['grade']} |"
+        )
+    lines.append("")
+    return lines
+
+
 def write_report(
     path: str,
     root: Path,
@@ -241,6 +310,7 @@ def write_report(
         "(0.6x worst file + 0.4x mean file deficit).",
         "",
     ]
+    lines += _report_dimensions(category_breakdown(findings))
     lines += _report_rule_table(Counter(f.check for f in findings))
     lines += _report_fix_first(blocking)
     lines += _report_blocking_table(blocking)

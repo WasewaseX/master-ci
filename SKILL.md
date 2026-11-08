@@ -16,11 +16,11 @@ drift.
 ## Install (one command)
 
 Clone the repository into your skills directory, pinned to the current
-release tag (v1.17.0 - one clear stable baseline, kept in lockstep with
+release tag (v1.18.0 - one clear stable baseline, kept in lockstep with
 the MCP server version and the GitHub Release):
 
 ```bash
-git clone --depth 1 --branch v1.17.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+git clone --depth 1 --branch v1.18.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
 ```
 
 MCP clients configure it the same way Claude Desktop does:
@@ -50,7 +50,7 @@ the same standards the template's own codebase passes under.
 
 | Tool | Mutates? | Purpose |
 |---|---|---|
-| `scan_slop` | no | Score a path (0-100, grade, verdict), list findings with remedies, show whether CI would gate. |
+| `scan_slop` | no | Score a path (0-100, grade, verdict), list findings with remedies, show whether CI would gate. Since v1.18 findings are bucketed into seven quality dimensions (architecture, code health, maintainability, security, test assurance, dependency health, AI integrity) and the slop-score ceiling gates the AI-integrity dimension only. |
 | `scan_diff` | no | Score only the changed files of a git repo; report which CI stacks fire. |
 | `plan_fixes` | no | Dry-run the fix policy: planned tools, tiers, files the normalizer would touch. |
 | `apply_fixes` | **yes** | Run the fix policy in place (safe tier by default, lint tier opt-in). Requires `MASTER_CI_MCP_ROOT`; refuses to run without it. |
