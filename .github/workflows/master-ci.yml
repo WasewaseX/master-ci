@@ -1049,6 +1049,8 @@ jobs:
           # PR after validating the template's own gates. NOTE: the
           # substitution is intentionally UNQUOTED so the pin list word-
           # splits into one argument per tool.
+          # the pin list is meant to word-split:
+          # shellcheck disable=SC2046
           python -m pip install --quiet \
             $(python3 _ci/scripts/tool_versions.py pip ruff mypy vulture lizard pytest)
       - name: Ruff lint
@@ -1129,27 +1131,52 @@ jobs:
           path: _ci
           fetch-depth: 1
           persist-credentials: false
+      - name: Detect Cargo workspace
+        id: detect
+        # `deny.toml` and `rust-toolchain*` are in the rust path filter,
+        # so config-only changes can trigger this job on a repo with no
+        # Rust code. Without the manifest the toolchain steps would die
+        # on `cargo fmt` finding no project - skip explicitly instead,
+        # loudly warning when a nested workspace is being left alone.
+        run: |
+          if [ -f Cargo.toml ]; then
+            echo "manifest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "manifest=false" >> "$GITHUB_OUTPUT"
+            nested=$(git ls-files '*/Cargo.toml' | head -5 | tr '\n' ' ')
+            if [ -n "$nested" ]; then
+              echo "::warning::nested Cargo workspace(s) detected but this job analyzes root manifests only: $nested"
+            fi
+            echo "No Cargo.toml at repository root - skipping the Rust stack"
+          fi
       - name: Default cargo-deny policy (if absent)
         # cargo-deny's built-in default has an EMPTY license allow list -
         # even MIT gets rejected. Ship the template's baseline policy;
         # commit your own deny.toml to take full control.
+        if: steps.detect.outputs.manifest == 'true'
         run: '[ -f deny.toml ] || cp _ci/configs/deny.toml .'
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable (branch pin; no version tags published) # zizmor: ignore[ref-version-mismatch]
+        if: steps.detect.outputs.manifest == 'true'
         with:
           toolchain: ${{ inputs.rust_toolchain }}
           components: clippy,rustfmt
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: steps.detect.outputs.manifest == 'true'
       - name: Check formatting (rustfmt)
+        if: steps.detect.outputs.manifest == 'true'
         run: cargo fmt --all -- --check
       - name: Lint (clippy)
+        if: steps.detect.outputs.manifest == 'true'
         run: cargo clippy --all-targets -- -D warnings
       - name: Advisories, licenses, sources (cargo-deny)
+        if: steps.detect.outputs.manifest == 'true'
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           command: check
           arguments: ''
           command-arguments: advisories licenses sources
       - name: Test
+        if: steps.detect.outputs.manifest == 'true'
         run: cargo test --workspace --all-features
 
   # ---------------------------------------------------------------------------
@@ -1383,9 +1410,9 @@ jobs:
       - name: Detect .NET project
         id: detect
         run: |
-          if ls *.sln *.slnx 2>/dev/null | grep -q .; then
+          if compgen -G '*.sln' >/dev/null || compgen -G '*.slnx' >/dev/null; then
             echo "project=true" >> "$GITHUB_OUTPUT"
-          elif ls *.csproj *.fsproj 2>/dev/null | grep -q .; then
+          elif compgen -G '*.csproj' >/dev/null || compgen -G '*.fsproj' >/dev/null; then
             echo "project=true" >> "$GITHUB_OUTPUT"
           else
             echo "project=false" >> "$GITHUB_OUTPUT"
@@ -1440,7 +1467,7 @@ jobs:
       - name: Detect Ruby project
         id: detect
         run: |
-          if [ -f Gemfile ] || [ -f Rakefile ] || ls *.gemspec >/dev/null 2>&1; then
+          if [ -f Gemfile ] || [ -f Rakefile ] || compgen -G '*.gemspec' >/dev/null; then
             echo "project=true" >> "$GITHUB_OUTPUT"
           else
             echo "project=false" >> "$GITHUB_OUTPUT"
@@ -1545,7 +1572,10 @@ jobs:
       - name: Static analysis (PHPStan, only when the repo opts in)
         if: steps.detect.outputs.project == 'true'
         run: |
-          config=$(ls phpstan.neon.dist phpstan.neon phpstan.neon.dist.php 2>/dev/null | head -1 || true)
+          config=""
+          for candidate in phpstan.neon.dist phpstan.neon phpstan.neon.dist.php; do
+            [ -f "$candidate" ] && { config="$candidate"; break; }
+          done
           if [ -n "$config" ] && [ -x vendor/bin/phpstan ]; then
             vendor/bin/phpstan analyse --no-progress
           else
@@ -1607,6 +1637,8 @@ jobs:
           echo "56de6d5e5ec427e17b74fa48d51271c7fc0d61244bf5c90e828aab8362d55010  /tmp/hadolint" | sha256sum -c -
           chmod +x /tmp/hadolint
           rc=0
+          # each Dockerfile path is one argv entry:
+          # shellcheck disable=SC2046
           /tmp/hadolint --no-color $(tr '\n' ' ' < dockerfiles.txt) || rc=$?
           if [ "$rc" -ne 0 ]; then
             echo "::warning::hadolint flagged Dockerfile issues (advisory in every profile; commit .hadolint.yaml to tune)"

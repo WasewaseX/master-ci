@@ -1135,3 +1135,21 @@ def test_default_editorconfig_grants_go_tabs():
     text = (ROOT / "configs" / ".editorconfig").read_text()
     go_section = text.split("[*.go]")[1].split("[")[0] if "[*.go]" in text else ""
     assert "indent_style = tab" in go_section, "gofmt mandates tabs; the default must allow them"
+
+
+def test_rust_job_detect_gate_covers_config_only_triggers():
+    """deny.toml and rust-toolchain* sit in the rust path filter, so a
+    config-only change can trigger the Rust job on a repo with no Rust
+    code; every cargo step must be gated on the manifest detection."""
+    data = load(WF_DIR / "master-ci.yml")
+    rust = data["jobs"]["rust"]
+    names = [str(s.get("name", s.get("uses", ""))) for s in rust["steps"]]
+    assert any("Detect Cargo workspace" in n for n in names)
+    gated = [
+        s for s in rust["steps"] if str(s.get("if", "")).startswith("steps.detect.outputs.manifest")
+    ]
+    gated_names = [str(s.get("name", s.get("uses", ""))) for s in gated]
+    for must in ("Check formatting (rustfmt)", "Lint (clippy)", "Test"):
+        assert any(must in n for n in gated_names), (
+            f"{must} must be gated on the manifest detection"
+        )
