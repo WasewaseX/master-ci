@@ -81,7 +81,7 @@ which keeps its baseline reproducible across template releases:
 ```yaml
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v1.21.0
+      template_ref: v1.22.0
 ```
 
 ### Required check
@@ -129,6 +129,8 @@ works for consumers too.
 | `security` | meta ok | Semgrep, Trivy, OSV scanning |
 | `deps-review` | PRs | Dependency and license review |
 | `scorecard` | pushes to default branch, unless `scorecard_publish: false` | OSSF Scorecard |
+| `coverage-gate` | `coverage_min > 0` and a producing stack ran | Measured coverage floors, overall and on the added lines |
+| `new-code-gate` | `diff_base` set and `new_code_gates` true | Dimension ceilings on the merge-base diff: blocking findings, cognitive, cyclomatic |
 | `dashboard` | PRs | Results table comment on the PR |
 | `ci-success` | always | Aggregate gate (exposes a `verdict` output) |
 
@@ -427,7 +429,11 @@ how to disable, added time) live in [docs/checks.md](docs/checks.md).
 | `complexity_max` | `15` | Cyclomatic complexity gate |
 | `duplication_threshold_pct` | `5` | jscpd failure threshold |
 | `coverage_min` | `0` | Measured coverage floor (percent, `0` = off). Above 0 the Python/Go/Node stacks run tests under coverage and `ai-integrity` gates on the reports; no report fails closed (exit 2) |
-| `diff_base` | `''` | Git ref defining the new-code window - the same `coverage_min` floor then applies to the added lines (merge-base diff). Empty = off |
+| `diff_base` | `''` | Git ref defining the new-code window - the same `coverage_min` floor then applies to the added lines (merge-base diff). When set, it also enables the new-code dimension ceilings unless `new_code_gates: false`. Empty = off |
+| `new_code_gates` | `true` | Enforce the new-code dimension ceilings on the `diff_base` diff - legacy files keep their history, every added line meets today's bar |
+| `new_code_max_slop` | `0` | Blocking-score ceiling for findings landing on added lines (zero tolerance by default) |
+| `new_code_max_cognitive` | `15` | Cognitive-complexity ceiling for functions the change touches (`0` = off) |
+| `new_code_max_cyclomatic` | `15` | Cyclomatic-complexity ceiling for functions the change touches (`0` = off) |
 | `scorecard_publish` | `true` | Publish Scorecard results (needs `id-token: write`) |
 | `template_repo` | auto | Helper repo override for forks (validated: `owner/repo`) |
 | `template_ref` | caller's own commit | Helper ref. Empty = the caller's own commit, only when the helpers live there (self/fork); a foreign helper repo must pin a tag, mutable branches print a warning |
@@ -622,7 +628,7 @@ carries a `SKILL.md`, so assistants with a skills directory can load it
 with one command:
 
 ```bash
-git clone --depth 1 --branch v1.21.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+git clone --depth 1 --branch v1.22.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
 ```
 
 MCP clients configure the same install like this:
@@ -787,9 +793,9 @@ understanding software, not stacking thirty more regex checks:
 | 2 | Unified syntax-tree analysis across languages | **done (v1.19)** - lizard parse facts behind every structural budget, line scanner only as fallback |
 | 3 | Cognitive complexity across languages | **done (v1.20)** - Sonar-style reader effort on tree-sitter trees, 15 budget, every parsed language |
 | 4 | Coverage and mutation testing | **done (v1.21)** - `coverage_min` / `diff_base` gates consume coverage.json, Cobertura XML and Go coverprofiles, fail-closed; `mutation.yml` runs mutmut/Stryker weekly for opted-in repos |
-| 5 | Full monorepo project discovery | partially - `discover_projects.py` first pass, manifest-aware next |
+| 5 | Full monorepo project discovery | **done (v1.22)** - manifest-aware workspace member enumeration (npm/pnpm `workspaces`, `go.work`, Cargo `[workspace]`), `--family all` map, declared members that cannot be honored fail closed (exit 2) |
 | 6 | Native dependency and dead-code analysis | partially - import graph, unused declarations/dependencies today |
-| 7 | New-code quality gates | partially - new-code coverage floor on the merge-base diff (v1.21); dimension ceilings on changed lines next |
+| 7 | New-code quality gates | **done (v1.22)** - the `new-code-gate` job enforces blocking-score 0, cognitive 15 and cyclomatic 15 on the merge-base diff's added lines and touched functions; legacy files keep their history |
 | 8 | Full ten-stack canary verification | partially - canary repo today, all ten stacks next |
 
 Also since v1.18: the **quality-dimension split** - code health,

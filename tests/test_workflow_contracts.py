@@ -412,8 +412,8 @@ def test_template_ref_fails_closed_for_foreign_callers():
     assert "ref: ${{ inputs.template_ref }}" not in text, (
         "helper checkouts must consume the resolved ref, not the raw input"
     )
-    assert text.count("ref: ${{ needs.meta.outputs.template_ref }}") == 9, (
-        "all nine helper checkouts must use the resolved ref"
+    assert text.count("ref: ${{ needs.meta.outputs.template_ref }}") == 10, (
+        "all ten helper checkouts must use the resolved ref"
     )
 
 
@@ -1167,3 +1167,36 @@ def test_rust_job_detect_gate_covers_config_only_triggers():
         assert any(must in n for n in gated_names), (
             f"{must} must be gated on the manifest detection"
         )
+
+
+def test_new_code_gate_job_contract():
+    """Roadmap item 7: the new-code dimension ceilings run as their own
+    job, gated on diff_base, sharing the diff-base fetch helper with the
+    coverage gate so the two code paths cannot drift."""
+    data = load(WF_DIR / "master-ci.yml")
+    job = data["jobs"]["new-code-gate"]
+    text = (WF_DIR / "master-ci.yml").read_text(encoding="utf-8")
+    assert "needs.meta.outputs.diff_base != ''" in job["if"], (
+        "the gate must not run without a diff base"
+    )
+    assert "inputs.new_code_gates" in job["if"], "the gate must honor its off switch"
+    steps = " ".join(str(s.get("run", "")) for s in job["steps"])
+    assert "new_code_gate.py" in steps, "the job must evaluate the new-code gate"
+    assert "--max-slop-score" in steps and "--max-cognitive" in steps, (
+        "the job must pass the dimension ceilings"
+    )
+    assert text.count("fetch_diff_base.sh") >= 2, "both gate jobs must share the fetch helper"
+    uses_refs = []
+    for step in job["steps"]:
+        with_block = step.get("with")
+        if isinstance(with_block, dict):
+            uses_refs.append(str(with_block.get("ref", "")))
+    assert "${{ needs.meta.outputs.template_ref }}" in uses_refs, (
+        "the helper checkout must use the resolved ref"
+    )
+    # the aggregation surfaces must know the job
+    assert "new-code-gate" in text.split("ci-success:")[1].split("jobs:")[0], (
+        "ci-success must aggregate the new-code gate"
+    )
+    meta_block = text.split("\n  meta:")[1].split("\n  changes:")[0]
+    assert "new_code_max_cognitive" in meta_block, "meta must expose the ceilings"

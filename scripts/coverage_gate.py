@@ -127,6 +127,31 @@ def _parse_cobertura(path: Path) -> CoverageReport:
     return CoverageReport("cobertura", str(path), 100.0 * float(rate), files)
 
 
+def _cover_row(row: str, path: Path, files: dict[str, FileCoverage]) -> tuple[int, int]:
+    """(statements, hits) for one coverprofile row; mutates ``files``."""
+    location, _, rest = row.partition(" ")
+    stmts_text, _, count_text = rest.partition(" ")
+    file_part, _, span = location.rpartition(":")
+    if not file_part or "." not in span:
+        return 0, 0
+    name = _normalize(file_part)
+    start_text, _, end_text = span.partition(",")
+    try:
+        start_line = int(start_text.split(".")[0])
+        end_line = int(end_text.split(".")[0])
+        stmts = int(stmts_text)
+        hits = int(count_text)
+    except ValueError as exc:
+        raise CoverageGateError(f"unparseable coverage report {path}: {exc}") from exc
+    entry = files.setdefault(name, FileCoverage(name, 0.0))
+    span_lines = set(range(start_line, end_line + 1))
+    if hits > 0:
+        entry.covered |= span_lines
+    else:
+        entry.missed |= span_lines
+    return stmts, hits
+
+
 def _parse_go_cover(path: Path) -> CoverageReport:
     files: dict[str, FileCoverage] = {}
     total_stmts = 0
@@ -138,26 +163,7 @@ def _parse_go_cover(path: Path) -> CoverageReport:
     for row in lines:
         if not row or row.startswith("mode:"):
             continue
-        location, _, rest = row.partition(" ")
-        stmts_text, _, count_text = rest.partition(" ")
-        file_part, _, span = location.rpartition(":")
-        if not file_part or "." not in span:
-            continue
-        name = _normalize(file_part)
-        start_text, _, end_text = span.partition(",")
-        try:
-            start_line = int(start_text.split(".")[0])
-            end_line = int(end_text.split(".")[0])
-            stmts = int(stmts_text)
-            hits = int(count_text)
-        except ValueError as exc:
-            raise CoverageGateError(f"unparseable coverage report {path}: {exc}") from exc
-        entry = files.setdefault(name, FileCoverage(name, 0.0))
-        span_lines = set(range(start_line, end_line + 1))
-        if hits > 0:
-            entry.covered |= span_lines
-        else:
-            entry.missed |= span_lines
+        stmts, hits = _cover_row(row, path, files)
         total_stmts += stmts
         if hits > 0:
             covered_stmts += stmts

@@ -631,6 +631,54 @@ Profile presets (quick / standard / strict / custom) only change the
   any needed job failed or was cancelled, and succeeds when jobs were
   merely skipped. It never runs tools itself.
 
+## `coverage-gate` and `new-code-gate` - measured floors and new-code ceilings
+
+Both jobs gate on the merge-base diff (`diff_base`), fetch the ref with the
+shared `fetch_diff_base.sh` helper, and fail closed: a requested gate that
+cannot be evaluated is exit 2, never a silent pass.
+
+- `coverage-gate` (v1.21) enforces `coverage_min` against every uploaded
+  report (coverage.json, Cobertura XML, Go coverprofile) and, when
+  `diff_base` is set, the same floor on the lines the change adds.
+- `new-code-gate` (v1.22) enforces the dimension ceilings on new code -
+  legacy files keep their history, every added line meets today's bar:
+  - `new_code_max_slop` (default 0): the blocking score of detector
+    findings landing on added lines. Findings on untouched lines are
+    heritage, not gate input.
+  - `new_code_max_cognitive` (default 15) and `new_code_max_cyclomatic`
+    (default 15): apply to functions whose span intersects the added
+    lines. The span is `start..max(start + nloc, next start)` - an
+    over-approximation on purpose: a gate may over-flag a legacy
+    neighbor, never miss a new offender.
+  - `new_code_gates: false` disables the whole job. Exit 1 = a ceiling
+    breached by the change; exit 2 = no diff base or git failure.
+
+## Project discovery - the monorepo map
+
+`discover_projects.py --family <family>` inventories independent projects
+per language family; jobs loop over the list so no project is silently
+skipped (`--fail-empty` turns an empty inventory into a loud failure).
+Since v1.22 the inventory is manifest-aware:
+
+- workspace markers enumerate their actual members: npm/pnpm `workspaces`
+  (list or `packages` object, `pnpm-workspace.yaml`), `go.work` `use`
+  entries, Cargo `[workspace]` members with glob expansion and `exclude`,
+- each project carries its manifest and best-effort name (package.json
+  `name`, Cargo `[package] name`, go.mod `module`),
+- a declared member that cannot be backed by a real manifest - a named
+  workspace entry pointing at a directory without its manifest, a
+  `go.work` use without `go.mod`, a malformed `pnpm-workspace.yaml` -
+  fails closed with exit 2: a workspace that declares members never
+  silently degrades to root-only analysis,
+- glob patterns that match nothing become warnings (package managers
+  tolerate them); a workspace that resolves to zero projects stays
+  available to `--fail-empty`,
+- `--family all` prints the full map across every family - the honest
+  answer to "what does this monorepo actually contain?",
+- Gradle is deliberately not member-enumerated: a Gradle build is
+  analyzed from the root invocation, so the root project is the honest
+  unit.
+
 ## Profile presets
 
 | Setting | quick | standard | strict | custom |

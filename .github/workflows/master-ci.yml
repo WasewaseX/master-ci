@@ -180,10 +180,36 @@ on:
           Git ref (e.g. origin/main) defining the new-code coverage
           window: the same coverage_min floor then applies to the lines
           the change adds (merge-base diff). Empty disables the
-          new-code gate.
+          new-code gate. When set, it also enables the new-code
+          dimension ceilings unless new_code_gates is false.
         required: false
         type: string
         default: ''
+      new_code_gates:
+        description: >-
+          Enforce the new-code dimension ceilings on the merge-base diff
+          (requires diff_base): zero blocking findings plus cognitive 15
+          and cyclomatic 15 on the functions the change touches, by
+          default. Legacy files keep their history; every added line
+          must meet today's bar.
+        required: false
+        type: boolean
+        default: true
+      new_code_max_slop:
+        description: Blocking-score ceiling for findings on added lines (0 = zero tolerance)
+        required: false
+        type: number
+        default: 0
+      new_code_max_cognitive:
+        description: Cognitive-complexity ceiling for touched functions (0 = off)
+        required: false
+        type: number
+        default: 15
+      new_code_max_cyclomatic:
+        description: Cyclomatic-complexity ceiling for touched functions (0 = off)
+        required: false
+        type: number
+        default: 15
       scorecard_publish:
         description: Run and publish OSSF Scorecard (badge/API). false skips the whole job, so id-token is not needed.
         required: false
@@ -242,6 +268,10 @@ jobs:
       ai_slop_ceiling: ${{ steps.profile.outputs.ai_slop_ceiling }}
       coverage_min: ${{ inputs.coverage_min }}
       diff_base: ${{ inputs.diff_base }}
+      new_code_gates: ${{ inputs.new_code_gates }}
+      new_code_max_slop: ${{ inputs.new_code_max_slop }}
+      new_code_max_cognitive: ${{ inputs.new_code_max_cognitive }}
+      new_code_max_cyclomatic: ${{ inputs.new_code_max_cyclomatic }}
     steps:
       - name: Validate caller inputs
         env:
@@ -261,6 +291,9 @@ jobs:
           SELECT: ${{ inputs.select }}
           COVERAGE_MIN: ${{ inputs.coverage_min }}
           DIFF_BASE: ${{ inputs.diff_base }}
+          NEW_CODE_MAX_SLOP: ${{ inputs.new_code_max_slop }}
+          NEW_CODE_MAX_COGNITIVE: ${{ inputs.new_code_max_cognitive }}
+          NEW_CODE_MAX_CYCLOMATIC: ${{ inputs.new_code_max_cyclomatic }}
         run: |
           # Untrusted caller input never reaches a checkout ref unvalidated,
           # and a typo must fail the run - never silently skip a stack.
@@ -299,7 +332,7 @@ jobs:
             *)
               # the allowlist is one variable so the error message can
               # never drift from the accepted set
-              valid_jobs="hygiene secrets ai-integrity docs node-lint node-test python rust go-lint go-test java cpp csharp ruby php docker security deps-review scorecard"
+              valid_jobs="hygiene secrets ai-integrity docs node-lint node-test python rust go-lint go-test java cpp csharp ruby php docker security deps-review scorecard coverage-gate new-code-gate"
               for token in $(printf '%s' "$SELECT" | tr ',' ' '); do
                 case " $valid_jobs " in
                   *" $token "*) ;;
@@ -312,6 +345,12 @@ jobs:
             '') COVERAGE_MIN=0 ;;
             *[!0-9.]*) die "coverage_min must be a non-negative number (got '$COVERAGE_MIN')" ;;
           esac
+          for ceiling in "$NEW_CODE_MAX_SLOP" "$NEW_CODE_MAX_COGNITIVE" "$NEW_CODE_MAX_CYCLOMATIC"; do
+            case "$ceiling" in
+              '') : ;; # real dispatches carry the input defaults; nothing to validate
+              *[!0-9.]*) die "new_code_* ceilings must be non-negative numbers (got '$ceiling')" ;;
+            esac
+          done
           for ref in $(printf '%s' "$DIFF_BASE"); do
             [ -z "$ref" ] && continue
             case "$ref" in
@@ -937,32 +976,11 @@ jobs:
           path: coverage-reports
       - name: Fetch diff base for the new-code gate
         # The new-code gate diffs against diff_base (merge-base); the
-        # default shallow checkout does not carry other branches. A
-        # remote-tracking name (origin/main) must be materialized as a
-        # real ref before `git diff origin/main...HEAD` can resolve; a
-        # branch, tag or SHA is fetched by its own name.
+        # default shallow checkout does not carry other branches. The
+        # shared helper materializes remote-tracking refs; the same
+        # helper serves the new-code-gate job so both cannot drift.
         if: env.DIFF_BASE != ''
-        run: |
-          set -e
-          if git rev-parse --verify --quiet "$DIFF_BASE" >/dev/null; then
-            echo "diff base $DIFF_BASE already resolvable"
-            exit 0
-          fi
-          case "$DIFF_BASE" in
-            origin/*)
-              branch="${DIFF_BASE#origin/}"
-              git fetch --depth=1 origin "+refs/heads/$branch:refs/remotes/origin/$branch"
-              ;;
-            refs/*)
-              git fetch --depth=1 origin "+$DIFF_BASE:$DIFF_BASE"
-              ;;
-            *)
-              git fetch --depth=1 origin "+refs/heads/$DIFF_BASE:refs/remotes/origin/$DIFF_BASE" \
-                || git fetch --depth=1 origin "+refs/tags/$DIFF_BASE:refs/tags/$DIFF_BASE" \
-                || git fetch --depth=1 origin "$DIFF_BASE"
-              ;;
-          esac
-          git rev-parse --verify "$DIFF_BASE" >/dev/null
+        run: bash _ci/scripts/fetch_diff_base.sh "$DIFF_BASE"
       - name: Evaluate coverage gates
         run: |
           GATE_ARGS=""
@@ -982,6 +1000,58 @@ jobs:
           if [ -f gate-report.md ]; then
             echo "### Coverage gate" >> "$GITHUB_STEP_SUMMARY"
             cat gate-report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$rc"
+
+  # ---------------------------------------------------------------------------
+  # New-code dimension ceilings: the merge-base diff must meet today's bar
+  # ---------------------------------------------------------------------------
+  new-code-gate:
+    needs: [meta]
+    if: >-
+      (inputs.select == '' || contains(format(',{0},', inputs.select), ',new-code-gate,'))
+      && needs.meta.result == 'success'
+      && inputs.new_code_gates
+      && needs.meta.outputs.diff_base != ''
+    runs-on: ${{ inputs.runs_on }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      DIFF_BASE: ${{ needs.meta.outputs.diff_base }}
+      MAX_SLOP: ${{ needs.meta.outputs.new_code_max_slop }}
+      MAX_COGNITIVE: ${{ needs.meta.outputs.new_code_max_cognitive }}
+      MAX_CYCLOMATIC: ${{ needs.meta.outputs.new_code_max_cyclomatic }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch master-ci helpers
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ needs.meta.outputs.template_repo }}
+          ref: ${{ needs.meta.outputs.template_ref }}
+          path: _ci
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Fetch diff base
+        # The gate diffs against diff_base (merge-base); the shared
+        # helper materializes the ref for a shallow checkout.
+        run: bash _ci/scripts/fetch_diff_base.sh "$DIFF_BASE"
+      - name: Evaluate new-code dimension ceilings
+        # Legacy files keep their history; every added line meets
+        # today's bar - blocking-score 0, cognitive 15, cyclomatic 15
+        # by default (tunable via the new_code_* inputs). Exit 1 = a
+        # ceiling is breached by the change, exit 2 = the gate cannot
+        # be evaluated (no diff base, git failure). Both fail the run.
+        run: |
+          python3 _ci/scripts/new_code_gate.py . \
+            --diff-base "$DIFF_BASE" \
+            --max-slop-score "$MAX_SLOP" \
+            --max-cognitive "$MAX_COGNITIVE" \
+            --max-cyclomatic "$MAX_CYCLOMATIC" | tee new-code-report.md
+          rc=${PIPESTATUS[0]}
+          if [ -f new-code-report.md ]; then
+            echo "### New-code gate" >> "$GITHUB_STEP_SUMMARY"
+            cat new-code-report.md >> "$GITHUB_STEP_SUMMARY"
           fi
           exit "$rc"
 
@@ -2125,6 +2195,7 @@ jobs:
         changes, meta, hygiene, secrets, ai-integrity, docs, node-lint,
         node-test, python, rust, go-lint, go-test, java, cpp, csharp, ruby,
         php, docker, security, deps-review, scorecard, coverage-gate,
+        new-code-gate,
       ]
     if: always() && github.event_name == 'pull_request'
     runs-on: ${{ inputs.runs_on }}
@@ -2217,6 +2288,7 @@ jobs:
         changes, meta, hygiene, secrets, ai-integrity, docs, node-lint,
         node-test, python, rust, go-lint, go-test, java, cpp, csharp, ruby,
         php, docker, security, deps-review, scorecard, coverage-gate,
+        new-code-gate,
       ]
     if: always()
     runs-on: ${{ inputs.runs_on }}
@@ -2258,6 +2330,7 @@ jobs:
               "deps-review",
               "scorecard",
               "coverage-gate",
+              "new-code-gate",
           ]
           labels = {
               "changes": "Change detection",
@@ -2282,6 +2355,7 @@ jobs:
               "deps-review": "Dependency review",
               "scorecard": "Scorecard",
               "coverage-gate": "Coverage gate",
+              "new-code-gate": "New-code gate",
           }
           icon = {
               "success": ":white_check_mark:",

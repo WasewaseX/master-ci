@@ -7,11 +7,18 @@ manifests only - a nested project triggered a job that then reported
 success after skipping every analysis step. This module makes project
 discovery explicit:
 
-- root manifests with workspace semantics (npm/pnpm/yarn workspaces,
-    ``go.work``, Cargo ``[workspace]``) collapse to a single ``.``
-    project,
+- workspace markers (npm/pnpm ``workspaces``, ``go.work``, Cargo
+    ``[workspace]``) enumerate their actual member projects via
+    ``discover_workspaces``, so a monorepo is analyzed package by
+    package instead of as one blob,
 - every other manifest directory becomes its own project,
 - jobs loop over the inventory so no project can be silently skipped.
+
+Fail-closed contract (same semantics as the architecture config): a
+workspace marker that exists but cannot be honored - malformed
+pnpm-workspace.yaml, a named member whose manifest is missing - maps
+to exit 2. A workspace that declares members must never silently
+degrade to "analyze the root only".
 
 Usage:
     python3 discover_projects.py --family node [--root .] [--format json|summary]
@@ -24,7 +31,10 @@ import argparse
 import json
 import re
 import sys
+import tomllib
 from pathlib import Path
+
+from discover_workspaces import WorkspaceError, workspace_inventory
 
 SKIP_DIRS = {
     ".git",
@@ -128,6 +138,25 @@ def _dotnet_dirs(root: Path) -> list[Path]:
     return sorted(found, key=lambda p: p.relative_to(root).as_posix())
 
 
+def _project_name(directory: Path, family: str, manifest: str) -> str:
+    """Best-effort project name from its manifest, for honest summaries."""
+    try:
+        if family == "node" and manifest == "package.json":
+            data = json.loads((directory / manifest).read_text(encoding="utf-8"))
+            return str(data.get("name") or "")
+        if family == "rust" and manifest == "Cargo.toml":
+            data = tomllib.loads((directory / manifest).read_text(encoding="utf-8"))
+            return str((data.get("package") or {}).get("name") or "")
+        if family == "go" and manifest == "go.mod":
+            for row in (directory / manifest).read_text(encoding="utf-8").splitlines():
+                hit = re.match(r"\s*module\s+(\S+)", row)
+                if hit:
+                    return hit.group(1)
+    except (OSError, json.JSONDecodeError, tomllib.TOMLDecodeError, ValueError):
+        return ""
+    return ""
+
+
 def discover(root: Path, family: str) -> dict:
     """Inventory of independent projects for one family under ``root``."""
     root = root.resolve()
@@ -139,24 +168,43 @@ def discover(root: Path, family: str) -> dict:
         dirs = _manifest_dirs(root, family)
     else:
         raise ValueError(f"unknown family: {family}")
+    warnings: list[str] = []
+    # A workspace marker is evaluated before any emptiness check: a marker
+    # that promises members but cannot honor them fails closed even when
+    # no nested manifest survived the walk.
+    workspace = _workspace_rooted(root, family)
+    if workspace:
+        dirs, misses = workspace_inventory(root, family)
+        warnings = [f"workspace glob {pattern!r} matched no member" for pattern in misses]
     if not dirs:
         projects: list[dict] = []
-        workspace = False
     else:
-        # A workspace marker at the root covers every nested project (npm
-        # workspaces, go.work `use` lists, Cargo `[workspace]`), so the
-        # family collapses to a single root project.
-        workspace = _workspace_rooted(root, family)
-        if workspace:
-            dirs = [root]
+        # A workspace marker at the root enumerates its actual members, so
+        # a monorepo is analyzed package by package, never as one blob.
         projects = [
             {
                 "path": d.relative_to(root).as_posix() or ".",
                 "manifest": _manifest_name(d, family, manifests),
+                "name": _project_name(d, family, _manifest_name(d, family, manifests)),
             }
             for d in dirs
         ]
-    return {"family": family, "root": str(root), "workspace": workspace, "projects": projects}
+    return {
+        "family": family,
+        "root": str(root),
+        "workspace": workspace,
+        "projects": projects,
+        "warnings": warnings,
+    }
+
+
+def discover_all(root: Path) -> dict:
+    """Inventory across every family - the full monorepo map."""
+    families = sorted(FAMILY_MANIFESTS) + ["dotnet"]
+    return {
+        "root": str(root.resolve()),
+        "families": {family: discover(root, family) for family in families},
+    }
 
 
 def _manifest_name(
@@ -176,19 +224,46 @@ def _manifest_name(
 
 
 def summary(inventory: dict) -> str:
+    if "families" in inventory:
+        blocks = [summary(child) for child in inventory["families"].values()]
+        return "\n".join(block for block in blocks if block)
     projects = inventory["projects"]
     if not projects:
         return f"{inventory['family']}: no projects discovered"
     label = "workspace root" if inventory["workspace"] else "projects"
     lines = [f"{inventory['family']}: {len(projects)} {label}"]
     for project in projects:
-        lines.append(f"  - {project['path']} ({project['manifest']})")
+        name = f": {project['name']}" if project.get("name") else ""
+        lines.append(f"  - {project['path']} ({project['manifest']}{name})")
+    lines.extend(f"  ! {warning}" for warning in inventory.get("warnings", []))
     return "\n".join(lines)
+
+
+def _all_projects(inventory: dict) -> list[dict]:
+    return [p for child in inventory["families"].values() for p in child["projects"]]
+
+
+def _emit(inventory: dict, args: argparse.Namespace) -> None:
+    if args.list:
+        for project in _all_projects(inventory) if args.family == "all" else inventory["projects"]:
+            print(project["path"])
+    elif args.format == "summary":
+        print(summary(inventory))
+    else:
+        print(json.dumps(inventory, indent=2))
+
+
+def _no_projects(inventory: dict, family: str) -> bool:
+    if family == "all":
+        return not any(child["projects"] for child in inventory["families"].values())
+    return not inventory["projects"]
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--family", required=True, choices=sorted(FAMILY_MANIFESTS) + ["dotnet"])
+    parser.add_argument(
+        "--family", required=True, choices=sorted(FAMILY_MANIFESTS) + ["dotnet", "all"]
+    )
     parser.add_argument("--root", default=".")
     parser.add_argument("--format", choices=("json", "summary"), default="json")
     parser.add_argument(
@@ -202,15 +277,21 @@ def main(argv: list[str] | None = None) -> int:
         help="exit 1 when zero projects are discovered (turns silent skips into failures)",
     )
     args = parser.parse_args(argv)
-    inventory = discover(Path(args.root), args.family)
-    if args.list:
-        for project in inventory["projects"]:
-            print(project["path"])
-    elif args.format == "summary":
-        print(summary(inventory))
-    else:
-        print(json.dumps(inventory, indent=2))
-    if args.fail_empty and not inventory["projects"]:
+    try:
+        inventory = (
+            discover_all(Path(args.root))
+            if args.family == "all"
+            else discover(Path(args.root), args.family)
+        )
+    except WorkspaceError as exc:
+        print(
+            f"::error::project discovery rejected: {exc} - a declared workspace "
+            "must never silently degrade to root-only analysis",
+            file=sys.stderr,
+        )
+        return 2
+    _emit(inventory, args)
+    if args.fail_empty and _no_projects(inventory, args.family):
         print(
             f"::error::family '{args.family}' was selected but no project manifest "
             f"was discovered under {args.root} - the stack would otherwise skip "
