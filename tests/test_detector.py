@@ -2073,10 +2073,6 @@ def test_import_cycle_is_registered_advisory_maintainability():
 def test_long_cycle_chain_renders_bounded(tmp_path):
     for i in range(12):
         (tmp_path / f"r{i}.py").write_text(f"import r{(i + 1) % 12}\n", encoding="utf-8")
-    hits = [
-        f
-        for f in scan(tmp_path, {})
-        if f.check == "import-cycle"
-    ]
+    hits = [f for f in scan(tmp_path, {}) if f.check == "import-cycle"]
     assert len(hits) == 1
     assert "... ->" in hits[0].message and "12 modules" in hits[0].message
