@@ -67,6 +67,12 @@ Profile presets (quick / standard / strict / custom) only change the
   advisory in quick). zizmor findings are reported as step annotations
   (not the Security tab - that would need `security-events: write` on
   this job).
+- **zizmor suppressions:** a `# zizmor: ignore[audit]` comment only
+  registers where zizmor can parse it as a YAML comment - standalone on
+  its own line (covering the next line) or trailing a `uses:`/`run:`
+  key. Inside a `run: |` block scalar it is shell text, the suppression
+  never registers, and the audit fails the job (the v2.4.0 escape,
+  caught by the v2.4.1 contract test).
 - **False positives:** YAML anchors flagged by yamllint's default rules;
   jscpd counting idiomatic boilerplate (raise `duplication_threshold_pct`
   or ignore paths via a committed `.jscpd.json`).

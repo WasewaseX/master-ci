@@ -19,6 +19,9 @@ project documents, so a regression cannot land silently:
 - release integrity: the dependency-review probe is authenticated, Node
     installs never fall back past a lockfile, stack toggles and select
     tokens are validated, Python project installs fail loudly
+- `# zizmor:` suppression comments only appear where zizmor can parse
+    them as YAML comments (standalone line or trailing a key line), never
+    buried inside `run: |` block scalars
 - the selftest workflow really exercises pass, enforced-failure and
     input-validation paths of the reusable workflow
 - event filters are explicit, clean pattern lists and the self-loop
@@ -1307,3 +1310,23 @@ def test_flake_report_carries_a_machine_verdict():
         2,
     )
     assert clean["status"] == "clean"
+
+
+def test_zizmor_suppressions_sit_where_zizmor_parses_them():
+    """`# zizmor: ignore[...]` only works as a YAML comment: standalone on
+    its own line (covers the next line) or trailing a key/value line. Inside
+    a `run: |` block scalar it is shell text - the suppression never
+    registers and the hygiene gate fails (the v2.4.0 escape)."""
+    for wf in WORKFLOWS:
+        for lineno, line in enumerate(wf.read_text(encoding="utf-8").splitlines(), 1):
+            if "# zizmor:" not in line:
+                continue
+            prefix = line.split("#", 1)[0].rstrip()
+            on_key_line = re.search(
+                r"^\s*(?:-\s+)*(?:uses|run|working-directory|shell):\s", prefix
+            )
+            assert prefix.strip() == "" or on_key_line, (
+                f"{wf.name}:{lineno}: `# zizmor:` comment is buried in script "
+                "text where zizmor cannot see it - put it on the YAML key line "
+                "(`run: | # zizmor: ignore[...]`) or on a standalone line above"
+            )

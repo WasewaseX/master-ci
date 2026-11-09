@@ -142,9 +142,9 @@ jobs:
           node-version: '22'
       - name: Install Node dependencies
         if: hashFiles('package.json') != ''
-        run: |
+        run: | # zizmor: ignore[adhoc-packages]
           if [ -f pnpm-lock.yaml ]; then
-            npm install --global pnpm # zizmor: ignore[adhoc-packages]
+            npm install --global pnpm
             pnpm install --frozen-lockfile
           elif [ -f yarn.lock ]; then
             corepack enable
@@ -156,7 +156,7 @@ jobs:
           fi
       - name: Hunt Node flakes (vitest / jest)
         if: hashFiles('package.json') != ''
-        run: |
+        run: | # zizmor: ignore[adhoc-packages]
           if [ -f vitest.config.ts ] || [ -f vitest.config.js ] || [ -f vitest.config.mts ]; then
             runner=vitest
           elif [ -f jest.config.js ] || [ -f jest.config.ts ] || [ -f jest.config.mjs ]; then
@@ -166,7 +166,7 @@ jobs:
             exit 0
           fi
           if [ "$runner" = jest ]; then
-            npm install --no-save jest-junit # zizmor: ignore[adhoc-packages]
+            npm install --no-save jest-junit
           fi
           echo "runner=$runner"
           for i in $(seq 1 "$ITERATIONS"); do

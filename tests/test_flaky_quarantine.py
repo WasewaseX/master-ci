@@ -57,7 +57,7 @@ def write_baseline(path: Path, tests: dict[str, dict] | None = None) -> Path:
     return path
 
 
-def propose(tmp_path: Path, new: list[str], baseline: bool = True, **kwargs) -> Path:
+def propose(tmp_path: Path, new: list[str], baseline: bool = True, **kwargs) -> tuple[Path, int]:
     report = write_report(tmp_path / "flaky-report.json", new, **kwargs)
     if baseline:
         write_baseline(tmp_path / ".flaky-baseline.json")
