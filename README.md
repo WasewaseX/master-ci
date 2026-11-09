@@ -38,7 +38,7 @@ on:
 
 jobs:
   master:
-    uses: WasewaseX/master-ci/.github/workflows/master-ci.yml@v1
+    uses: WasewaseX/master-ci/.github/workflows/master-ci.yml@v2
     permissions:
       contents: read
       security-events: write
@@ -46,7 +46,7 @@ jobs:
       id-token: write   # only for Scorecard publishing (see "Permissions")
 
   codeql:
-    uses: WasewaseX/master-ci/.github/workflows/codeql.yml@v1
+    uses: WasewaseX/master-ci/.github/workflows/codeql.yml@v2
     with:
       languages: javascript-typescript,python
     permissions:
@@ -96,7 +96,7 @@ aggregate gate decides pass or fail for every PR.
 - pin style, the helper-pin pair, permissions, gate inputs - without
 touching the network. Errors (a mutable `@main` ref, `template_repo`
 without `template_ref`, missing `security-events: write`, a
-non-integer `coverage_min`) exit 1; warnings (a floating `@v1`, no
+non-integer `coverage_min`) exit 1; warnings (a floating major tag, no
 pins on a foreign caller) exit 0; an unreadable setup fails closed
 with exit 2:
 
@@ -111,13 +111,16 @@ python scripts/doctor.py --workflows-dir path  # any checkout
 
 | Reference | Behavior | Use when |
 |---|---|---|
-| `@v1` | Tracks the latest `v1.x` release tag | Default recommendation; Dependabot PRs keep it fresh |
-| `@v1.x.y` | Exact release | Reproducibility without surprises |
+| `@v2` | Tracks the latest `v2.x` release tag | Default recommendation; Dependabot PRs keep it fresh |
+| `@v1` | Tracks the latest `v1.x` release tag | The v1 line, frozen at v1.22.2; never jumps majors |
+| `@vX.Y.Z` | Exact release | Reproducibility without surprises |
 | `@<commit-sha>` | Immutable commit | Strict supply-chain posture (zizmor audit-clean) |
 | `@main` | Live edge | Testing template changes before a release |
 
-Releases are tagged `v1.x.y`; `v1` is a moving tag updated on every release.
-Copy [`dependabot.yml`](.github/dependabot.yml) into your repo and Dependabot
+Releases are tagged `vX.Y.Z`; each major has its own moving tag (`v1`,
+`v2`) updated on every release within that line, so `@v1` consumers are
+never silently upgraded across a major. Copy
+[`dependabot.yml`](.github/dependabot.yml) into your repo and Dependabot
 opens update PRs for the `uses:` lines automatically - the self-update loop
 works for consumers too.
 
@@ -374,17 +377,17 @@ workflows:
 ```yaml
 jobs:
   master:
-    uses: WasewaseX/master-ci/.github/workflows/master-ci.yml@v1
+    uses: WasewaseX/master-ci/.github/workflows/master-ci.yml@v2
     with:
       profile: quick    # fast PR feedback - deterministic gates stay on
-      template_ref: v1  # fetch helpers from the same release as the workflow
+      template_ref: v2  # fetch helpers from the same release as the workflow
     permissions:
       contents: read
       security-events: write
       pull-requests: write
 ```
 
-**Helper pinning**: the workflow ref (`@v1`) and `template_ref` are two
+**Helper pinning**: the workflow ref (`@v2`) and `template_ref` are two
 separate versions. The workflow file can come from a release tag while
 `template_ref: main` would fetch helper scripts from a moving branch - so
 helpers and checks could silently diverge from the version you pinned.
@@ -527,7 +530,7 @@ see below) - and gives every published image:
 ```yaml
   publish:
     needs: ci          # release only from a green pipeline
-    uses: WasewaseX/master-ci/.github/workflows/release-docker.yml@v1
+    uses: WasewaseX/master-ci/.github/workflows/release-docker.yml@v2
     with:
       registry: ghcr
       image_name: owner/app
@@ -561,7 +564,7 @@ is validated (target allowlist, required inputs per target, path safety)
 ```yaml
   deploy:
     needs: ci
-    uses: WasewaseX/master-ci/.github/workflows/deploy-aws.yml@v1
+    uses: WasewaseX/master-ci/.github/workflows/deploy-aws.yml@v2
     with:
       role_arn: arn:aws:iam::123456789012:role/ci-deploy
       aws_region: eu-central-1

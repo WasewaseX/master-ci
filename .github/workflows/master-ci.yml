@@ -12,7 +12,7 @@
 #   deploy-aws.yml     - OIDC-first deploys to S3, Lambda, ECS, CloudFormation
 #
 # Called with a single line from any repository:
-#   uses: WasewaseX/master-ci/.github/workflows/master-ci.yml@v1
+#   uses: WasewaseX/master-ci/.github/workflows/master-ci.yml@v2
 #
 # Permissions are least-privilege per job: most jobs only get contents: read.
 # Only the jobs that need more declare more (security, deps-review, dashboard,

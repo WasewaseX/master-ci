@@ -837,7 +837,7 @@ README's prose contract into deterministic checks:
 
 - **Ref style (per reusable-workflow job):** `@main` is an error - a
   mutable ref changes CI behavior without review. `@vX.Y.Z` is the
-  recommended reproducible baseline; `@v1` tracks the latest release
+  recommended reproducible baseline; `@v2` tracks the latest release
   (fine, but doctor notes the difference); any other branch or SHA
   ref draws a warning.
 - **The helper-pin contract (master-ci.yml only):** `template_repo`

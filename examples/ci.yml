@@ -6,7 +6,7 @@
 # and skips whatever did not change. The `uses:` line below is the one-liner.
 #
 # Supply-chain notes:
-# - `@v1` tracks the latest v1.x release of the template (see the repo's
+# - `@v2` tracks the latest v2.x release of the template (see the repo's
 #   tags). For immutability pin a commit SHA instead; Dependabot keeps
 #   either reference current automatically.
 # - No `secrets: inherit`: master-ci only uses the automatic GITHUB_TOKEN.
@@ -18,13 +18,13 @@
 #
 #   publish:
 #     needs: master
-#     uses: WasewaseX/master-ci/.github/workflows/release-docker.yml@v1
+#     uses: WasewaseX/master-ci/.github/workflows/release-docker.yml@v2
 #     with: { registry: ghcr, image_name: owner/app }
 #     permissions: { contents: read, packages: write, security-events: write, id-token: write }
 #
 #   deploy:
 #     needs: publish
-#     uses: WasewaseX/master-ci/.github/workflows/deploy-aws.yml@v1
+#     uses: WasewaseX/master-ci/.github/workflows/deploy-aws.yml@v2
 #     with:
 #       role_arn: arn:aws:iam::123456789012:role/ci-deploy
 #       target: s3
@@ -41,7 +41,7 @@ on:
 
 jobs:
   master:
-    uses: WasewaseX/master-ci/.github/workflows/master-ci.yml@v1
+    uses: WasewaseX/master-ci/.github/workflows/master-ci.yml@v2
     permissions:
       contents: read
       security-events: write
@@ -49,7 +49,7 @@ jobs:
       id-token: write
 
   codeql:
-    uses: WasewaseX/master-ci/.github/workflows/codeql.yml@v1
+    uses: WasewaseX/master-ci/.github/workflows/codeql.yml@v2
     with:
       languages: javascript-typescript,python
     permissions:
