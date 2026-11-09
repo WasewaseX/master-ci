@@ -405,6 +405,10 @@ def apply_baseline(findings: list[Finding], baseline_path: str) -> tuple[list[Fi
 
 
 def write_baseline(path: str, findings: list[Finding]) -> None:
+    # indent 2, not 1: consumer hygiene gates enforce the editorconfig
+    # (indent_size 2), and a baseline that tripped it would block the
+    # commit that records it. Existing baselines stay valid - JSON
+    # parsing ignores the whitespace.
     data = {"version": 1, "fingerprints": sorted(fingerprint(f) for f in findings)}
     with open(path, "w", encoding="utf-8") as handle:
-        json.dump(data, handle, indent=1)
+        json.dump(data, handle, indent=2)

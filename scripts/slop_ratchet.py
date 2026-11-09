@@ -108,10 +108,15 @@ def load_baseline(path: str | Path) -> dict[str, int]:
 
 
 def write_baseline(path: str | Path, findings: list) -> dict[str, int]:
-    """Record the current per-check counts as the floor; deterministic bytes."""
+    """Record the current per-check counts as the floor; deterministic bytes.
+
+    Two-space indent: the template's own hygiene gate enforces the
+    editorconfig (indent_size 2) on consumer trees, and a baseline that
+    tripped it would block the very commit that records the floor.
+    """
     counts = metrics(findings)
     payload = {"version": BASELINE_VERSION, "checks": counts}
-    Path(path).write_text(json.dumps(payload, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+    Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return counts
 
 
