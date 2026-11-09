@@ -74,6 +74,7 @@ CHECK_CATEGORIES: dict[str, str] = {
     "unwrap-density": "code-health",
     "todo-density": "code-health",
     "unused-declaration": "code-health",
+    "orphan-module": "code-health",
     # Maintainability: design debt and hygiene, judged per codebase.
     "bloat-param-count": "maintainability",
     "high-cyclomatic": "maintainability",

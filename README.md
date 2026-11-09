@@ -81,7 +81,7 @@ which keeps its baseline reproducible across template releases:
 ```yaml
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v2.0.0
+      template_ref: v2.1.0
 ```
 
 ### Required check
@@ -648,7 +648,7 @@ carries a `SKILL.md`, so assistants with a skills directory can load it
 with one command:
 
 ```bash
-git clone --depth 1 --branch v2.0.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+git clone --depth 1 --branch v2.1.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
 ```
 
 MCP clients configure the same install like this:
@@ -802,9 +802,9 @@ python3 scripts/ai_slop_detector.py . --max-score 8 --sarif /tmp/ai.sarif
 python3 scripts/ai_slop_detector.py . --write-baseline .ai-baseline.json   # accept current findings
 ```
 
-## Roadmap to v2.0 (deeper analysis, not more heuristics)
+## Roadmap to v2.0 and beyond (deeper analysis, not more heuristics)
 
-The direction for v1.18 through v2.0, in priority order - the goal is
+The direction for v1.18 through v2.1, in priority order - the goal is
 understanding software, not stacking thirty more regex checks:
 
 | # | Priority | Status |
@@ -814,9 +814,9 @@ understanding software, not stacking thirty more regex checks:
 | 3 | Cognitive complexity across languages | **done (v1.20)** - Sonar-style reader effort on tree-sitter trees, 15 budget, every parsed language |
 | 4 | Coverage and mutation testing | **done (v1.21)** - `coverage_min` / `diff_base` gates consume coverage.json, Cobertura XML and Go coverprofiles, fail-closed; `mutation.yml` runs mutmut/Stryker weekly for opted-in repos |
 | 5 | Full monorepo project discovery | **done (v1.22)** - manifest-aware workspace member enumeration (npm/pnpm `workspaces`, `go.work`, Cargo `[workspace]`), `--family all` map, declared members that cannot be honored fail closed (exit 2) |
-| 6 | Native dependency and dead-code analysis | partially - import graph, unused declarations/dependencies today |
+| 6 | Native dependency and dead-code analysis | **done (v2.1)** - unused-dependency oracles for Go, Rust, PHP, C# and Java beside Python/Node, monorepo-scoped manifest discovery, `orphan-module` for unreachable files and Go packages; Ruby and C/C++ documented as unsound and left out |
 | 7 | New-code quality gates | **done (v1.22)** - the `new-code-gate` job enforces blocking-score 0, cognitive 15 and cyclomatic 15 on the merge-base diff's added lines and touched functions; legacy files keep their history |
-| 8 | Full ten-stack canary verification | partially - canary repo today, all ten stacks next |
+| 8 | Full ten-stack canary verification | **done (v2.0)** - the ci-canary consumer carries real code in all ten stacks (Python, Node, Go, Rust, Java, Kotlin, C#, C/C++, Ruby, PHP) and exercises every release against them |
 
 Also since v1.18: the **quality-dimension split** - code health,
 maintainability, security, test assurance, dependency health and

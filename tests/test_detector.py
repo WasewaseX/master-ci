@@ -735,6 +735,19 @@ def test_function_local_import_is_not_duplicate(tmp_path):
     assert not any(f.check == "duplicate-import" for f in findings)
 
 
+def test_submodule_import_is_not_a_duplicate_of_its_parent(tmp_path):
+    # collections and collections.abc are different modules; the rule
+    # compares full dotted paths, not first components.
+    code = (
+        "from collections import Counter\n"
+        "from collections.abc import Iterable\n\n"
+        "def f(xs: Iterable[int]) -> Counter:\n"
+        "    return Counter(xs)\n"
+    )
+    findings = scan_py(tmp_path, code)
+    assert not any(f.check == "duplicate-import" for f in findings)
+
+
 def test_redundant_rethrow_flagged(tmp_path):
     code = "def f():\n    try:\n        return 1\n    except ValueError:\n        raise\n"
     findings = scan_py(tmp_path, code)

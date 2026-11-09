@@ -235,11 +235,16 @@ def check_dispatch_ladders(path: Path, tree: ast.AST) -> list[Finding]:
 
 
 def _imported_modules(node: ast.stmt) -> list[str]:
-    """Top-level modules one import statement pulls in."""
+    """Full dotted modules one import statement pulls in.
+
+    The whole path is the identity, not the first component:
+    ``collections`` and ``collections.abc`` are different modules and
+    importing both is not a duplicate.
+    """
     if isinstance(node, ast.Import):
-        return [alias.name.split(".")[0] for alias in node.names]
+        return [alias.name for alias in node.names]
     if isinstance(node, ast.ImportFrom) and node.module:
-        return [node.module.split(".")[0]]
+        return [node.module]
     return []
 
 

@@ -1,43 +1,52 @@
-"""Repo-level deadness: unused declarations and unused runtime dependencies.
+"""Repo-level deadness: unused declarations and unreachable modules.
 
-scanaislop round-4 adoption. The main site's headline signal list names
-"Unused helpers" outright, and the catalog carries `code-quality/
-unused-declaration` (AST-based dead-declaration detection) plus the knip
-family `knip/unused-export` / `knip/unused-dependency`. Rounds 1-3 took
-the per-file shapes; deadness is a repo-level property, so it lives in
-its own module and runs once per scan, not once per file.
+scanaislop-style repo-level structural verification, following the same
+"deeper analysis, not another heuristic" guidance that produced the
+deadness module. The main site's headline signal list names "Unused
+helpers" outright, and the catalog carries `code-quality/
+unused-declaration`. Rounds 1-3 took the per-file shapes; deadness is a
+repo-level property, so it lives in its own module and runs once per
+scan, not once per file. The dependency half of the tranche
+(`knip/unused-dependency` across every stack with a sound oracle)
+outgrew this module and now lives in slop_deps.py.
 
 The usage oracle is deliberately dumb and deliberately conservative: a
 candidate survives if its bare name appears anywhere else in the
-repository - another source file, a workflow, a doc, even a string.
-Only a name whose occurrences are exactly its own definition site is
-reported. That yields near-zero false positives at the cost of missing
+repository - another source file, a test, a doc, even a string. Only a
+name whose occurrences are exactly its own definition site is reported.
+That yields near-zero false positives at the cost of missing
 dynamically-referenced dead code, the correct trade for an advisory
 signal.
+
+`orphan-module` is the file-scale version of the same oracle: a module
+no import, config, doc or script ever mentions. Python, JS/TS and Ruby
+are judged by file stem (their import specifiers name files); Go is
+judged by package directory, because files in one Go package reference
+each other namelessly. Stems under four characters, test files,
+entry-point stems (`main`, `index`, `app`, `cli`, ...) and namespace
+glue (`__init__`, `mod`) are exempt, and the oracle corpus reaches
+past source into manifests, workflows and config files so a module
+wired up by name never gets flagged.
 """
 
 from __future__ import annotations
 
 import ast
-import json
+import os
 import re
 from collections import Counter
+from collections.abc import Iterable
 from pathlib import Path
 
 from slop_files import is_ignored, is_test_path
 from slop_model import Finding, _finding
-from slop_patterns import PY_IMPORT_ALIASES
+from slop_patterns import MAX_FILE_BYTES, SKIP_DIRS, SKIP_PATTERN
 
-# Entry-point-style runtime deps that legitimate projects never import
-# from application code (servers and service layers import them for us).
-_DYNAMIC_USE = {
-    "gunicorn",
-    "uvloop",
-    "httptools",
-    "uvicorn-worker",
-    "python-multipart",
-    "asgiref",
-}
+MAX_ORPHANS = 8
+# The oracle corpus is the whole repository's text; this bounds memory on
+# very large trees (roughly 64 MB of source is far more than a scan needs).
+MAX_CORPUS_BYTES = 64 * 1024 * 1024
+MAX_ORACLE_EXTRAS = 2000
 
 _JS_EXTS = (".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs")
 _JS_EXPORT = re.compile(
@@ -45,12 +54,6 @@ _JS_EXPORT = re.compile(
     r"([A-Za-z_$][\w$]*)",
     re.MULTILINE,
 )
-_JS_IMPORT = re.compile(
-    r"(?:import\s+[^'\"]*?from\s+|import\s+|require\s*\(\s*|import\s*\(\s*)[\"']([^\"']+)[\"']"
-)
-_PY_DEP_ITEM = re.compile(r"[\"']([A-Za-z0-9_.\-]+)")
-# Dist-name -> import-name: the usable direction of the alias table.
-_ALIASES_BY_DIST = {v.lower(): k for k, v in PY_IMPORT_ALIASES.items()}
 
 # Candidate record: (path, python definition line or None, JS export
 # offset or None). Exactly one of the two location fields is set.
@@ -135,12 +138,13 @@ def _harvest_candidates(
 
 
 def _count_occurrences(
-    candidates: dict[str, Candidate],
+    names: Iterable[str],
     texts: dict[Path, str],
 ) -> dict[str, Counter]:
     """One repo-wide pass: every occurrence of every candidate name."""
-    alternation = re.compile(r"\b(?:" + "|".join(sorted(re.escape(n) for n in candidates)) + r")\b")
-    occurrences: dict[str, Counter] = {name: Counter() for name in candidates}
+    ordered = sorted(names)
+    alternation = re.compile(r"\b(?:" + "|".join(map(re.escape, ordered)) + r")\b")
+    occurrences: dict[str, Counter] = {name: Counter() for name in ordered}
     for path, text in texts.items():
         for name in alternation.findall(text):
             occurrences[name][path] += 1
@@ -205,114 +209,163 @@ def check_unused_declarations(
 
 
 # ---------------------------------------------------------------------------
-# unused-dependency
+# orphan-module
 # ---------------------------------------------------------------------------
 
+_ORPHAN_STEM_EXTS = (".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".rb")
+_GO_EXTS = (".go",)
+# Entry points and namespace glue: files whose stem is a boot name are
+# referenced by runners and frameworks, not by an import line.
+_ORPHAN_EXEMPT_STEMS = {
+    "__init__",
+    "__main__",
+    "main",
+    "index",
+    "app",
+    "server",
+    "cli",
+    "wsgi",
+    "asgi",
+    "manage",
+    "conftest",
+    "mod",
+    "run",
+    "start",
+    "bootstrap",
+}
+# The corpus reaches past source: a module wired up by a workflow, a
+# manifest, a containerfile or a build script is not an orphan.
+_ORACLE_EXTRA_EXTS = {
+    ".yml",
+    ".yaml",
+    ".toml",
+    ".json",
+    ".cfg",
+    ".ini",
+    ".cmake",
+    ".gradle",
+    ".gradle.kts",
+    ".properties",
+}
+_ORACLE_EXTRA_NAMES = {
+    "dockerfile",
+    "makefile",
+    "cmakelists.txt",
+    "go.mod",
+    "go.sum",
+    "cargo.toml",
+    "package.json",
+    "pyproject.toml",
+    "gemfile",
+    "composer.json",
+    "pom.xml",
+    ".gitignore",
+    ".dockerignore",
+    ".editorconfig",
+}
 
-def _py_dep_item(stripped: str, deps: dict[str, int], lineno: int) -> bool:
-    """Collect one deps-table line; False when the table closes."""
-    if stripped.startswith("]"):
-        return False
-    match = _PY_DEP_ITEM.match(stripped)
-    if match:
-        deps.setdefault(match.group(1), lineno)
-    return True
+OrphanCandidate = tuple[str, Path, bool]  # (name, representative file, is Go package)
 
 
-def _py_inline_deps(stripped: str, deps: dict[str, int], lineno: int) -> None:
-    """Single-line table: dependencies = ["a", "b"]."""
-    inner = re.match(r"dependencies\s*=\s*\[(.*)\]", stripped)
-    if not inner:
-        return
-    for item in _PY_DEP_ITEM.finditer(inner.group(1)):
-        deps.setdefault(item.group(1), lineno)
+def _orphan_candidates(
+    root: Path, files: list[Path], globs: list[str]
+) -> dict[str, OrphanCandidate]:
+    """Stem candidates for file-named families, directory candidates for Go.
+
+    A Go package is its directory: files inside one package reference
+    each other namelessly, so the importable unit - and the thing an
+    orphan verdict names - is the package path, not the file stem. Entry
+    packages (the scan root itself and ``cmd/*`` mains) are exempt.
+    """
+    candidates: dict[str, OrphanCandidate] = {}
+    go_dirs: dict[Path, list[tuple[str, Path]]] = {}
+    for path in files:
+        try:
+            rel = path.relative_to(root).as_posix()
+        except ValueError:
+            continue
+        if is_ignored(rel, globs) or is_test_path(rel):
+            continue
+        suffix = path.suffix.lower()
+        if suffix in _ORPHAN_STEM_EXTS:
+            stem = path.stem
+            # Short stems are noise: they collide with prose (the article
+            # 'a' matches a.js) and flag nothing a reader would act on.
+            if len(stem) >= 4 and stem not in _ORPHAN_EXEMPT_STEMS:
+                candidates.setdefault(stem, (stem, path, False))
+        elif suffix in _GO_EXTS:
+            go_dirs.setdefault(path.parent, []).append((rel, path))
+    for package_dir, members in sorted(go_dirs.items(), key=lambda kv: kv[0].as_posix()):
+        if package_dir == root or package_dir.parent.name.lower() == "cmd":
+            continue  # the root package and cmd/* mains are entry points
+        if (
+            len(package_dir.name) < 4
+            or package_dir.name in _ORPHAN_EXEMPT_STEMS
+            or any(p.name.lower() == "main.go" for _, p in members)
+        ):
+            continue
+        first = min(members, key=lambda m: m[0])
+        candidates.setdefault(package_dir.name, (package_dir.name, first[1], True))
+    return candidates
 
 
-def _py_deps_from_lines(lines: list[str]) -> dict[str, int]:
-    deps: dict[str, int] = {}
-    in_project = False
-    in_deps = False
-    for lineno, line in enumerate(lines, 1):
-        stripped = line.strip()
-        if stripped.startswith("["):
-            in_project = stripped == "[project]"
-            in_deps = False
-        elif in_project and not in_deps:
-            if re.match(r"dependencies\s*=\s*\[", stripped):
-                in_deps = "]" not in stripped
-                _py_inline_deps(stripped, deps, lineno)
-        elif in_deps:
-            in_deps = _py_dep_item(stripped, deps, lineno)
-    return deps
-
-
-def _py_runtime_deps(root: Path) -> dict[str, int]:
-    """pyproject [project] dependencies -> {dist name: declaration line}."""
-    manifest = root / "pyproject.toml"
-    if not manifest.is_file():
-        return {}
+def _orphan_corpus(root: Path, files: list[Path]) -> dict[Path, str]:
+    """Every scanned text plus the config/build files the scan skips."""
+    corpus: dict[Path, str] = {}
+    budget = MAX_CORPUS_BYTES
+    for path in files:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        budget -= len(text)
+        corpus[path] = text
+        if budget <= 0:
+            return corpus
     try:
-        lines = manifest.read_text(encoding="utf-8", errors="replace").splitlines()
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not SKIP_PATTERN.search(d)]
+            for name in filenames:
+                low = name.lower()
+                path = Path(dirpath) / name
+                if path in corpus:
+                    continue
+                keep = low in _ORACLE_EXTRA_NAMES or path.suffix.lower() in _ORACLE_EXTRA_EXTS
+                if not keep:
+                    continue
+                try:
+                    if path.stat().st_size > MAX_FILE_BYTES:
+                        continue
+                    text = path.read_text(encoding="utf-8", errors="replace")
+                except (OSError, UnicodeDecodeError):
+                    continue
+                budget -= len(text)
+                corpus[path] = text
+                if budget <= 0 or len(corpus) > MAX_ORACLE_EXTRAS:
+                    return corpus
     except OSError:
-        return {}
-    return _py_deps_from_lines(lines)
+        return corpus
+    return corpus
 
 
-def _js_runtime_deps(root: Path) -> dict[str, int]:
-    """package.json dependencies+peerDependencies -> {pkg: declaration line}."""
-    manifest = root / "package.json"
-    if not manifest.is_file():
-        return {}
-    try:
-        raw = manifest.read_text(encoding="utf-8", errors="replace")
-        data = json.loads(raw)
-    except (OSError, json.JSONDecodeError):
-        return {}
-    runtime: set[str] = set()
-    for key in ("dependencies", "peerDependencies"):
-        value = data.get(key)
-        if isinstance(value, dict):
-            runtime.update(value)
-    deps: dict[str, int] = {}
-    for pkg in runtime:
-        match = re.search(rf"[\"']{re.escape(pkg)}[\"']\s*:", raw)
-        if match:
-            deps[pkg] = raw[: match.start()].count("\n") + 1
-    return deps
-
-
-def _py_imported_tops(files: list[Path]) -> set[str]:
-    tops: set[str] = set()
-    for path in files:
-        if path.suffix.lower() != ".py":
-            continue
-        text = path.read_text(encoding="utf-8", errors="replace")
-        tops.update(
-            m.group(1).split(".")[0]
-            for m in re.finditer(r"^\s*(?:import|from)\s+([A-Za-z_][\w.]*)", text, re.MULTILINE)
-        )
-    return tops
-
-
-def _py_unused_dep_findings(py_deps: dict[str, int], files: list[Path]) -> list[Finding]:
-    tops = _py_imported_tops(files)
-    tops_folded = {t.replace("_", "") for t in tops}
+def _flag_orphans(
+    candidates: dict[str, OrphanCandidate],
+    occurrences: dict[str, Counter],
+) -> list[Finding]:
     findings: list[Finding] = []
-    for dist, lineno in py_deps.items():
-        if dist.lower() in _DYNAMIC_USE:
-            continue
-        stem = re.split(r"[<>=!~\[;]", dist)[0]
-        module = _ALIASES_BY_DIST.get(stem.lower(), stem.lower())
-        if module in tops or module.replace("_", "") in tops_folded:
-            continue
+    for name, (_stem, path, is_go) in sorted(candidates.items()):
+        touched = occurrences.get(name)
+        if touched and not set(touched) <= {path}:
+            continue  # some other file mentions the name - referenced
+        kind = "Go package" if is_go else "module"
         findings.append(
             Finding(
-                path="pyproject.toml",
-                line=lineno,
-                check="unused-dependency",
+                path=str(path),
+                line=1,
+                check="orphan-module",
                 message=(
-                    f"runtime dependency {stem!r} is never imported - "
-                    "declared weight with no consumer"
+                    f"nothing in the repository references {name!r} - {kind} "
+                    "unreachable from any import, config or script"
                 ),
                 weight=1,
                 advisory=True,
@@ -321,42 +374,17 @@ def _py_unused_dep_findings(py_deps: dict[str, int], files: list[Path]) -> list[
     return findings
 
 
-def _js_unused_dep_findings(js_deps: dict[str, int], files: list[Path]) -> list[Finding]:
-    specs: set[str] = set()
-    for path in files:
-        if path.suffix.lower() not in _JS_EXTS:
-            continue
-        text = path.read_text(encoding="utf-8", errors="replace")
-        specs.update(_JS_IMPORT.findall(text))
-    findings: list[Finding] = []
-    for pkg, lineno in js_deps.items():
-        base = pkg.split("/")[0] if not pkg.startswith("@") else pkg
-        if any(spec == pkg or spec.startswith(base + "/") for spec in specs):
-            continue
-        findings.append(
-            Finding(
-                path="package.json",
-                line=lineno,
-                check="unused-dependency",
-                message=(
-                    f"runtime package {pkg!r} is never imported - declared weight with no consumer"
-                ),
-                weight=1,
-                advisory=True,
-            )
-        )
-    return findings
-
-
-def check_unused_dependencies(root: Path, files: list[Path]) -> list[Finding]:
-    """Runtime deps no source file ever imports (advisory)."""
+def check_orphan_modules(
+    root: Path,
+    files: list[Path],
+    globs: list[str],
+) -> list[Finding]:
+    """Modules no import, config, doc or script ever mentions (advisory)."""
     if not root.is_dir():
         return []
-    findings: list[Finding] = []
-    py_deps = _py_runtime_deps(root)
-    if py_deps:
-        findings.extend(_py_unused_dep_findings(py_deps, files))
-    js_deps = _js_runtime_deps(root)
-    if js_deps:
-        findings.extend(_js_unused_dep_findings(js_deps, files))
-    return _cap(findings)
+    candidates = _orphan_candidates(root, files, globs)
+    if not candidates:
+        return []
+    corpus = _orphan_corpus(root, files)
+    occurrences = _count_occurrences(candidates, corpus)
+    return _cap(_flag_orphans(candidates, occurrences))

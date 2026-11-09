@@ -231,9 +231,11 @@ Profile presets (quick / standard / strict / custom) only change the
   discover tests by name; they still count as usage oracles for
   everything else. Dunders and `main` are exempt. `unused-dependency`
   reports a runtime dependency that no source file ever imports:
-  `[project] dependencies` in pyproject.toml (dev groups are exempt) and
-  `dependencies`/`peerDependencies` in package.json (`devDependencies`
-  are exempt). Dist-to-import aliasing is handled (PyYAML->yaml,
+  `[project] dependencies` in pyproject.toml (dev groups are exempt)
+  and `dependencies`/`peerDependencies` in package.json
+  (`devDependencies` are exempt) - v2.1 extended the same contract to
+  Go, Rust, PHP, C# and Java, see that bullet below. Dist-to-import
+  aliasing is handled (PyYAML->yaml,
   python-dateutil->dateutil, ...) and entry-point-style servers
   (gunicorn, uvloop, ...) are allowlisted. Both checks cap at 8 findings
   per scan and are disabled by design when the scan root is a single
@@ -427,6 +429,50 @@ Profile presets (quick / standard / strict / custom) only change the
   is unconditional design debt - it forces every member into one
   change set and makes isolated testing impossible. `build_graph` is
   exported for tests and tooling.
+- **v2.1 - native dependency analysis across every sound stack
+  (`unused-dependency` completion, `orphan-module` new, advisory):**
+  the roadmap's item 6 finished honestly. The Python and Node oracles
+  moved from slop_dead.py into a dedicated dependency module and grew
+  five siblings, one per stack where a manifest-to-code oracle is
+  actually sound: Go (go.mod direct `require` lines - `// indirect` is
+  transitive weight the toolchain owns; any quoted path under the
+  module prefix is use), Rust (Cargo.toml plain `[dependencies]` -
+  dev/build/workspace tables and per-target tables exempt; dash and
+  underscore spellings both count; a `package =` rename is use under
+  either name), PHP (composer.json `require` - require-dev, platform
+  constraints and polyfills exempt; use is a mention of the vendor
+  namespace, which PSR-4 guarantees for a consumed package), C#
+  (csproj `PackageReference Include=` - `Update=` is version
+  management, build integration (analyzers, runners, test SDKs,
+  generators, coverlet, SourceLink) never appears in `using` and is
+  exempt; the longest token of the package id must appear in some .cs
+  file), and Java (pom.xml direct-child `<dependencies>`, compile
+  scope only - `<dependencyManagement>` is a version catalog,
+  build-plugin dependencies are toolchain, and runtime/provided scopes
+  are SPI and container weight; any artifactId token found in a JVM
+  import or FQCN is use). Two stacks are deliberately left out, with
+  the reason written down: Ruby (Bundler.require auto-loads every
+  default-group gem at boot, so a missing require line is not evidence
+  of anything) and C/C++ (CMake target names do not determine include
+  paths; the false-positive rate would breach the conservative trade).
+  All manifests are discovered anywhere under the scan root and each
+  is judged against the sources under its own directory, so a monorepo
+  member is checked against its own code, not the aggregate. The new
+  `orphan-module` check is the file-scale version of the same
+  conservative oracle: a module no import, config, doc or script ever
+  mentions. Python, JS/TS and Ruby are judged by file stem (their
+  import specifiers name files); Go is judged by package directory,
+  because files inside one Go package reference each other namelessly.
+  Stems under four characters, test files, entry-point stems (`main`,
+  `index`, `app`, `cli`, ...) and namespace glue (`__init__`, `mod`)
+  are exempt; the oracle corpus reaches past source into manifests,
+  workflows and config files, so a module wired up by a containerfile
+  or a compose command never gets flagged. One accuracy fix the
+  self-scan surfaced: `duplicate-import` now compares full dotted
+  module paths, not first components - `collections` and
+  `collections.abc` are different modules, and importing both is not a
+  duplicate. Both new checks are advisory, capped at 8 per scan, and
+  disabled when the scan root is a single file.
 - **Disable:** `profile: quick` keeps the whole job advisory; with
   `profile: custom` set `fail_on_ai_slop: false` explicitly. Provenance
   and test inventory can be turned off with `--no-provenance`; the

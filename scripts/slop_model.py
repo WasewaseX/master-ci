@@ -152,6 +152,10 @@ REMEDIES = {
         "Delete it or wire it in; a definition nothing references is dead "
         "weight the next reader must still understand"
     ),
+    "orphan-module": (
+        "Delete the module or give it a consumer; a file no import, config "
+        "or script mentions is unreachable weight"
+    ),
     "unused-dependency": (
         "Remove the dependency from the manifest or add the import that "
         "justifies it; declared weight slows every install"
@@ -313,6 +317,9 @@ ADVISORY_ONLY_CHECKS = frozenset(
         # whose occurrences are exactly its own definition is reported.
         "unused-declaration",
         "unused-dependency",
+        # v2.1: the file-scale deadness oracle. A module is reported only
+        # when no import, config, doc or script mentions it anywhere.
+        "orphan-module",
         # v2.0: the module dependency graph. Cycles are design debt with
         # legitimate lazy-loading escape hatches, so the finding advises.
         "import-cycle",

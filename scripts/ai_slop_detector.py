@@ -39,9 +39,10 @@ from slop_comments import (  # noqa: F401
 )
 from slop_cycles import check_import_cycles  # noqa: F401
 from slop_dead import (  # noqa: F401
+    check_orphan_modules,
     check_unused_declarations,
-    check_unused_dependencies,
 )
+from slop_deps import check_unused_dependencies  # noqa: F401
 from slop_duplicates import (  # noqa: F401
     MIN_SOURCES_FOR_INVENTORY,
     PROVENANCE_MARKERS,
@@ -308,7 +309,8 @@ def _repo_level_findings(
     findings: list[Finding] = []
     findings.extend(scan_duplicates(files))
     findings.extend(check_unused_declarations(root, files, globs))
-    findings.extend(check_unused_dependencies(root, files))
+    findings.extend(check_unused_dependencies(root, files, globs))
+    findings.extend(check_orphan_modules(root, files, globs))
     findings.extend(check_import_cycles(root, files, globs))
     findings.extend(check_architecture_rules(root, files, globs))
     findings.extend(check_unknown_directives(root, files, globs))
