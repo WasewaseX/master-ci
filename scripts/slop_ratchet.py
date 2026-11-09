@@ -11,22 +11,22 @@ blocked, improvements compound.
 
 Semantics:
 - The ratchet counts every check id the scan reports, advisory or
-  blocking, because a committed baseline is an explicit per-check
-  contract the repo opted into (the same reasoning that lets
-  ``--enforce-bloat`` escalate the structural family). The one exception
-  is ``low-new-coverage``: it depends on coverage artifacts produced by
-  other jobs, not on the tree alone, so freezing it would compare
-  different environments.
+    blocking, because a committed baseline is an explicit per-check
+    contract the repo opted into (the same reasoning that lets
+    ``--enforce-bloat`` escalate the structural family). The one exception
+    is ``low-new-coverage``: it depends on coverage artifacts produced by
+    other jobs, not on the tree alone, so freezing it would compare
+    different environments.
 - Fail-closed (exit 2, never a silent pass) when the baseline cannot be
-  interpreted: missing file, invalid JSON, wrong schema version, a
-  non-integer count, or check ids this engine's catalog does not know
-  (the catalog changed - re-write the baseline). A floor that cannot be
-  read is not a floor.
+    interpreted: missing file, invalid JSON, wrong schema version, a
+    non-integer count, or check ids this engine's catalog does not know
+    (the catalog changed - re-write the baseline). A floor that cannot be
+    read is not a floor.
 - Baseline check ids the current scan no longer reports count as
-  improvements, not errors: debt paid down is debt gone.
+    improvements, not errors: debt paid down is debt gone.
 - The ratchet is independent of the fingerprint baseline (``--baseline``):
-  it counts what the scan reports, before fingerprint suppression, so
-  accepted debt cannot hide a regression.
+    it counts what the scan reports, before fingerprint suppression, so
+    accepted debt cannot hide a regression.
 """
 
 from __future__ import annotations
