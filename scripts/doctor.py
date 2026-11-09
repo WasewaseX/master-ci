@@ -9,9 +9,9 @@ README answers in prose:
 
 - is the reusable workflow ref pinned in a reproducible way?
 - does a foreign caller carry the explicit helper pin that meta's
-  fail-closed lookup expects?
+fail-closed lookup expects?
 - are the permissions the jobs actually need declared where the job
-  can see them?
+can see them?
 - is the aggregate ``ci-success`` check the one to mark required?
 
 Findings have three severities: ``error`` (a contract violation - the

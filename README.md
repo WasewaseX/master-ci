@@ -92,13 +92,13 @@ aggregate gate decides pass or fail for every PR.
 
 ### Doctor: verify your setup offline
 
-`scripts/doctor.py` checks the workflow you wrote against this contract
-- pin style, the helper-pin pair, permissions, gate inputs - without
-touching the network. Errors (a mutable `@main` ref, `template_repo`
-without `template_ref`, missing `security-events: write`, a
-non-integer `coverage_min`) exit 1; warnings (a floating major tag, no
-pins on a foreign caller) exit 0; an unreadable setup fails closed
-with exit 2:
+`scripts/doctor.py` checks the workflow you wrote against this
+contract (pin style, the helper-pin pair, permissions, gate inputs)
+without touching the network. Errors (a mutable `@main` ref,
+`template_repo` without `template_ref`, missing
+`security-events: write`, a non-integer `coverage_min`) exit 1;
+warnings (a floating major tag, no pins on a foreign caller) exit 0;
+an unreadable setup fails closed with exit 2:
 
 ```bash
 pip install pyyaml

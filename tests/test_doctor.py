@@ -3,7 +3,9 @@
 Doctor verifies the consumer's workflow contract offline; these tests
 build workflow fixtures in tmp_path and check every severity boundary:
 errors fail the exit code, warnings do not, and an unreadable setup
-fails closed with exit code 2.
+fails closed with exit code 2. The YAML fixtures indent in multiples of
+four so the editorconfig contract the template enforces on its own tree
+stays honest even inside string literals.
 """
 
 import importlib.util
@@ -21,22 +23,22 @@ HEALTHY = """
 name: CI
 
 on:
-  push:
-    branches: [main]
-  pull_request:
+    push:
+        branches: [main]
+    pull_request:
 
 permissions:
-  contents: read
-  security-events: write
-  pull-requests: write
-  id-token: write
+    contents: read
+    security-events: write
+    pull-requests: write
+    id-token: write
 
 jobs:
-  master:
-    uses: WasewaseX/master-ci/.github/workflows/master-ci.yml@v2.0.0
-    with:
-      template_repo: WasewaseX/master-ci
-      template_ref: v2.0.0
+    master:
+        uses: WasewaseX/master-ci/.github/workflows/master-ci.yml@v2.0.0
+        with:
+            template_repo: WasewaseX/master-ci
+            template_ref: v2.0.0
 """
 
 
@@ -65,7 +67,7 @@ def test_mutable_ref_is_an_error(tmp_path):
 
 
 def test_foreign_helper_without_pin_is_an_error(tmp_path):
-    body = HEALTHY.replace("      template_ref: v2.0.0\n", "")
+    body = HEALTHY.replace("            template_ref: v2.0.0\n", "")
     target = _workflows(tmp_path, {"ci.yml": body})
     notes = doctor.diagnose(target)
     assert any(n.code == "doctor-missing-helper-ref" and n.severity == "error" for n in notes)
@@ -73,7 +75,9 @@ def test_foreign_helper_without_pin_is_an_error(tmp_path):
 
 def test_implicit_helper_is_a_warning_not_an_error(tmp_path):
     body = HEALTHY.replace(
-        "    with:\n      template_repo: WasewaseX/master-ci\n      template_ref: v2.0.0\n", ""
+        "        with:\n            template_repo: WasewaseX/master-ci\n"
+        "            template_ref: v2.0.0\n",
+        "",
     )
     target = _workflows(tmp_path, {"ci.yml": body})
     notes = doctor.diagnose(target)
@@ -84,8 +88,8 @@ def test_implicit_helper_is_a_warning_not_an_error(tmp_path):
 
 def test_missing_permissions_block_is_an_error(tmp_path):
     body = HEALTHY.replace(
-        "permissions:\n  contents: read\n  security-events: write\n"
-        "  pull-requests: write\n  id-token: write\n",
+        "permissions:\n    contents: read\n    security-events: write\n"
+        "    pull-requests: write\n    id-token: write\n",
         "",
     )
     target = _workflows(tmp_path, {"ci.yml": body})
@@ -94,7 +98,7 @@ def test_missing_permissions_block_is_an_error(tmp_path):
 
 
 def test_missing_security_events_errors_and_missing_id_token_informs(tmp_path):
-    body = HEALTHY.replace("  security-events: write\n", "").replace("  id-token: write\n", "")
+    body = HEALTHY.replace("    security-events: write\n", "").replace("    id-token: write\n", "")
     target = _workflows(tmp_path, {"ci.yml": body})
     notes = doctor.diagnose(target)
     sec = [n for n in notes if "security-events" in n.message]
@@ -104,26 +108,25 @@ def test_missing_security_events_errors_and_missing_id_token_informs(tmp_path):
 
 
 def test_coverage_min_range_is_enforced(tmp_path):
-    bad = _workflows(tmp_path, {"ci.yml": HEALTHY + "      coverage_min: 150\n"})
+    bad = _workflows(tmp_path, {"ci.yml": HEALTHY + "            coverage_min: 150\n"})
     assert any(n.code == "doctor-coverage" and n.severity == "error" for n in doctor.diagnose(bad))
-    good = _workflows(tmp_path, {"ci.yml": HEALTHY + "      coverage_min: 30\n"})
+    good = _workflows(tmp_path, {"ci.yml": HEALTHY + "            coverage_min: 30\n"})
     armed = [n for n in doctor.diagnose(good) if n.code == "doctor-coverage"]
     assert armed and armed[0].severity == "info" and "30" in armed[0].message
 
 
 def test_diff_base_note(tmp_path):
-    target = _workflows(tmp_path, {"ci.yml": HEALTHY + "      diff_base: origin/main\n"})
+    target = _workflows(tmp_path, {"ci.yml": HEALTHY + "            diff_base: origin/main\n"})
     assert any(n.code == "doctor-new-code" for n in doctor.diagnose(target))
 
 
 def test_json_output_shape(tmp_path):
     target = _workflows(tmp_path, {"ci.yml": HEALTHY})
-    result = doctor.main(["--workflows-dir", str(target), "--json"])
-    assert result == 0
+    assert doctor.main(["--workflows-dir", str(target), "--json"]) == 0
 
 
 def test_unparseable_yaml_fails_closed(tmp_path):
-    target = _workflows(tmp_path, {"ci.yml": "jobs: [unclosed\n  bad yaml: :"})
+    target = _workflows(tmp_path, {"ci.yml": "jobs: [unclosed\n    bad yaml: :"})
     notes = doctor.diagnose(target)
     assert any(n.code == "doctor-internal" for n in notes)
     assert doctor.main(["--workflows-dir", str(target)]) == 2
@@ -140,15 +143,15 @@ def test_codeql_job_does_not_trigger_helper_pin_contract(tmp_path):
 name: CodeQL
 
 on:
-  push:
+    push:
 
 permissions:
-  contents: read
-  security-events: write
+    contents: read
+    security-events: write
 
 jobs:
-  codeql:
-    uses: WasewaseX/master-ci/.github/workflows/codeql.yml@v2.0.0
+    codeql:
+        uses: WasewaseX/master-ci/.github/workflows/codeql.yml@v2.0.0
 """
     target = _workflows(tmp_path, {"codeql.yml": codeql})
     notes = doctor.diagnose(target)
