@@ -351,7 +351,8 @@ jobs:
             *)
               # the allowlist is one variable so the error message can
               # never drift from the accepted set
-              valid_jobs="hygiene secrets ai-integrity docs node-lint node-test python rust go-lint go-test java cpp csharp ruby php docker security deps-review scorecard coverage-gate new-code-gate quality-ratchet"
+              valid_jobs="hygiene secrets ai-integrity docs node-lint node-test python rust go-lint go-test java cpp csharp ruby php docker security deps-review scorecard coverage-gate new-code-gate"
+              valid_jobs="$valid_jobs quality-ratchet"
               for token in $(printf '%s' "$SELECT" | tr ',' ' '); do
                 case " $valid_jobs " in
                   *" $token "*) ;;
@@ -1114,11 +1115,13 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
       - name: Resolve the baseline floor
+        id: floor
         # hashFiles is not available in job-level if expressions, so the
-        # auto-detection lives here where it belongs: auto + no committed
-        # baseline = the repo has not opted in, skip cleanly; ratchet=true
-        # + no baseline = a demanded contract that cannot be honored, and
-        # a missing floor fails closed (exit 2) instead of passing.
+        # auto-detection lives here. auto + no committed baseline = the
+        # repo has not opted in: the job skips the enforce step via its
+        # output (exit 0 ends a STEP, never the job). ratchet=true + no
+        # baseline = a demanded contract that cannot be honored - fail
+        # closed (exit 2), never a silent pass.
         run: |
           if [ ! -f "$RATCHET_FILE" ]; then
             if [ "$RATCHET" = "true" ]; then
@@ -1126,9 +1129,12 @@ jobs:
               exit 2
             fi
             echo "no $RATCHET_FILE committed - quality ratchet not opted in, skipping"
+            echo "enforce=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          echo "enforce=true" >> "$GITHUB_OUTPUT"
       - name: Enforce the quality ratchet
+        if: steps.floor.outputs.enforce == 'true'
         run: |
           # Exit 1 = a check regressed above its recorded count, exit 2 =
           # the baseline cannot be interpreted (invalid JSON, a schema or
