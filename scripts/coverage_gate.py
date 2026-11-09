@@ -103,7 +103,7 @@ def _parse_python_json(path: Path) -> CoverageReport:
 
 def _parse_cobertura(path: Path) -> CoverageReport:
     try:
-        root = ET.parse(path).getroot()
+        root = defusedxml.etree.ElementTree.parse(path).getroot()
     except (OSError, ET.ParseError) as exc:
         raise CoverageGateError(f"unparseable coverage report {path}: {exc}") from exc
     rate = root.get("line-rate")
