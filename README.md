@@ -461,6 +461,38 @@ diff, a floor for the whole repo.
 Full semantics per check (what is inspected, what fails, false positives,
 how to disable, added time) live in [docs/checks.md](docs/checks.md).
 
+## Flaky test hunt: green means green
+
+A flaky test makes every green run a coin flip: the suite passed on the
+retry nobody recorded. Coverage says which lines ran and mutation says
+whether assertions can fail; only repetition says whether the verdicts
+are stable. Copy `flaky.yml` into your repository and the hunt runs your
+own test suite 2-5 times (`iterations` input, Monday mornings by
+default) and reports every test whose verdict changed between
+iterations:
+
+- **One job, your runners** - pytest junitxml, vitest/jest junit, `go
+  test -json`, `cargo test` output, surefire/Gradle XML, .NET TRX, RSpec
+  (with `rspec_junit_formatter`) and PHPUnit are consumed as-is; C/C++
+  and any other runner feed the same analyzer any JUnit XML (ctest:
+  `ctest --output-junit run-1.xml`). No project changes how it tests.
+- **Quarantine by declaration** - a committed `.flaky-baseline.json`
+  records known flakes; the hunt reports them without failing and fails
+  (exit 1) the moment a *new* flaky test appears. Without a baseline the
+  hunt is report-only - adopt enforcement by committing the baseline it
+  produces. Healed flakes are listed as removable debt.
+- **Fail-closed (exit 2)** - a missing iteration report, an unreadable
+  result file, conflicting verdicts inside one file, a run that records
+  zero tests, or an unreadable baseline all fail the hunt: a measurement
+  that cannot be taken loudly is never a silent pass.
+
+```bash
+# record the quarantine after the first hunt
+python3 scripts/flaky_detect.py --results-dir flaky-results --write-baseline
+```
+
+Full semantics live in [docs/checks.md](docs/checks.md).
+
 ## Configuration (all optional)
 
 | Input | Default | Meaning |
@@ -649,6 +681,7 @@ Nightly ──> audit tracking issue (secrets, vulns, prose: humans)
 | **Autofix** | `autofix.yml` | weekly + right after every Deep Audit + manual | Runs the shared fix engine (`scripts/fix_engine.py`) - safe tier (rustfmt, gofmt, `ruff format`, Biome, shfmt, markdownlint, whitespace/EOF normalizer) plus lint tier (`ruff check --fix`, `go mod tidy`, `sqlfluff fix`, `semgrep --autofix`) - and opens one PR |
 | **Self-Heal** | `heal.yml` | after CI failures on the default branch | Applies the **same fix engine** reactively, opens/updates the `ci/autofix` PR; circuit breakers: default-branch failures only, one heal at a time, stops while a fix PR is open |
 | Deep sweep | `nightly.yml` | nightly + manual | Full-severity Trivy, CodeQL quality suites, verbose AI report |
+| **Flake hunt** | `flaky.yml` | weekly (Mondays) + manual | Runs the test suite 2-5 times in one job and reports every test whose verdict changed between iterations; a committed `.flaky-baseline.json` quarantines known flakes and fails the hunt on a *new* one - test assurance's third leg, beside coverage and mutation |
 | **Deep Audit** | `audit.yml` | weekly (Saturdays) + manual | Whole-repository sweep - full git history (gitleaks), every file (integrity engine), every dependency manifest (osv-scanner), Go modules (govulncheck), SQL (sqlfluff) - one tracking issue labeled `audit`; never gates CI. Its completion is the trigger for the Autofix response above |
 | Housekeeping | `stale.yml` | weekly | Marks and closes inactive issues and PRs (never security-labeled ones) |
 | Auto-label | `label.yml` | every PR | Labels PRs by touched paths |
@@ -867,6 +900,13 @@ freezes per-check finding counts across every domain, any regression
 blocks the run, and re-recording the floor is a reviewed commit. The
 new-code gate keeps the diff honest; the ratchet keeps the trajectory
 honest.
+
+And since v2.3: the **flake hunt** - the test suite runs several times
+on a schedule and every verdict flip between iterations is reported;
+committed quarantine baselines grandfather known flakes and gate new
+ones. Test assurance now covers all three questions: coverage (which
+lines ran), mutation (would the assertions notice) and repetition (is
+the verdict stable).
 
 ## License
 

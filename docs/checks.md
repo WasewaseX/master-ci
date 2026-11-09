@@ -785,6 +785,69 @@ wanted.
 **Added cost**: the scan the `ai-integrity` job already performs, plus
 one JSON read and a diff - seconds, no additional tooling.
 
+## `flake-hunt` - the test suite, repeated until the verdicts are trustworthy (v2.3)
+
+- **Runs in:** `flaky.yml` (copy into the consumer repository), weekly
+  on Mondays plus manual dispatch with an `iterations` input (2-5,
+  default 3). It is a standalone scheduled workflow, like
+  `mutation.yml` - it never gates PRs and is never part of
+  `ci-success`.
+- **What it does:** runs the repository's own test suite N times in one
+  job, reads every `run-<i>` result file the iterations produced, and
+  classifies each test: **flaky** (both a pass and a fail across
+  iterations), **always-failing** (failed every iteration - the main CI
+  should already be red; listed for completeness, never quarantined) or
+  stable. A test absent from one iteration is reported as absent, not
+  guessed.
+- **Formats consumed as-is:** JUnit XML (pytest `--junitxml`, PHPUnit
+  `--log-junit`, surefire and Gradle XML, vitest `--reporter=junit`,
+  jest-junit, RSpec's `rspec_junit_formatter`, ctest
+  `--output-junit`), .NET TRX (`dotnet test --logger trx`), Go test
+  JSON (`go test -json` - verdict events only, stream and
+  package-level events are noise) and Rust libtest stdout (`cargo
+  test`). Multi-module JVM trees are covered via `find` over every
+  `*/target/surefire-reports` and `*/build/test-results/test`
+  directory. No project changes how it tests.
+- **Does not do:** retry-until-green (a retry hides flakes, repetition
+  exposes them), quarantine failures in PR CI (the hunt is a scheduled
+  measurement), authorship claims, or any modification of tests.
+- **Quarantine baseline:** a committed `.flaky-baseline.json` records
+  the flaky set (`{"version": 1, "tests": {"<key>": {"first_seen":
+  "<date>"}}}`). Its presence arms `--fail-on-flaky`: a **new** flaky
+  test fails the hunt (exit 1), quarantined flakes are reported without
+  failing, and healed flakes (no longer flaky) are listed as removable
+  debt. Without a baseline the hunt is report-only - adopting
+  enforcement is one commit of the file the run produces.
+  `--write-baseline` records the current flaky set as a reviewable
+  commit (two-space indent, sorted keys, deterministic bytes - the
+  hygiene gate enforces the same editorconfig on it).
+- **Fails closed (exit 2) when the hunt cannot be executed at all:**
+  missing results directory, no `run-<i>` files at all, non-contiguous
+  run numbering (every iteration must produce a file, even if the suite
+  crashed - write an empty-but-valid report or fix the runner),
+  `--iterations` disagreeing with the files, an unreadable result file
+  (malformed XML/JSON or a format the engine does not speak), a test
+  recorded with conflicting verdicts inside one file, a run that records
+  zero tests, or an unreadable baseline. Report files the runners failed
+  to produce are surfaced as `::warning::` annotations before the
+  analyzer's fail-closed verdict.
+- **Reports:** a step-summary markdown table (new flakes first, always-
+  failing and healed sections below), a `flaky-report.json` artifact
+  (per-test outcomes in iteration order, quarantined/new/healed lists)
+  and exit codes 0 (clean or quarantined), 1 (new flakes under
+  `--fail-on-flaky`), 2 (fail-closed).
+- **Relationship to the gates:** coverage and mutation run at PR time
+  or on schedules; the hunt closes the third question of test
+  assurance. It composes with the quality ratchet (committed floors
+  everywhere) but is independent of it: the ratchet counts detector
+  findings, the hunt counts runner verdicts.
+- **False positives:** order-dependent suites may look flaky when
+  parallelization reshuffles tests between iterations - that is real
+  flakiness by definition and the table names the test. Time-dependent
+  tests that straddle midnight produce one noisy weekly report;
+  quarantine or fix them. A suite that skips a test only under load
+  shows `absent` columns, not flakiness.
+
 ## Project discovery - the monorepo map
 
 `discover_projects.py --family <family>` inventories independent projects

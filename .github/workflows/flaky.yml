@@ -1,0 +1,302 @@
+# =============================================================================
+# Flaky Test Hunt - weekly proof that green means green
+# =============================================================================
+# Test assurance's third leg, beside the coverage gate (which lines ran)
+# and mutation testing (would the assertions notice). A flaky test makes
+# green a coin flip: the suite passes on the retry nobody recorded. The
+# hunt runs a repository's own test suite several times in one job and
+# reports every test whose verdict changed between iterations.
+#
+# Opt-in by declaration, like mutation testing: a committed
+# .flaky-baseline.json (the quarantine list) arms --fail-on-flaky, so a
+# NEW flaky test fails the hunt; known flakes are reported without
+# failing, because quarantining real regressions would hide them. A repo
+# without a baseline gets the report only - adopt enforcement by
+# committing the baseline the first hunt produces.
+#
+# The hunt never edits tests and never reruns CI: it is a scheduled
+# measurement with an artifact, a step summary and an exit code. A runner
+# that exists but produces no result file fails closed (exit 2) - a hunt
+# that cannot be executed loudly is never a silent pass.
+# =============================================================================
+
+name: Flaky Test Hunt
+
+on:
+  schedule:
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: Test-suite repetitions (2-5)
+        required: false
+        type: string
+        default: '3'
+      template_repo:
+        description: Repo holding master-ci helpers (auto-detected when empty)
+        required: false
+        type: string
+        default: ''
+      template_ref:
+        description: Ref of the master-ci repo to fetch helpers from
+        required: false
+        type: string
+        default: main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flake-hunt
+  cancel-in-progress: false
+
+jobs:
+  hunt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      ITERATIONS: ${{ inputs.iterations || '3' }}
+      TEMPLATE_REPO_INPUT: ${{ inputs.template_repo }}
+      TEMPLATE_REF: ${{ inputs.template_ref }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate helper ref
+        run: |
+          case "$TEMPLATE_REF" in
+            -*|*..*|*[!A-Za-z0-9._/-]*)
+              echo "::error::template_ref contains unsafe characters or sequences"
+              exit 1 ;;
+          esac
+
+      - name: Resolve helper repo
+        id: repo
+        run: |
+          fallback='WasewaseX/master-ci'
+          if [ -n "$TEMPLATE_REPO_INPUT" ]; then
+            echo "template_repo=$TEMPLATE_REPO_INPUT" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          ref="${GITHUB_WORKFLOW_REF:-}"
+          parsed="${ref%%/.github/*}"
+          if [ -n "$parsed" ] && [ "$parsed" != "$ref" ]; then
+            echo "template_repo=$parsed" >> "$GITHUB_OUTPUT"
+          else
+            echo "template_repo=$fallback" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fetch master-ci helpers
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ steps.repo.outputs.template_repo }}
+          ref: ${{ env.TEMPLATE_REF }}
+          path: _ci
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Clamp iterations
+        run: |
+          case "$ITERATIONS" in
+            2|3|4|5) ;;
+            *) echo "::error::iterations must be 2-5 (got '$ITERATIONS')"; exit 1 ;;
+          esac
+          mkdir -p flaky-results
+
+      # --- Python: pytest junitxml --------------------------------------------
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        if: hashFiles('pyproject.toml') != '' || hashFiles('pytest.ini') != '' || hashFiles('setup.cfg') != ''
+        with:
+          python-version: '3.13'
+      - name: Hunt Python flakes (pytest)
+        if: hashFiles('pyproject.toml') != '' || hashFiles('pytest.ini') != '' || hashFiles('setup.cfg') != ''
+        run: |
+          for i in $(seq 1 "$ITERATIONS"); do
+            python -m pytest -q --junitxml="flaky-results/run-$i.xml" || true
+            [ -s "flaky-results/run-$i.xml" ] || \
+              echo "::warning::pytest iteration $i produced no report"
+          done
+      # --- Node/TypeScript: vitest or jest junit reporter ----------------------
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: hashFiles('package.json') != ''
+        with:
+          node-version: '22'
+      - name: Install Node dependencies
+        if: hashFiles('package.json') != ''
+        run: |
+          if [ -f pnpm-lock.yaml ]; then
+            npm install --global pnpm # zizmor: ignore[adhoc-packages]
+            pnpm install --frozen-lockfile
+          elif [ -f yarn.lock ]; then
+            corepack enable
+            yarn install --immutable
+          elif [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+      - name: Hunt Node flakes (vitest / jest)
+        if: hashFiles('package.json') != ''
+        run: |
+          if [ -f vitest.config.ts ] || [ -f vitest.config.js ] || [ -f vitest.config.mts ]; then
+            runner=vitest
+          elif [ -f jest.config.js ] || [ -f jest.config.ts ] || [ -f jest.config.mjs ]; then
+            runner=jest
+          else
+            echo "::warning::no vitest or jest config found - the Node suite is not hunted"
+            exit 0
+          fi
+          if [ "$runner" = jest ]; then
+            npm install --no-save jest-junit # zizmor: ignore[adhoc-packages]
+          fi
+          echo "runner=$runner"
+          for i in $(seq 1 "$ITERATIONS"); do
+            if [ "$runner" = vitest ]; then
+              npx vitest run --reporter=junit \
+                --outputFile="flaky-results/run-$i.xml" || true
+            else
+              JEST_JUNIT_OUTPUT_FILE="flaky-results/run-$i.xml" \
+                npx jest --ci --reporters=default --reporters=jest-junit || true
+            fi
+            [ -s "flaky-results/run-$i.xml" ] || \
+              echo "::warning::Node iteration $i produced no report"
+          done
+      # --- Go: go test -json ----------------------------------------------------
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: hashFiles('go.mod') != ''
+        with:
+          go-version: stable
+      - name: Hunt Go flakes (go test -json)
+        if: hashFiles('go.mod') != ''
+        run: |
+          for i in $(seq 1 "$ITERATIONS"); do
+            go test -json ./... > "flaky-results/run-$i.gojson" || true
+            [ -s "flaky-results/run-$i.gojson" ] || \
+              echo "::warning::go iteration $i produced no stream"
+          done
+      # --- Rust: libtest stdout -------------------------------------------------
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        if: hashFiles('Cargo.toml') != ''
+      - name: Hunt Rust flakes (cargo test)
+        if: hashFiles('Cargo.toml') != ''
+        run: |
+          for i in $(seq 1 "$ITERATIONS"); do
+            cargo test > "flaky-results/run-$i.libtest" || true
+            [ -s "flaky-results/run-$i.libtest" ] || \
+              echo "::warning::cargo iteration $i produced no output"
+          done
+      # --- JVM: surefire / gradle JUnit XML -------------------------------------
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        if: hashFiles('pom.xml') != '' || hashFiles('build.gradle') != '' || hashFiles('build.gradle.kts') != ''
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Hunt JVM flakes (Maven / Gradle)
+        if: hashFiles('pom.xml') != '' || hashFiles('build.gradle') != '' || hashFiles('build.gradle.kts') != ''
+        run: |
+          for i in $(seq 1 "$ITERATIONS"); do
+            if [ -f pom.xml ]; then
+              mvn -B test || true
+            else
+              [ -f gradlew ] && chmod +x gradlew && ./gradlew test || gradle test || true
+            fi
+            n=0
+            while IFS= read -r f; do
+              cp "$f" "flaky-results/run-$i-${f##*/TEST-}"
+              n=$((n + 1))
+            done < <(find . -type f \( -path '*/target/surefire-reports/TEST-*.xml' \
+              -o -path '*/build/test-results/test/TEST-*.xml' \))
+            [ "$n" -gt 0 ] || echo "::warning::JVM iteration $i produced no XML"
+          done
+      # --- .NET: TRX ------------------------------------------------------------
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        if: hashFiles('**/*.csproj') != '' || hashFiles('**/*.fsproj') != ''
+      - name: Hunt .NET flakes (dotnet test)
+        if: hashFiles('**/*.csproj') != '' || hashFiles('**/*.fsproj') != ''
+        run: |
+          for i in $(seq 1 "$ITERATIONS"); do
+            dotnet test --logger "trx;LogFilePrefix=raw-$i-" \
+              --results-directory flaky-results || true
+            for f in flaky-results/raw-$i-*.trx; do
+              [ -f "$f" ] || continue
+              mv "$f" "flaky-results/run-$i-${f##*/raw-$i-}"
+            done
+            ls flaky-results/run-$i-*.trx >/dev/null 2>&1 || \
+              echo "::warning::dotnet iteration $i produced no TRX"
+          done
+      # --- Ruby: RSpec JUnit formatter ------------------------------------------
+      - uses: ruby/setup-ruby@b3aaceaef7e0ee231b499e7b5f49c03fc1d32199 # v1.338.0
+        if: hashFiles('Gemfile') != ''
+        with:
+          bundler-cache: true
+      - name: Hunt Ruby flakes (RSpec)
+        if: hashFiles('Gemfile') != ''
+        run: |
+          grep -q rspec_junit_formatter Gemfile || {
+            echo "::warning::add rspec_junit_formatter to the Gemfile to hunt Ruby flakes"
+            exit 0
+          }
+          for i in $(seq 1 "$ITERATIONS"); do
+            bundle exec rspec --format RspecJunitFormatter \
+              --out "flaky-results/run-$i.xml" || true
+            [ -s "flaky-results/run-$i.xml" ] || \
+              echo "::warning::RSpec iteration $i produced no report"
+          done
+      # --- PHP: PHPUnit ----------------------------------------------------------
+      - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2
+        if: hashFiles('composer.json') != ''
+        with:
+          php-version: '8.4'
+          coverage: none
+      - name: Hunt PHP flakes (PHPUnit)
+        if: hashFiles('composer.json') != ''
+        run: |
+          composer install --no-interaction --no-progress
+          for i in $(seq 1 "$ITERATIONS"); do
+            vendor/bin/phpunit --log-junit "flaky-results/run-$i.xml" || true
+            [ -s "flaky-results/run-$i.xml" ] || \
+              echo "::warning::PHPUnit iteration $i produced no report"
+          done
+      # --- Classify and gate ------------------------------------------------------
+      - name: Run the flake hunt
+        if: >-
+          hashFiles('pyproject.toml', 'pytest.ini', 'setup.cfg', 'package.json',
+                    'go.mod', 'Cargo.toml', 'pom.xml', 'build.gradle',
+                    'build.gradle.kts', '**/*.csproj', '**/*.fsproj', 'Gemfile',
+                    'composer.json') != ''
+        run: |
+          set -o pipefail
+          args="--results-dir flaky-results --iterations $ITERATIONS"
+          if [ -f .flaky-baseline.json ]; then
+            args="$args --baseline .flaky-baseline.json --fail-on-flaky"
+          else
+            echo "No .flaky-baseline.json committed - report-only mode."
+            echo "Adopt enforcement by committing the baseline this run produces."
+          fi
+          python3 _ci/scripts/flaky_detect.py $args | tee flaky-summary.md
+      - name: Upload hunt report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: flaky-report
+          path: flaky-report.json
+          if-no-files-found: ignore
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Flaky test hunt"
+            echo ""
+            if [ -f flaky-summary.md ]; then
+              cat flaky-summary.md
+            else
+              echo "No supported test runner found (Python, Node, Go, Rust, JVM,"
+              echo ".NET, Ruby, PHP) - nothing ran; this is not a pass or a fail."
+            fi
+            echo ""
+            echo "Quarantine semantics: a committed \`.flaky-baseline.json\` records"
+            echo "known flakes; the hunt fails on a *new* flaky test and celebrates"
+            echo "healed ones. Rewrite the floor with"
+            echo "\`python3 _ci/scripts/flaky_detect.py --results-dir flaky-results --write-baseline\`."
+          } >> "$GITHUB_STEP_SUMMARY"
