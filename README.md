@@ -151,6 +151,7 @@ works for consumers too.
 | `scorecard` | pushes to default branch, unless `scorecard_publish: false` | OSSF Scorecard |
 | `coverage-gate` | `coverage_min > 0` and a producing stack ran | Measured coverage floors, overall and on the added lines |
 | `new-code-gate` | `diff_base` set and `new_code_gates` true | Dimension ceilings on the merge-base diff: blocking findings, cognitive, cyclomatic |
+| `quality-ratchet` | a `.quality-baseline.json` is committed (or `ratchet: true`) | The committed floor no check may regress from |
 | `dashboard` | PRs | Results table comment on the PR |
 | `ci-success` | always | Aggregate gate (exposes a `verdict` output) |
 
@@ -419,9 +420,43 @@ Unknown names fail the run in `meta` with the valid list - a typo can
 never silently skip a check. Valid names: `hygiene`, `secrets`,
 `ai-integrity`, `docs`, `node-lint`, `node-test`, `python`, `rust`,
 `go-lint`, `go-test`, `java`, `cpp`, `csharp`, `ruby`, `php`, `docker`,
-`security`, `deps-review`, `scorecard`. The aggregate gate still passes
+`security`, `deps-review`, `scorecard`, `coverage-gate`,
+`new-code-gate`, `quality-ratchet`. The aggregate gate still passes
 when jobs are skipped by design, so branch protection keeps a single
 required check.
+
+## Quality ratchet: never worse than your baseline
+
+Thresholds catch today's offenders; the ratchet protects the
+trajectory. Record the current per-check finding counts once:
+
+```bash
+python3 scripts/ai_slop_detector.py . --write-quality-baseline .quality-baseline.json
+```
+
+Commit the file. From then on every run compares the scan against the
+floor:
+
+- **Any check above its recorded count fails the run** (exit 1) - fix
+  the new findings, or make a reviewed commit that re-records the floor
+  (the escape hatch is visible in git history, not a silent waiver).
+- **Paying debt is celebrated** - the step-summary delta table shows
+  improvements next to regressions, so cleanup PRs are visible.
+- **A baseline that cannot be interpreted fails closed** (exit 2):
+  invalid JSON, a schema version bump, or check ids this engine's
+  catalog does not know (the catalog changed - re-record the floor).
+  The same applies when `ratchet: true` demands a file that is missing.
+
+The job runs automatically once the file exists (`ratchet: auto`, the
+default), is forced with `ratchet: true`, or is disabled with
+`ratchet: false`. Every check id the scan reports participates -
+advisory and blocking alike - because a committed baseline is an
+explicit per-check contract the repo opted into; only
+`low-new-coverage` stays out (it depends on other jobs' coverage
+artifacts, not on the tree alone). The ratchet counts findings before
+`--baseline` fingerprint suppression, so accepted debt cannot hide a
+regression, and it composes with the new-code gate: ceilings on the
+diff, a floor for the whole repo.
 
 Full semantics per check (what is inspected, what fails, false positives,
 how to disable, added time) live in [docs/checks.md](docs/checks.md).
@@ -454,6 +489,8 @@ how to disable, added time) live in [docs/checks.md](docs/checks.md).
 | `new_code_max_slop` | `0` | Blocking-score ceiling for findings landing on added lines (zero tolerance by default) |
 | `new_code_max_cognitive` | `15` | Cognitive-complexity ceiling for functions the change touches (`0` = off) |
 | `new_code_max_cyclomatic` | `15` | Cyclomatic-complexity ceiling for functions the change touches (`0` = off) |
+| `ratchet` | `auto` | `auto` enforces the committed baseline when the file exists; `true` demands it (missing = exit 2); `false` skips the job |
+| `ratchet_file` | `.quality-baseline.json` | Baseline file the quality ratchet enforces |
 | `scorecard_publish` | `true` | Publish Scorecard results (needs `id-token: write`) |
 | `template_repo` | auto | Helper repo override for forks (validated: `owner/repo`) |
 | `template_ref` | caller's own commit | Helper ref. Empty = the caller's own commit, only when the helpers live there (self/fork); a foreign helper repo must pin a tag, mutable branches print a warning |
@@ -824,6 +861,12 @@ AI-integrity are reported and gated separately, because one blended
 number is less credible than six honest ones. The template stays a CI
 orchestration layer: mature semantic analyzers (CodeQL, Semgrep,
 lizard) are integrated, not reimplemented as regexes.
+
+And since v2.2: the **quality ratchet** - one committed baseline file
+freezes per-check finding counts across every domain, any regression
+blocks the run, and re-recording the floor is a reviewed commit. The
+new-code gate keeps the diff honest; the ratchet keeps the trajectory
+honest.
 
 ## License
 

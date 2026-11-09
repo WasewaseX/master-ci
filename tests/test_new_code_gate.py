@@ -20,11 +20,17 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 import new_code_gate as ng  # noqa: E402
+from slop_cognitive import _TS_OK  # noqa: E402
 from slop_lizard import _LIZARD_OK  # noqa: E402
 from slop_model import Finding  # noqa: E402
 
 needs_lizard = pytest.mark.skipif(
     not _LIZARD_OK, reason="lizard not installed: parse path degrades to the line scanner"
+)
+
+needs_treesitter = pytest.mark.skipif(
+    not _TS_OK,
+    reason="tree-sitter not installed: cognitive facts report nothing rather than guessing",
 )
 
 
@@ -105,6 +111,7 @@ def test_added_file_is_new_code_in_full(repo: Path) -> None:
 
 
 @needs_lizard
+@needs_treesitter
 def test_cognitive_ceiling_breaches_on_new_function(repo: Path) -> None:
     (repo / "twisted.py").write_text(
         "def twisted(data):\n    for a in data:\n        if a:\n            for b in a:\n"
@@ -121,6 +128,7 @@ def test_cognitive_ceiling_breaches_on_new_function(repo: Path) -> None:
 
 
 @needs_lizard
+@needs_treesitter
 def test_legacy_fat_function_untouched_holds(repo: Path) -> None:
     (repo / "twisted.py").write_text(
         "def twisted(data):\n    for a in data:\n        if a:\n            for b in a:\n"

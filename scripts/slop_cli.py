@@ -20,11 +20,16 @@ Contract:
     scanaislop-style PR gate; default 100 keeps the CLI advisory-only),
     or when a requested coverage gate is breached (--min-coverage,
     --min-new-coverage).
+- Exit code 1 also when the quality ratchet regresses: a committed
+    --quality-baseline records per-check finding counts, and any check
+    pushed above its recorded count fails the run.
 - Exit code 2 when configuration cannot be honored: an architecture
-    config that is present but invalid, or a coverage gate that cannot
+    config that is present but invalid, a coverage gate that cannot
     be evaluated (no report, an unparseable report, a missing diff
-    base). Fail-closed: a rule set or gate that cannot be evaluated
-    fails the run instead of being silently skipped.
+    base), or a quality baseline that cannot be interpreted (missing
+    file, invalid JSON, wrong schema version, unknown check ids).
+    Fail-closed: a rule set or gate that cannot be evaluated fails the
+    run instead of being silently skipped.
 - Blocking-grade signals are deterministic content defects (elided code,
     stubs, empty tests, swallowed exceptions, chatbot residue in comments);
     --enforce-bloat adds the structural-budget family (file size, parameter
@@ -54,6 +59,14 @@ from coverage_gate import CoverageGateError, run_gate
 from slop_arch import ArchConfigError
 from slop_files import load_phrases
 from slop_model import Finding, enforce_structural_budget
+from slop_ratchet import (
+    RatchetError,
+    compare,
+    load_baseline as load_quality_baseline,
+    metrics as quality_metrics,
+    render as render_ratchet,
+    write_baseline as write_quality_baseline_file,
+)
 from slop_reporting import (
     advisory_score,
     ai_integrity_score,
@@ -70,6 +83,14 @@ from slop_reporting import (
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", type=Path, help="Repo path to scan")
+    _add_gate_args(parser)
+    _add_baseline_args(parser)
+    _add_coverage_args(parser)
+    return parser.parse_args(argv)
+
+
+def _add_gate_args(parser: argparse.ArgumentParser) -> None:
+    """The enforcement knobs: score caps, bloat escalation, provenance."""
     parser.add_argument(
         "--max-score",
         type=float,
@@ -86,33 +107,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "dimensions are reported separately and never feed this gate. "
             "Default 100 = off"
         ),
-    )
-    parser.add_argument(
-        "--ignore",
-        action="append",
-        default=[],
-        metavar="GLOB",
-        help="Skip files matching this glob (repeatable, also via .ai-integrity-ignore)",
-    )
-    parser.add_argument(
-        "--report-file",
-        default="",
-        help="Write a markdown report to this path",
-    )
-    parser.add_argument(
-        "--sarif",
-        default="",
-        help="Write SARIF 2.1.0 results to this path (for the Security tab)",
-    )
-    parser.add_argument(
-        "--baseline",
-        default="",
-        help="Suppress findings recorded in this baseline file",
-    )
-    parser.add_argument(
-        "--write-baseline",
-        default="",
-        help="Record current findings as the new baseline and exit 0",
     )
     parser.add_argument(
         "--annotate",
@@ -140,12 +134,62 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "repository test inventory (missing-tests); default on"
         ),
     )
-    _add_coverage_args(parser)
-    return parser.parse_args(argv)
+
+
+def _add_baseline_args(parser: argparse.ArgumentParser) -> None:
+    """The two baselines: fingerprint suppression and the quality ratchet."""
+    parser.add_argument(
+        "--ignore",
+        action="append",
+        default=[],
+        metavar="GLOB",
+        help="Skip files matching this glob (repeatable, also via .ai-integrity-ignore)",
+    )
+    parser.add_argument(
+        "--baseline",
+        default="",
+        help="Suppress findings recorded in this baseline file",
+    )
+    parser.add_argument(
+        "--write-baseline",
+        default="",
+        help="Record current findings as the new baseline and exit 0",
+    )
+    parser.add_argument(
+        "--quality-baseline",
+        default="",
+        metavar="PATH",
+        help=(
+            "Enforce the quality ratchet against this committed baseline: "
+            "per-check finding counts; any increase fails (exit 1), a "
+            "baseline that cannot be interpreted fails closed (exit 2). "
+            "Counts what the scan reports, before --baseline suppression"
+        ),
+    )
+    parser.add_argument(
+        "--write-quality-baseline",
+        default="",
+        metavar="PATH",
+        help=(
+            "Record current per-check counts as the new quality-ratchet "
+            "floor and exit 0 - the reviewed escape hatch after paying "
+            "debt or adopting a new check catalog"
+        ),
+    )
 
 
 def _add_coverage_args(parser: argparse.ArgumentParser) -> None:
     """The measured-coverage gates: floors, diff window, report paths."""
+    parser.add_argument(
+        "--report-file",
+        default="",
+        help="Write a markdown report to this path",
+    )
+    parser.add_argument(
+        "--sarif",
+        default="",
+        help="Write SARIF 2.1.0 results to this path (for the Security tab)",
+    )
     parser.add_argument(
         "--min-coverage",
         type=float,
@@ -235,6 +279,9 @@ def main(argv: list[str] | None = None) -> int:
         # fail the run, not silently pass. Exit 2 = configuration error.
         print(f"ai-integrity: architecture config rejected: {exc}", file=sys.stderr)
         return 2
+    ratchet_exit = _quality_ratchet(args, findings)
+    if ratchet_exit == 2 or (args.write_quality_baseline and ratchet_exit == 0):
+        return ratchet_exit
     suppressed = 0
     if args.baseline:
         findings, suppressed = apply_baseline(findings, args.baseline)
@@ -246,6 +293,27 @@ def main(argv: list[str] | None = None) -> int:
             f"-> {args.write_baseline}"
         )
         return 0
+    ai_score = _emit_results(args, findings, suppressed, gate_sections)
+    failed = (
+        blocking_score(findings) > args.max_score
+        or ai_score > args.max_slop_score
+        or gate_exit == 1
+        or ratchet_exit == 1
+    )
+    return 1 if failed else 0
+
+
+def _emit_results(
+    args: argparse.Namespace,
+    findings: list,
+    suppressed: int,
+    gate_sections: list[str],
+) -> int:
+    """Write every requested artifact and the one-line score summary.
+
+    Returns the AI-integrity dimension score so main() can judge the
+    ceiling against it.
+    """
     if args.report_file:
         write_report(
             args.report_file,
@@ -269,12 +337,35 @@ def main(argv: list[str] | None = None) -> int:
         f"ceiling={args.max_slop_score:g} dims: {dims}"
         + (" enforce=bloat" if args.enforce_bloat else "")
     )
-    failed = (
-        blocking_score(findings) > args.max_score
-        or ai_score > args.max_slop_score
-        or gate_exit == 1
-    )
-    return 1 if failed else 0
+    return ai_score
+
+
+def _quality_ratchet(args: argparse.Namespace, findings: list) -> int:
+    """Write or enforce the quality ratchet; returns its exit contribution.
+
+    0 = not requested, passed, or the floor was written; 1 = a check
+    regressed above its recorded count; 2 = the baseline cannot be
+    interpreted (fail-closed configuration error).
+    """
+    if args.write_quality_baseline:
+        counts = write_quality_baseline_file(args.write_quality_baseline, findings)
+        print(
+            f"quality ratchet floor written: {len(counts)} check(s) "
+            f"-> {args.write_quality_baseline}"
+        )
+        return 0
+    if not args.quality_baseline:
+        return 0
+    try:
+        floor = load_quality_baseline(args.quality_baseline)
+    except RatchetError as exc:
+        print(f"ai-integrity: quality ratchet rejected: {exc}", file=sys.stderr)
+        return 2
+    current = quality_metrics(findings)
+    result = compare(current, floor)
+    for line in render_ratchet(current, floor, result):
+        print(line)
+    return 0 if result.ok else 1
 
 
 if __name__ == "__main__":

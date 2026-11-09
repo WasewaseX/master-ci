@@ -731,6 +731,60 @@ cannot be evaluated is exit 2, never a silent pass.
   - `new_code_gates: false` disables the whole job. Exit 1 = a ceiling
     breached by the change; exit 2 = no diff base or git failure.
 
+## `quality-ratchet` - the committed floor no check may regress from (v2.2)
+
+The new-code gate keeps the diff honest; the ratchet keeps the whole
+repository honest over time. One committed file,
+`.quality-baseline.json` (override with `ratchet_file`), records how
+many findings each check id reports at baseline time. Every run
+compares the current scan against that floor:
+
+- **Any check above its recorded count fails the run** (exit 1). The
+  step summary shows the delta table - regressions first, improvements
+  below them - so a red ratchet names the exact check and how far it
+  moved.
+- **Paying debt is visible**: counts that drop render as improvements.
+  Deleting the last finding of a check removes its row entirely.
+- **Re-recording the floor is a reviewed commit**: run
+  `python3 scripts/ai_slop_detector.py . --write-quality-baseline
+  .quality-baseline.json` and commit the change. Git history then shows
+  when and why the floor moved - the escape hatch is not a silent
+  waiver.
+- **Fail-closed (exit 2) when the floor cannot be interpreted**:
+  - `ratchet: true` and the file is missing (a demanded contract that
+    cannot be honored),
+  - the file is unreadable or not valid JSON,
+  - the schema `version` is not the one this engine speaks,
+  - `checks` is not an object of check id -> non-negative integer,
+  - a check id in the baseline is unknown to this engine's catalog
+    (the catalog changed in either direction - re-record the floor).
+
+With the default `ratchet: auto`, the job runs only when the baseline
+file is committed, so the ratchet is opt-in by committing the file and
+invisible otherwise. `ratchet: false` disables the job even when the
+file exists.
+
+**What counts**: every check id the scan reports, advisory and blocking
+alike - a committed baseline is an explicit per-check contract the repo
+opted into, the same reasoning that lets `--enforce-bloat` escalate the
+structural family. The single exception is `low-new-coverage`: it
+depends on coverage artifacts other jobs produce, not on the tree
+alone, so freezing it would compare different environments. The
+ratchet counts findings **before** `--baseline` fingerprint
+suppression: accepted debt stays in the report's history but cannot
+hide a regression from the floor. Per-check exclusion is available via
+`.ai-integrity-ignore` `check:<id>` lines, which remove the check from
+every run of this engine, ratchet included.
+
+**False positives**: none from staleness - the floor moves only when a
+reviewed commit moves it. PRs that only reformat or move code keep
+their counts stable. Monorepos: counts are repository-wide by design;
+scope the scan or ignore rules per project if per-project floors are
+wanted.
+
+**Added cost**: the scan the `ai-integrity` job already performs, plus
+one JSON read and a diff - seconds, no additional tooling.
+
 ## Project discovery - the monorepo map
 
 `discover_projects.py --family <family>` inventories independent projects

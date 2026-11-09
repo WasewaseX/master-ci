@@ -71,6 +71,13 @@ CASES = [
     ("select injection", {"SELECT": "secrets;curl evil"}, False),
     ("bad template_repo", {"TEMPLATE_REPO_INPUT": "owner/"}, False),
     ("good template_repo", {"TEMPLATE_REPO_INPUT": "WasewaseX/master-ci"}, True),
+    ("ratchet typo", {"RATCHET": "Auto"}, False),
+    ("ratchet injection", {"RATCHET": "true; curl evil"}, False),
+    ("ratchet true valid", {"RATCHET": "true"}, True),
+    ("ratchet_file traversal", {"RATCHET_FILE": "../evil.json"}, False),
+    ("ratchet_file absolute", {"RATCHET_FILE": "/etc/passwd"}, False),
+    ("ratchet_file flaglike", {"RATCHET_FILE": "--broken"}, False),
+    ("ratchet_file nested valid", {"RATCHET_FILE": "configs/quality-baseline.json"}, True),
 ]
 
 

@@ -210,6 +210,21 @@ on:
         required: false
         type: number
         default: 15
+      ratchet:
+        description: >-
+          auto | true | false - the quality ratchet: a committed baseline
+          file records per-check finding counts and any check pushed above
+          its count fails the run. auto (default) runs only when the
+          baseline file exists; true demands the file (missing = fail
+          closed, exit 2); false skips the job.
+        required: false
+        type: string
+        default: auto
+      ratchet_file:
+        description: Baseline file the ratchet enforces (write it once with --write-quality-baseline)
+        required: false
+        type: string
+        default: .quality-baseline.json
       scorecard_publish:
         description: Run and publish OSSF Scorecard (badge/API). false skips the whole job, so id-token is not needed.
         required: false
@@ -272,6 +287,8 @@ jobs:
       new_code_max_slop: ${{ inputs.new_code_max_slop }}
       new_code_max_cognitive: ${{ inputs.new_code_max_cognitive }}
       new_code_max_cyclomatic: ${{ inputs.new_code_max_cyclomatic }}
+      ratchet: ${{ inputs.ratchet }}
+      ratchet_file: ${{ inputs.ratchet_file }}
     steps:
       - name: Validate caller inputs
         env:
@@ -294,6 +311,8 @@ jobs:
           NEW_CODE_MAX_SLOP: ${{ inputs.new_code_max_slop }}
           NEW_CODE_MAX_COGNITIVE: ${{ inputs.new_code_max_cognitive }}
           NEW_CODE_MAX_CYCLOMATIC: ${{ inputs.new_code_max_cyclomatic }}
+          RATCHET: ${{ inputs.ratchet }}
+          RATCHET_FILE: ${{ inputs.ratchet_file }}
         run: |
           # Untrusted caller input never reaches a checkout ref unvalidated,
           # and a typo must fail the run - never silently skip a stack.
@@ -332,7 +351,7 @@ jobs:
             *)
               # the allowlist is one variable so the error message can
               # never drift from the accepted set
-              valid_jobs="hygiene secrets ai-integrity docs node-lint node-test python rust go-lint go-test java cpp csharp ruby php docker security deps-review scorecard coverage-gate new-code-gate"
+              valid_jobs="hygiene secrets ai-integrity docs node-lint node-test python rust go-lint go-test java cpp csharp ruby php docker security deps-review scorecard coverage-gate new-code-gate quality-ratchet"
               for token in $(printf '%s' "$SELECT" | tr ',' ' '); do
                 case " $valid_jobs " in
                   *" $token "*) ;;
@@ -358,6 +377,15 @@ jobs:
                 die "diff_base contains unsafe characters or sequences; use a branch, tag or commit SHA" ;;
             esac
           done
+          case "$RATCHET" in
+            '') : ;; # real dispatches carry the input defaults; nothing to validate
+            auto|true|false) ;;
+            *) die "ratchet must be auto, true or false (got '$RATCHET')" ;;
+          esac
+          case "$RATCHET_FILE" in
+            '') : ;; # real dispatches carry the input defaults; nothing to validate
+            -*|/*|*..*) die "ratchet_file must be a relative workspace path without '..' (got '$RATCHET_FILE')" ;;
+          esac
       - name: Resolve helper repo and ref
         id: repo
         env:
@@ -1052,6 +1080,68 @@ jobs:
           if [ -f new-code-report.md ]; then
             echo "### New-code gate" >> "$GITHUB_STEP_SUMMARY"
             cat new-code-report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$rc"
+
+  # ---------------------------------------------------------------------------
+  # Quality ratchet: the committed baseline no check may regress from.
+  # A .quality-baseline.json records per-check finding counts; any check
+  # pushed above its count fails the run. auto runs only when the file
+  # exists (opt-in by committing it); true demands the file - a missing
+  # baseline cannot be interpreted, so the job fails closed (exit 2).
+  # ---------------------------------------------------------------------------
+  quality-ratchet:
+    needs: [meta]
+    if: >-
+      (inputs.select == '' || contains(format(',{0},', inputs.select), ',quality-ratchet,'))
+      && needs.meta.result == 'success'
+      && needs.meta.outputs.ratchet != 'false'
+    runs-on: ${{ inputs.runs_on }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      RATCHET: ${{ needs.meta.outputs.ratchet }}
+      RATCHET_FILE: ${{ needs.meta.outputs.ratchet_file }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch master-ci helpers
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ needs.meta.outputs.template_repo }}
+          ref: ${{ needs.meta.outputs.template_ref }}
+          path: _ci
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Resolve the baseline floor
+        # hashFiles is not available in job-level if expressions, so the
+        # auto-detection lives here where it belongs: auto + no committed
+        # baseline = the repo has not opted in, skip cleanly; ratchet=true
+        # + no baseline = a demanded contract that cannot be honored, and
+        # a missing floor fails closed (exit 2) instead of passing.
+        run: |
+          if [ ! -f "$RATCHET_FILE" ]; then
+            if [ "$RATCHET" = "true" ]; then
+              echo "::error::ratchet=true but $RATCHET_FILE is missing - record the floor with --write-quality-baseline or set ratchet=auto"
+              exit 2
+            fi
+            echo "no $RATCHET_FILE committed - quality ratchet not opted in, skipping"
+            exit 0
+          fi
+      - name: Enforce the quality ratchet
+        run: |
+          # Exit 1 = a check regressed above its recorded count, exit 2 =
+          # the baseline cannot be interpreted (invalid JSON, a schema or
+          # catalog change). Both fail the run: a committed floor is a
+          # contract, not advice. Paying debt and catalog adoption
+          # re-record the floor with --write-quality-baseline in a
+          # reviewed commit.
+          python3 _ci/scripts/ai_slop_detector.py . \
+            --quality-baseline "$RATCHET_FILE" | tee ratchet-report.md
+          rc=${PIPESTATUS[0]}
+          if [ -s ratchet-report.md ]; then
+            echo "### Quality ratchet" >> "$GITHUB_STEP_SUMMARY"
+            cat ratchet-report.md >> "$GITHUB_STEP_SUMMARY"
           fi
           exit "$rc"
 
@@ -2199,7 +2289,7 @@ jobs:
         changes, meta, hygiene, secrets, ai-integrity, docs, node-lint,
         node-test, python, rust, go-lint, go-test, java, cpp, csharp, ruby,
         php, docker, security, deps-review, scorecard, coverage-gate,
-        new-code-gate,
+        new-code-gate, quality-ratchet,
       ]
     if: always() && github.event_name == 'pull_request'
     runs-on: ${{ inputs.runs_on }}
@@ -2239,6 +2329,9 @@ jobs:
               ("security", "Security"),
               ("deps-review", "Dependency review"),
               ("scorecard", "Scorecard"),
+              ("coverage-gate", "Coverage gate"),
+              ("new-code-gate", "New-code gate"),
+              ("quality-ratchet", "Quality ratchet"),
           ]
           icon = {
               "success": "white_check_mark",
@@ -2292,7 +2385,7 @@ jobs:
         changes, meta, hygiene, secrets, ai-integrity, docs, node-lint,
         node-test, python, rust, go-lint, go-test, java, cpp, csharp, ruby,
         php, docker, security, deps-review, scorecard, coverage-gate,
-        new-code-gate,
+        new-code-gate, quality-ratchet,
       ]
     if: always()
     runs-on: ${{ inputs.runs_on }}
@@ -2335,6 +2428,7 @@ jobs:
               "scorecard",
               "coverage-gate",
               "new-code-gate",
+              "quality-ratchet",
           ]
           labels = {
               "changes": "Change detection",
@@ -2360,6 +2454,7 @@ jobs:
               "scorecard": "Scorecard",
               "coverage-gate": "Coverage gate",
               "new-code-gate": "New-code gate",
+              "quality-ratchet": "Quality ratchet",
           }
           icon = {
               "success": ":white_check_mark:",
