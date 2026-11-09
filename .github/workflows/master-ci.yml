@@ -1150,12 +1150,15 @@ jobs:
           [ -f biome.jsonc ] || cp _ci/configs/biome.jsonc .
       - name: Lint (project script or biome)
         run: |
+          # Helpers resolve absolutely: the loop cds into every discovered
+          # project, and a workspace member is deeper than the _ci checkout.
+          TOOL_VERSIONS="$GITHUB_WORKSPACE/_ci/scripts/tool_versions.py"
           lint_one() {
             cd "$1"
             if node -e "process.exit(require('./package.json').scripts && require('./package.json').scripts.lint ? 0 : 1)"; then
               npm run lint --silent
             else
-              npx --yes "$(python3 _ci/scripts/tool_versions.py npm @biomejs/biome)" ci --no-errors-on-unmatched .
+              npx --yes "$(python3 "$TOOL_VERSIONS" npm @biomejs/biome)" ci --no-errors-on-unmatched .
             fi
             cd "$GITHUB_WORKSPACE"
           }
@@ -1182,10 +1185,11 @@ jobs:
           [ "$found" = 1 ] || echo "No tsconfig.json in any project - skipping tsc"
       - name: Flag unused dependencies (depcheck, advisory)
         run: |
+          TOOL_VERSIONS="$GITHUB_WORKSPACE/_ci/scripts/tool_versions.py"
           while IFS= read -r dir; do
             [ -z "$dir" ] && continue
             echo "Depchecking $dir"
-            (cd "$dir" && npx --yes "$(python3 _ci/scripts/tool_versions.py npm depcheck)" --ignores "@types/*,eslint*,prettier,biome*") \
+            (cd "$dir" && npx --yes "$(python3 "$TOOL_VERSIONS" npm depcheck)" --ignores "@types/*,eslint*,prettier,biome*") \
               || echo "::warning::depcheck flagged unused or missing dependencies in $dir (advisory)"
           done < "$RUNNER_TEMP/node-projects.txt"
 
