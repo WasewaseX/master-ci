@@ -214,6 +214,27 @@ def test_new_code_view_file_absent_from_report_counts_uncovered():
     assert view.total_percent == 0.0
 
 
+def test_new_code_view_skips_non_coverage_subjects():
+    """Test files and non-code files are not coverage subjects for any
+    mainstream tool; they stay out of the denominator. Code files with
+    no entry still count as uncovered - untested code cannot hide."""
+    report = cg.CoverageReport("cobertura", "coverage.xml", 0.0, {})
+    view = cg.new_code_view(
+        [report],
+        {
+            "src/mod.py": {1, 2, 3},
+            "src/mod.test.js": {1, 2},
+            "tests/test_mod.py": {1, 2},
+            "pkg/lib_test.go": {1, 2},
+            "package.json": {1, 2, 3, 4},
+            "ci.yml": {1},
+        },
+    )
+    assert set(view.per_file) == {"src/mod.py"}
+    assert view.changed_total == 3
+    assert view.total_percent == 0.0
+
+
 # ---------------------------------------------------------------------------
 # Gate orchestration
 # ---------------------------------------------------------------------------

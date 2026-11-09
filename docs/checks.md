@@ -639,7 +639,12 @@ cannot be evaluated is exit 2, never a silent pass.
 
 - `coverage-gate` (v1.21) enforces `coverage_min` against every uploaded
   report (coverage.json, Cobertura XML, Go coverprofile) and, when
-  `diff_base` is set, the same floor on the lines the change adds.
+  `diff_base` is set, the same floor on the lines the change adds. Only
+  coverage subjects enter the new-code denominator: test files and
+  non-code files (configs, docs, manifests) are not coverage subjects
+  for any mainstream tool, so they stay out of the math; a code file
+  with no report entry still counts as uncovered, so untested new code
+  cannot hide.
 - `new-code-gate` (v1.22) enforces the dimension ceilings on new code -
   legacy files keep their history, every added line meets today's bar:
   - `new_code_max_slop` (default 0): the blocking score of detector

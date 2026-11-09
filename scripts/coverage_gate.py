@@ -39,6 +39,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from coverage_subjects import is_coverage_subject
 from slop_files import read_text_lax
 
 
@@ -293,6 +294,8 @@ def new_code_view(
     covered_total = 0
     changed_total = 0
     for path, lines in sorted(changed.items()):
+        if not is_coverage_subject(path):
+            continue
         entry = None
         for report in reports:
             entry = report.entry_for(path)
