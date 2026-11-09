@@ -267,6 +267,31 @@ _ORACLE_EXTRA_NAMES = {
 OrphanCandidate = tuple[str, Path, bool]  # (name, representative file, is Go package)
 
 
+def _orphan_go_packages(
+    root: Path,
+    go_dirs: dict[Path, list[tuple[str, Path]]],
+) -> dict[str, OrphanCandidate]:
+    """One candidate per Go package directory - the importable unit.
+
+    The root package and ``cmd/*`` mains are entry points; a package
+    holding a ``main.go`` is a binary; short or exempt directory names
+    are noise, like their file-stem siblings.
+    """
+    packages: dict[str, OrphanCandidate] = {}
+    for package_dir, members in sorted(go_dirs.items(), key=lambda kv: kv[0].as_posix()):
+        if package_dir == root or package_dir.parent.name.lower() == "cmd":
+            continue
+        if (
+            len(package_dir.name) < 4
+            or package_dir.name in _ORPHAN_EXEMPT_STEMS
+            or any(p.name.lower() == "main.go" for _, p in members)
+        ):
+            continue
+        first = min(members, key=lambda m: m[0])
+        packages.setdefault(package_dir.name, (package_dir.name, first[1], True))
+    return packages
+
+
 def _orphan_candidates(
     root: Path, files: list[Path], globs: list[str]
 ) -> dict[str, OrphanCandidate]:
@@ -274,8 +299,7 @@ def _orphan_candidates(
 
     A Go package is its directory: files inside one package reference
     each other namelessly, so the importable unit - and the thing an
-    orphan verdict names - is the package path, not the file stem. Entry
-    packages (the scan root itself and ``cmd/*`` mains) are exempt.
+    orphan verdict names - is the package path, not the file stem.
     """
     candidates: dict[str, OrphanCandidate] = {}
     go_dirs: dict[Path, list[tuple[str, Path]]] = {}
@@ -295,18 +319,63 @@ def _orphan_candidates(
                 candidates.setdefault(stem, (stem, path, False))
         elif suffix in _GO_EXTS:
             go_dirs.setdefault(path.parent, []).append((rel, path))
-    for package_dir, members in sorted(go_dirs.items(), key=lambda kv: kv[0].as_posix()):
-        if package_dir == root or package_dir.parent.name.lower() == "cmd":
-            continue  # the root package and cmd/* mains are entry points
-        if (
-            len(package_dir.name) < 4
-            or package_dir.name in _ORPHAN_EXEMPT_STEMS
-            or any(p.name.lower() == "main.go" for _, p in members)
-        ):
-            continue
-        first = min(members, key=lambda m: m[0])
-        candidates.setdefault(package_dir.name, (package_dir.name, first[1], True))
+    candidates.update(_orphan_go_packages(root, go_dirs))
     return candidates
+
+
+def _extra_name_ok(name: str) -> bool:
+    """True for config/build file names the orphan oracle cares about."""
+    low = name.lower()
+    return low in _ORACLE_EXTRA_NAMES or Path(low).suffix in _ORACLE_EXTRA_EXTS
+
+
+def _read_extra(path: Path) -> str | None:
+    """Best-effort read of one bounded extra oracle file."""
+    try:
+        if path.stat().st_size > MAX_FILE_BYTES:
+            return None
+        return path.read_text(encoding="utf-8", errors="replace")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _collect_extras(
+    dirpath: str,
+    filenames: list[str],
+    corpus: dict[Path, str],
+    budget: int,
+) -> int:
+    """One directory's extra files into the corpus; budget comes back."""
+    for name in filenames:
+        path = Path(dirpath) / name
+        if path in corpus or not _extra_name_ok(name):
+            continue
+        text = _read_extra(path)
+        if text is None:
+            continue
+        budget -= len(text)
+        corpus[path] = text
+        if budget <= 0 or len(corpus) > MAX_ORACLE_EXTRAS:
+            return budget
+    return budget
+
+
+def _oracle_extras(root: Path, corpus: dict[Path, str], budget: int) -> int:
+    """Append the config/build files the scan itself does not carry.
+
+    A module wired up by a workflow, a manifest, a containerfile or a
+    build script is not an orphan, so the corpus reaches past source.
+    Collection stops at the byte or file cap.
+    """
+    try:
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not SKIP_PATTERN.search(d)]
+            budget = _collect_extras(dirpath, filenames, corpus, budget)
+            if budget <= 0 or len(corpus) > MAX_ORACLE_EXTRAS:
+                return budget
+    except OSError:
+        return budget
+    return budget
 
 
 def _orphan_corpus(root: Path, files: list[Path]) -> dict[Path, str]:
@@ -322,29 +391,7 @@ def _orphan_corpus(root: Path, files: list[Path]) -> dict[Path, str]:
         corpus[path] = text
         if budget <= 0:
             return corpus
-    try:
-        for dirpath, dirnames, filenames in os.walk(root):
-            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not SKIP_PATTERN.search(d)]
-            for name in filenames:
-                low = name.lower()
-                path = Path(dirpath) / name
-                if path in corpus:
-                    continue
-                keep = low in _ORACLE_EXTRA_NAMES or path.suffix.lower() in _ORACLE_EXTRA_EXTS
-                if not keep:
-                    continue
-                try:
-                    if path.stat().st_size > MAX_FILE_BYTES:
-                        continue
-                    text = path.read_text(encoding="utf-8", errors="replace")
-                except (OSError, UnicodeDecodeError):
-                    continue
-                budget -= len(text)
-                corpus[path] = text
-                if budget <= 0 or len(corpus) > MAX_ORACLE_EXTRAS:
-                    return corpus
-    except OSError:
-        return corpus
+    _oracle_extras(root, corpus, budget)
     return corpus
 
 

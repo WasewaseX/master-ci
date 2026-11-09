@@ -67,37 +67,44 @@ _XML_SCOPES_EXEMPT = {"test", "provided", "runtime", "system"}
 # Go
 # ---------------------------------------------------------------------------
 
+# The single-line require is matched whole and filtered in code: a
+# trailing `// indirect` must never count as direct, and a lookahead
+# after `\S+` would backtrack into the version token to find one.
+_GO_REQUIRE_BLOCK = re.compile(r"require\s*\(([^)]*)\)")
+_GO_REQUIRE_SINGLE = re.compile(r"^\s*require\s+([A-Za-z0-9_./\-]+)\s+v\S+.*$", re.MULTILINE)
+_GO_BLOCK_ENTRY = re.compile(r"^([A-Za-z0-9_./\-]+)\s+v\S+")
+
+
+def _go_block_entries(deps: dict[str, int], body: str, base: int) -> None:
+    """Direct entries of one require block, line numbers from base.
+
+    ``// indirect`` marks transitive weight the toolchain owns and
+    drops out, as do comment lines that match no entry shape.
+    """
+    for offset, line in enumerate(body.splitlines()):
+        entry = _GO_BLOCK_ENTRY.match(line.strip())
+        if entry and "// indirect" not in line:
+            deps.setdefault(entry.group(1), base + offset)
+
 
 def _go_requires(manifest: Path) -> dict[str, int]:
     """go.mod direct requires -> {module path: declaration line}.
 
-    ``// indirect`` lines are transitive weight the toolchain owns, and
-    ``tool``/``exclude``/``replace`` blocks are not app dependencies.
+    ``tool``/``exclude``/``replace`` blocks are not app dependencies
+    and never match either require shape.
     """
     try:
         text = manifest.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return {}
     deps: dict[str, int] = {}
-    in_require = False
-    for lineno, line in enumerate(text.splitlines(), 1):
-        stripped = line.strip()
-        if in_require:
-            if stripped.startswith(")"):
-                in_require = False
-            elif stripped and not stripped.startswith("//") and "// indirect" not in stripped:
-                parts = stripped.split()
-                if len(parts) >= 2:
-                    deps[parts[0]] = lineno
+    for match in _GO_REQUIRE_SINGLE.finditer(text):
+        if "// indirect" in match.group(0):
             continue
-        if stripped.startswith("require "):
-            rest = stripped[len("require ") :].strip()
-            if rest.startswith("("):
-                in_require = True
-            elif "// indirect" not in stripped:
-                parts = rest.split()
-                if len(parts) >= 2:
-                    deps[parts[0]] = lineno
+        deps.setdefault(match.group(1), text[: match.start()].count("\n") + 1)
+    for block in _GO_REQUIRE_BLOCK.finditer(text):
+        base = text[: block.start()].count("\n") + 1
+        _go_block_entries(deps, block.group(1), base)
     return deps
 
 

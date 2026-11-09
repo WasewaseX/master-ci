@@ -12,9 +12,9 @@ This module carries the shared plumbing (manifest discovery, per-tree
 scoping, the mention cap) plus the two founding ecosystems:
 
 - Python: pyproject ``[project] dependencies`` against imported tops,
-  with the dist-to-import alias table and entry-point servers exempt.
+    with the dist-to-import alias table and entry-point servers exempt.
 - JS/TS:  package.json ``dependencies``/``peerDependencies`` (dev is
-  exempt by construction) against static and dynamic import specifiers.
+    exempt by construction) against static and dynamic import specifiers.
 
 The five stacks added in v2.1 - Go, Rust, PHP, C#, Java - live in
 slop_deps_stacks.py, along with the ecosystems deliberately left out

@@ -431,7 +431,7 @@ Profile presets (quick / standard / strict / custom) only change the
   exported for tests and tooling.
 - **v2.1 - native dependency analysis across every sound stack
   (`unused-dependency` completion, `orphan-module` new, advisory):**
-  the roadmap's item 6 finished honestly. The Python and Node oracles
+  the roadmap's item 6, closed. The Python and Node oracles
   moved from slop_dead.py into a dedicated dependency module and grew
   five siblings, one per stack where a manifest-to-code oracle is
   actually sound: Go (go.mod direct `require` lines - `// indirect` is

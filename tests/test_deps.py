@@ -1,14 +1,15 @@
 """Contract tests for the native dependency and deadness tranche.
 
 Covers the v2.1 contracts documented in docs/checks.md:
+
 - unused-dependency across the Go, Rust, PHP, C# and Java stacks, with
-  the exemptions each oracle promises (indirect requires, dev tables,
-  workspace catalogs, polyfills, platform constraints, build
-  integration, test/provided scopes, dependencyManagement),
+    the exemptions each oracle promises (indirect requires, dev tables,
+    workspace catalogs, polyfills, platform constraints, build
+    integration, test/provided scopes, dependencyManagement),
 - monorepo scoping: a manifest is judged against the sources under its
-  own directory,
+    own directory,
 - orphan-module: the stem oracle, the Go package-directory oracle, the
-  entry/glue exemptions, and the config-file reference escape hatch.
+    entry/glue exemptions, and the config-file reference escape hatch.
 """
 
 import importlib.util
