@@ -199,7 +199,14 @@ jobs:
             if [ -f pom.xml ]; then
               mvn -B test || true
             else
-              [ -f gradlew ] && chmod +x gradlew && ./gradlew test || gradle test || true
+              # One attempt per iteration - a retry would mask the very
+              # flakiness the hunt measures.
+              if [ -f gradlew ]; then
+                chmod +x gradlew
+                ./gradlew test || true
+              else
+                gradle test || true
+              fi
             fi
             n=0
             while IFS= read -r f; do
