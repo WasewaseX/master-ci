@@ -6,17 +6,17 @@ on its verdict, the same PR-only way the fix engine acts on audit
 findings. Two modes:
 
 - **propose** - read the hunt report, merge the new flaky tests into a
-  candidate baseline (append-only: existing entries keep their
-  ``first_seen`` verbatim, nothing is ever removed - removing a healed
-  flake is a reviewed commit), and write the candidate plus a PR body
-  next to it. A repo in report-only mode (no committed baseline) is
-  refused without artifacts: adopting a first floor is a human commit,
-  not an automation side effect.
+    candidate baseline (append-only: existing entries keep their
+    ``first_seen`` verbatim, nothing is ever removed - removing a healed
+    flake is a reviewed commit), and write the candidate plus a PR body
+    next to it. A repo in report-only mode (no committed baseline) is
+    refused without artifacts: adopting a first floor is a human commit,
+    not an automation side effect.
 - **verify** - the quarantine job's independent second opinion before a
-  PR can open: the candidate must be exactly the committed baseline
-  unioned with the report's new flaky set. No removal, no fabrication,
-  ``first_seen`` preserved, new entries dated. Any mismatch fails
-  closed (exit 2).
+    PR can open: the candidate must be exactly the committed baseline
+    unioned with the report's new flaky set. No removal, no fabrication,
+    ``first_seen`` preserved, new entries dated. Any mismatch fails
+    closed (exit 2).
 
 Exit codes: 0 (nothing to do, proposal written, or verification
 passed), 2 (fail-closed: unreadable report or baseline, inconsistent

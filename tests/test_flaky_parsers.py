@@ -27,10 +27,10 @@ def outcomes(pairs: list[tuple[str, str, str]]) -> list[fp.Outcome]:
 class TestJUnitXML:
     def test_verdicts_map_to_the_model(self):
         xml = """<testsuites><testsuite name="pkg">
-          <testcase name="ok_test" classname="pkg"/>
-          <testcase name="bad_test" classname="pkg"><failure>boom</failure></testcase>
-          <testcase name="err_test" classname="pkg"><error>panic</error></testcase>
-          <testcase name="skip_test" classname="pkg"><skipped/></testcase>
+        <testcase name="ok_test" classname="pkg"/>
+        <testcase name="bad_test" classname="pkg"><failure>boom</failure></testcase>
+        <testcase name="err_test" classname="pkg"><error>panic</error></testcase>
+        <testcase name="skip_test" classname="pkg"><skipped/></testcase>
         </testsuite></testsuites>"""
         assert fp.parse_junit(xml) == outcomes(
             [
@@ -65,11 +65,11 @@ class TestJUnitXML:
 class TestTrx:
     def test_verdicts_map_to_the_model(self):
         trx = """<TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
-          <Results>
+            <Results>
             <UnitTestResult testName="A" outcome="Passed"/>
             <UnitTestResult testName="B" outcome="Failed"/>
             <UnitTestResult testName="C" outcome="NotExecuted"/>
-          </Results>
+            </Results>
         </TestRun>"""
         assert fp.parse_trx(trx) == outcomes(
             [("", "A", "passed"), ("", "B", "failed"), ("", "C", "skipped")]

@@ -1322,9 +1322,7 @@ def test_zizmor_suppressions_sit_where_zizmor_parses_them():
             if "# zizmor:" not in line:
                 continue
             prefix = line.split("#", 1)[0].rstrip()
-            on_key_line = re.search(
-                r"^\s*(?:-\s+)*(?:uses|run|working-directory|shell):\s", prefix
-            )
+            on_key_line = re.search(r"^\s*(?:-\s+)*(?:uses|run|working-directory|shell):\s", prefix)
             assert prefix.strip() == "" or on_key_line, (
                 f"{wf.name}:{lineno}: `# zizmor:` comment is buried in script "
                 "text where zizmor cannot see it - put it on the YAML key line "

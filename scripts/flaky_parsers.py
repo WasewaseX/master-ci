@@ -7,8 +7,8 @@ files in four de-facto standard shapes, so the hunt consumes those instead
 of asking any project to change how it tests:
 
 - JUnit XML - pytest ``--junitxml``, phpunit ``--log-junit``, surefire,
-  ctest ``--output-junit``, vitest ``--reporter=junit``, RSpec's JUnit
-  formatter
+    ctest ``--output-junit``, vitest ``--reporter=junit``, RSpec's JUnit
+    formatter
 - TRX - ``dotnet test --logger trx``
 - Go test JSON - ``go test -json``
 - libtest text - the Rust test harness stdout (``cargo test``)

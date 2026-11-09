@@ -6,9 +6,9 @@ runners), reads every ``run-<i>`` result file the iterations produced,
 and classifies each test:
 
 - **flaky** - both a pass and a fail across iterations: the test's
-  verdict is a coin flip, the suite cannot be trusted green
+    verdict is a coin flip, the suite cannot be trusted green
 - **always-failed** - failed every iteration: the main CI should already
-  be red; listed for completeness, never quarantined
+    be red; listed for completeness, never quarantined
 - stable - everything else
 
 A committed quarantine baseline (``.flaky-baseline.json``) records known
