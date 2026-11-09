@@ -18,6 +18,21 @@
 # measurement with an artifact, a step summary and an exit code. A runner
 # that exists but produces no result file fails closed (exit 2) - a hunt
 # that cannot be executed loudly is never a silent pass.
+#
+# The quarantine loop (v2.4): when the hunt fails on new flakes in
+# enforcement mode, a second job turns the verdict into a reviewable PR
+# against .flaky-baseline.json. flaky_quarantine.py proposes the merge
+# (append-only: existing first_seen preserved verbatim, healed flakes
+# never removed - removal is a reviewed commit) and the quarantine job
+# independently verifies the candidate against the default branch before
+# opening it. Unlike self-heal, an open quarantine PR is updated in
+# place: the baseline is recomputed from the default branch each hunt,
+# so the update carries no accumulating state. Closing the PR rejects
+# the quarantine; merging it silences only the listed tests. The loop is
+# gated three ways: the hunt's data verdict says new-flakes, a committed
+# baseline exists, and the run targets the default branch (a dispatch on
+# a feature branch hunts, but never quarantines). The write-holding job
+# runs none of the repo's test code - the hunt stays read-only.
 # =============================================================================
 
 name: Flaky Test Hunt
@@ -54,6 +69,9 @@ jobs:
   hunt:
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    outputs:
+      status: ${{ steps.verdict.outputs.status }}
+      enforcement: ${{ steps.verdict.outputs.enforcement }}
     env:
       ITERATIONS: ${{ inputs.iterations || '3' }}
       TEMPLATE_REPO_INPUT: ${{ inputs.template_repo }}
@@ -282,6 +300,46 @@ jobs:
             echo "Adopt enforcement by committing the baseline this run produces."
           fi
           python3 _ci/scripts/flaky_detect.py $args | tee flaky-summary.md
+      - name: Verdict for the quarantine loop
+        if: always()
+        id: verdict
+        run: |
+          if [ -f flaky-report.json ]; then
+            status=$(python3 -c \
+              "import json; print(json.load(open('flaky-report.json')).get('status', 'none'))")
+          else
+            status=none
+          fi
+          if [ -f .flaky-baseline.json ]; then enforcement=true; else enforcement=false; fi
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "enforcement=$enforcement" >> "$GITHUB_OUTPUT"
+      - name: Build the quarantine proposal
+        # always(): a failed hunt is exactly when a proposal is wanted.
+        # The manifest gate mirrors the hunt step - a runner-less repo has
+        # no verdict and gets no proposal. The candidate is written to
+        # RUNNER_TEMP, outside the worktree: it must never leak into the
+        # PR branch through this job's checkout.
+        if: >-
+          always() &&
+          hashFiles('pyproject.toml', 'pytest.ini', 'setup.cfg', 'package.json',
+                    'go.mod', 'Cargo.toml', 'pom.xml', 'build.gradle',
+                    'build.gradle.kts', '**/*.csproj', '**/*.fsproj', 'Gemfile',
+                    'composer.json') != ''
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python3 _ci/scripts/flaky_quarantine.py propose \
+            --report flaky-report.json \
+            --baseline .flaky-baseline.json \
+            --out "$RUNNER_TEMP/quarantine" \
+            --run-url "$RUN_URL"
+      - name: Upload the quarantine proposal
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: flaky-quarantine
+          path: ${{ runner.temp }}/quarantine
+          if-no-files-found: ignore
       - name: Upload hunt report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -307,3 +365,106 @@ jobs:
             echo "healed ones. Rewrite the floor with"
             echo "\`python3 _ci/scripts/flaky_detect.py --results-dir flaky-results --write-baseline\`."
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # The write half of the loop. It runs none of the repository's test
+  # code (the hunt already did that, read-only): it re-verifies the
+  # candidate against the default branch, then opens one PR whose only
+  # possible change is the baseline file. Closing the PR rejects the
+  # quarantine; nothing is ever pushed to the default branch.
+  quarantine:
+    needs: hunt
+    if: >-
+      needs.hunt.outputs.status == 'new-flakes' &&
+      needs.hunt.outputs.enforcement == 'true' &&
+      github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      TEMPLATE_REPO_INPUT: ${{ inputs.template_repo }}
+      TEMPLATE_REF: ${{ inputs.template_ref }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate helper ref
+        run: |
+          case "$TEMPLATE_REF" in
+            -*|*..*|*[!A-Za-z0-9._/-]*)
+              echo "::error::template_ref contains unsafe characters or sequences"
+              exit 1 ;;
+          esac
+
+      - name: Resolve helper repo
+        id: repo
+        run: |
+          fallback='WasewaseX/master-ci'
+          if [ -n "$TEMPLATE_REPO_INPUT" ]; then
+            echo "template_repo=$TEMPLATE_REPO_INPUT" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          ref="${GITHUB_WORKFLOW_REF:-}"
+          parsed="${ref%%/.github/*}"
+          if [ -n "$parsed" ] && [ "$parsed" != "$ref" ]; then
+            echo "template_repo=$parsed" >> "$GITHUB_OUTPUT"
+          else
+            echo "template_repo=$fallback" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fetch master-ci helpers
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ steps.repo.outputs.template_repo }}
+          ref: ${{ env.TEMPLATE_REF }}
+          path: _ci
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Download the hunt's evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: flaky-*
+          path: evidence
+          merge-multiple: true
+
+      - name: Verify the candidate against the default branch
+        run: |
+          # The independent second opinion: candidate == committed
+          # baseline union the report's new flakes, nothing removed, no
+          # rewritten history. A hunt that cannot prove its proposal
+          # never opens a PR.
+          python3 _ci/scripts/flaky_quarantine.py verify \
+            --merged evidence/baseline.json \
+            --baseline .flaky-baseline.json \
+            --report evidence/flaky-report.json
+
+      - name: Assemble the PR body
+        run: |
+          {
+            echo "Opened automatically because the flake hunt failed on new"
+            echo "flaky test(s) on the default branch (run: $RUN_URL)."
+            echo
+            cat evidence/body.md
+          } > "$RUNNER_TEMP/final-body.md"
+          {
+            echo "## Quarantine proposal"
+            echo ""
+            cat evidence/body.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open or update the quarantine PR
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ secrets.AUTOFIX_TOKEN || github.token }}
+          branch: ci/flake-quarantine
+          title: 'ci: quarantine the new flaky test(s)'
+          body-file: "$RUNNER_TEMP/final-body.md"
+          labels: |
+            automation
+            flake
+          commit-message: 'ci: quarantine the new flaky test(s)'
+          add-paths: .flaky-baseline.json

@@ -820,7 +820,8 @@ one JSON read and a diff - seconds, no additional tooling.
   enforcement is one commit of the file the run produces.
   `--write-baseline` records the current flaky set as a reviewable
   commit (two-space indent, sorted keys, deterministic bytes - the
-  hygiene gate enforces the same editorconfig on it).
+  hygiene gate enforces the same editorconfig on it). Since v2.4 the
+  baseline update itself is automated - see the quarantine loop below.
 - **Fails closed (exit 2) when the hunt cannot be executed at all:**
   missing results directory, no `run-<i>` files at all, non-contiguous
   run numbering (every iteration must produce a file, even if the suite
@@ -847,6 +848,39 @@ one JSON read and a diff - seconds, no additional tooling.
   tests that straddle midnight produce one noisy weekly report;
   quarantine or fix them. A suite that skips a test only under load
   shows `absent` columns, not flakiness.
+
+### The quarantine loop (v2.4)
+
+A hunt that fails on new flakes in enforcement mode does not stop at
+the exit code. The hunt job builds a candidate baseline with
+`scripts/flaky_quarantine.py propose` - an append-only merge that
+preserves every existing `first_seen` verbatim, stamps the new keys
+with today's date, and never removes a healed flake (removal is a
+reviewed commit, exactly like re-recording a ratchet floor). The
+candidate is written to `RUNNER_TEMP`, outside the worktree, so it
+cannot leak into the PR branch through the hunt job's checkout.
+
+A second `quarantine` job - the only one holding write scopes, and it
+runs none of the repository's test code - downloads the evidence and
+re-verifies the candidate against the default branch
+(`flaky_quarantine.py verify`): exactly the committed baseline unioned
+with the report's new flakes, no removal, no fabrication, no rewritten
+history; any disagreement exits 2 before a PR can open. On success it
+opens or updates the `ci/flake-quarantine` PR, bounded by
+`add-paths: .flaky-baseline.json` - even a compromised worktree can
+only ever offer the baseline file. Unlike self-heal, an open
+quarantine PR is updated in place: the candidate is recomputed from
+the default branch each hunt, so the update carries no accumulating
+state.
+
+The loop is gated three ways, each independently justified: the
+report's machine verdict (`status: new-flakes` - the hunt's own data,
+not an exit code parsed from prose), a committed baseline (report-only
+repos are refused - adopting a first floor is a human decision), and
+the default branch (a dispatch on a feature branch hunts, never
+quarantines). Closing the PR rejects the quarantine and the next hunt
+keeps failing until the flakes are fixed; merging it silences only the
+listed tests - a new flake still fails the next hunt.
 
 ## Project discovery - the monorepo map
 

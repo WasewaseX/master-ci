@@ -81,7 +81,7 @@ which keeps its baseline reproducible across template releases:
 ```yaml
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v2.3.0
+      template_ref: v2.4.0
 ```
 
 ### Required check
@@ -718,7 +718,7 @@ carries a `SKILL.md`, so assistants with a skills directory can load it
 with one command:
 
 ```bash
-git clone --depth 1 --branch v2.3.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+git clone --depth 1 --branch v2.4.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
 ```
 
 MCP clients configure the same install like this:
@@ -907,6 +907,16 @@ committed quarantine baselines grandfather known flakes and gate new
 ones. Test assurance now covers all three questions: coverage (which
 lines ran), mutation (would the assertions notice) and repetition (is
 the verdict stable).
+
+And since v2.4: the **quarantine loop** - the hunt's response, closing
+its own verdict the way self-heal closes a red branch. When the hunt
+fails on new flakes in enforcement mode, the candidate baseline is
+merged append-only (every existing `first_seen` preserved, healed
+flakes never removed), verified independently against the default
+branch, and offered as one reviewable PR whose only possible change is
+the baseline file. Closing the PR rejects the quarantine; merging it
+silences only the listed tests. Measurement, verdict and response now
+live in one loop.
 
 ## License
 

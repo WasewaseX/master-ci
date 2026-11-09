@@ -218,10 +218,17 @@ def render(verdicts: list[TestVerdict], delta: BaselineDelta, iterations: int) -
 
 
 def build_report(verdicts: list[TestVerdict], delta: BaselineDelta, iterations: int) -> dict:
-    """Machine-readable result for the workflow artifact."""
+    """Machine-readable result for the workflow artifact.
+
+    ``status`` names the verdict so the workflow can gate the quarantine
+    loop on data instead of parsing prose: ``new-flakes`` (delta has new
+    flaky tests), ``quarantined-only`` (flaky but all known) or ``clean``.
+    """
     flaky = [{"key": v.key, "outcomes": list(v.runs)} for v in verdicts if v.is_flaky]
+    status = "new-flakes" if delta.new else ("quarantined-only" if flaky else "clean")
     return {
         "version": BASELINE_VERSION,
+        "status": status,
         "iterations": iterations,
         "tests_total": len(verdicts),
         "flaky": flaky,

@@ -1200,3 +1200,110 @@ def test_new_code_gate_job_contract():
     )
     meta_block = text.split("\n  meta:")[1].split("\n  changes:")[0]
     assert "new_code_max_cognitive" in meta_block, "meta must expose the ceilings"
+
+
+# ---------------------------------------------------------------------------
+# The flake hunt and its quarantine loop (flaky.yml, v2.3/v2.4)
+# ---------------------------------------------------------------------------
+
+
+def test_quarantine_job_exists_and_gates_three_ways():
+    """The loop acts only when the hunt's data verdict says new-flakes, a
+    committed baseline exists (enforcement mode) and the run targets the
+    default branch - a dispatch on a feature branch hunts, never
+    quarantines."""
+    data = load(WF_DIR / "flaky.yml")
+    jobs = data["jobs"]
+    assert "hunt" in jobs and "quarantine" in jobs
+    job = jobs["quarantine"]
+    assert job.get("needs") == "hunt", "quarantine must consume the hunt's verdict"
+    condition = str(job.get("if", ""))
+    assert "needs.hunt.outputs.status == 'new-flakes'" in condition
+    assert "needs.hunt.outputs.enforcement == 'true'" in condition, (
+        "report-only repos must never get a quarantine PR"
+    )
+    assert "default_branch" in condition, "quarantine must be reserved for default-branch hunts"
+
+
+def test_quarantine_holds_the_write_scopes_and_the_hunt_stays_read_only():
+    """The job that runs the repository's test suite must never hold write
+    access; only the PR-opening job does."""
+    data = load(WF_DIR / "flaky.yml")
+    top = data["permissions"]
+    assert top.get("contents") == "read", "workflow-level least privilege"
+    for step in data["jobs"]["hunt"]["steps"]:
+        perms = step.get("permissions")
+        assert not perms or perms.get("contents") == "read", (
+            "the hunt executes the repo's tests and must stay read-only"
+        )
+    perms = data["jobs"]["quarantine"]["permissions"]
+    assert perms.get("contents") == "write"
+    assert perms.get("pull-requests") == "write"
+
+
+def test_quarantine_is_pr_only_and_bounded_to_the_baseline_file():
+    data = load(WF_DIR / "flaky.yml")
+    text = (WF_DIR / "flaky.yml").read_text(encoding="utf-8")
+    assert "git push" not in text, "the quarantine loop must never push"
+    steps = [str(s.get("uses", "")) for s in data["jobs"]["quarantine"]["steps"]]
+    assert any("create-pull-request" in u for u in steps), "changes land through PRs"
+    pr_step = next(
+        s
+        for s in data["jobs"]["quarantine"]["steps"]
+        if "create-pull-request" in str(s.get("uses", ""))
+    )
+    assert str(pr_step["with"].get("add-paths", "")) == ".flaky-baseline.json", (
+        "even a compromised worktree can only ever offer the baseline file"
+    )
+    assert "ci/flake-quarantine" in text
+
+
+def test_quarantine_verifies_the_candidate_independently():
+    """The write job re-checks the proposal against the default branch -
+    it never trusts the hunt's artifact blindly."""
+    data = load(WF_DIR / "flaky.yml")
+    steps = data["jobs"]["quarantine"]["steps"]
+    verify = [s for s in steps if "flaky_quarantine.py verify" in str(s.get("run", ""))]
+    assert verify, "the verify step is mandatory before any PR"
+    run_block = str(verify[0].get("run", ""))
+    assert ".flaky-baseline.json" in run_block, (
+        "verification must compare against the committed floor, not the artifact"
+    )
+
+
+def test_quarantine_proposal_stays_outside_the_worktree():
+    """The candidate is built into RUNNER_TEMP so it cannot leak into the
+    PR branch through the hunt job's checkout."""
+    data = load(WF_DIR / "flaky.yml")
+    steps = data["jobs"]["hunt"]["steps"]
+    propose = [s for s in steps if "flaky_quarantine.py propose" in str(s.get("run", ""))]
+    assert propose, "the hunt must build the proposal"
+    assert "$RUNNER_TEMP" in str(propose[0].get("run", ""))
+
+
+def test_quarantine_serializes_with_the_hunt():
+    data = load(WF_DIR / "flaky.yml")
+    concurrency = data["concurrency"]
+    assert concurrency["group"] == "flake-hunt"
+    assert concurrency["cancel-in-progress"] is False
+
+
+def test_flake_report_carries_a_machine_verdict():
+    """The workflow gates on report status - the detector must produce it."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import flaky_detect as flaky_detector
+
+    verdicts = [
+        flaky_detector.TestVerdict("a", ("passed", "failed")),
+        flaky_detector.TestVerdict("b", ("passed", "passed")),
+    ]
+    report = flaky_detector.build_report(verdicts, flaky_detector.BaselineDelta((), ("a",), ()), 2)
+    assert report["status"] == "new-flakes"
+    known = flaky_detector.build_report(verdicts, flaky_detector.BaselineDelta(("a",), (), ()), 2)
+    assert known["status"] == "quarantined-only"
+    clean = flaky_detector.build_report(
+        [flaky_detector.TestVerdict("b", ("passed", "passed"))],
+        flaky_detector.BaselineDelta((), (), ()),
+        2,
+    )
+    assert clean["status"] == "clean"
