@@ -81,7 +81,7 @@ which keeps its baseline reproducible across template releases:
 ```yaml
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v1.22.2
+      template_ref: v2.0.0
 ```
 
 ### Required check
@@ -89,6 +89,23 @@ which keeps its baseline reproducible across template releases:
 Branch protection sees exactly one status: **`ci-success`**. Set it as a
 required status check (Settings > Branches > Branch protection rules) and the
 aggregate gate decides pass or fail for every PR.
+
+### Doctor: verify your setup offline
+
+`scripts/doctor.py` checks the workflow you wrote against this contract
+- pin style, the helper-pin pair, permissions, gate inputs - without
+touching the network. Errors (a mutable `@main` ref, `template_repo`
+without `template_ref`, missing `security-events: write`, a
+non-integer `coverage_min`) exit 1; warnings (a floating `@v1`, no
+pins on a foreign caller) exit 0; an unreadable setup fails closed
+with exit 2:
+
+```bash
+pip install pyyaml
+python scripts/doctor.py                       # reads .github/workflows
+python scripts/doctor.py --json                # machine-readable
+python scripts/doctor.py --workflows-dir path  # any checkout
+```
 
 ## Versioning (pick one strategy)
 
@@ -628,7 +645,7 @@ carries a `SKILL.md`, so assistants with a skills directory can load it
 with one command:
 
 ```bash
-git clone --depth 1 --branch v1.22.2 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+git clone --depth 1 --branch v2.0.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
 ```
 
 MCP clients configure the same install like this:

@@ -400,6 +400,33 @@ Profile presets (quick / standard / strict / custom) only change the
   `[tool.mutmut]` is declared) or Stryker (Node, when a
   `stryker.conf.*` is committed) weekly - coverage says which lines
   ran, mutation says whether the assertions would notice.
+- **v2.0 - the module dependency graph (`import-cycle`, advisory):**
+  the repo-level structural verification that closes the roadmap's
+  "deeper analysis" arc. `slop_cycles.py` builds a module dependency
+  graph natively - Python imports through the AST (relative and
+  absolute, submodule-or-attribute resolution), JS/TS static
+  `import`/`require`/`export-from` specifiers probed against the known
+  file set (extension, TypeScript compiled-extension swap, directory
+  index), Go import paths under the root go.mod's module mapped to
+  package directories, Ruby `require_relative` - and runs an iterative
+  Tarjan SCC over it. Every strongly-connected component with more
+  than one node is one `import-cycle` finding: the shortest loop
+  through the component, located at the first import line, capped at 8
+  per scan, maintainability dimension. The graph is conservative by
+  design: dynamic `import()` is excluded (a lazy edge is a legitimate
+  way to *break* a cycle - counting it would punish the fix), plain
+  Ruby `require` is excluded ($LOAD_PATH can mean a gem), and JVM, PHP,
+  C# and C/C++ are out of scope because their cycles are properties of
+  classpaths, autoloaders and build graphs, not of the scanned source.
+  Namespace glue is excluded before the search - a package's
+  `__init__.py` and a JS barrel that is nothing but re-exports encode
+  the one-directional parent-imports-child idiom, and counting them
+  would convict the most common correct package shape. Self-imports
+  are ignored; test files participate like any other module. Where the
+  v1.18 architecture config enforces a *declared* import law, a cycle
+  is unconditional design debt - it forces every member into one
+  change set and makes isolated testing impossible. `build_graph` is
+  exported for tests and tooling.
 - **Disable:** `profile: quick` keeps the whole job advisory; with
   `profile: custom` set `fail_on_ai_slop: false` explicitly. Provenance
   and test inventory can be turned off with `--no-provenance`; the
@@ -799,3 +826,45 @@ runs at a time (fixed concurrency groups), and it stops while a fix PR is
 already open - a failing fix PR needs a human, not another iteration.
 Nothing is ever pushed to a branch; the PR is the whole change, and
 closing it is the rollback.
+
+## `doctor` - the setup diagnostic (v2.0)
+
+The template verifies code; `scripts/doctor.py` verifies the *setup* -
+the workflow file, the pins and the permissions a consumer wrote by
+hand. It runs offline against any checkout (default
+`.github/workflows`, override with `--workflows-dir`) and turns the
+README's prose contract into deterministic checks:
+
+- **Ref style (per reusable-workflow job):** `@main` is an error - a
+  mutable ref changes CI behavior without review. `@vX.Y.Z` is the
+  recommended reproducible baseline; `@v1` tracks the latest release
+  (fine, but doctor notes the difference); any other branch or SHA
+  ref draws a warning.
+- **The helper-pin contract (master-ci.yml only):** `template_repo`
+  without `template_ref` is an error - a foreign helper repo needs an
+  explicit pin, exactly what meta's fail-closed lookup enforces at
+  run time; no pins at all draws the "foreign projects must pin both"
+  warning; both set draws the pinned confirmation.
+- **Permissions (per job, job-level over workflow-level):** missing
+  `contents: read` or `security-events: write` is an error (checkout
+  and SARIF upload fail outright); missing `pull-requests: write` is
+  a warning (annotations and the PR report degrade); missing
+  `id-token: write` is info (OIDC capabilities switch off).
+- **Gate inputs:** `coverage_min` must be an integer 0-100 (anything
+  else is an error) and a set value draws the "floor armed" info;
+  `diff_base` draws the "new-code gate is armed" info.
+- **The aggregate check:** if no workflow file mentions `ci-success`
+  (raw text - comments count), doctor reminds you to mark it as the
+  required status check.
+
+Severities map to exit codes the same way the rest of the template
+fails: 0 healthy (warnings allowed), 1 at least one error, 2 doctor
+could not diagnose at all - missing PyYAML, no workflows directory, or
+a workflow file that cannot be parsed. Fail closed: an unreadable
+setup is an error, never a shrug. `--json` renders the same notes as
+machine output (`ok`, `errors`, `warnings`, `infos`) for scripts and
+editor integrations. `--template` retargets the slug check for forks
+that publish their own template copy.
+
+Run it before pushing a workflow change, in any job, or as a repo
+hygiene step: `python scripts/doctor.py` (add `--json` for CI use).

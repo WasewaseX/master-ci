@@ -37,6 +37,7 @@ from slop_comments import (  # noqa: F401
     phrase_findings,
     scan_comment_vocabulary,
 )
+from slop_cycles import check_import_cycles  # noqa: F401
 from slop_dead import (  # noqa: F401
     check_unused_declarations,
     check_unused_dependencies,
@@ -308,6 +309,7 @@ def _repo_level_findings(
     findings.extend(scan_duplicates(files))
     findings.extend(check_unused_declarations(root, files, globs))
     findings.extend(check_unused_dependencies(root, files))
+    findings.extend(check_import_cycles(root, files, globs))
     findings.extend(check_architecture_rules(root, files, globs))
     findings.extend(check_unknown_directives(root, files, globs))
     if provenance:

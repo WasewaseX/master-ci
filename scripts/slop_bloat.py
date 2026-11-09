@@ -9,6 +9,7 @@ the one function fact the parser does not carry.
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -38,15 +39,50 @@ def _is_banner(comment: Comment) -> bool:
     return bool(BANNER_DECO.match(core))
 
 
+def _py_docstring_lines(text: str) -> set[int]:
+    """Real docstring spans from the AST, not the string-guessing scanner.
+
+    The py comment extractor treats every triple-quote as a docstring,
+    which makes multi-line string literals (test fixtures, embedded
+    YAML) count as comments and can push a fixture-heavy test file over
+    the comment-pressure budget. The AST names the real docstrings.
+    """
+    lines: set[int] = set()
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return lines
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        first = node.body[0] if node.body else None
+        if (
+            isinstance(first, ast.Expr)
+            and isinstance(first.value, ast.Constant)
+            and isinstance(first.value.value, str)
+        ):
+            lines.update(
+                range(first.value.lineno, (first.value.end_lineno or first.value.lineno) + 1)
+            )
+    return lines
+
+
+def _comment_lines_of(family: str, comments: list[Comment], text: str) -> set[int]:
+    """Comment line numbers per family; py docstrings come from the AST."""
+    lines = {c.line for c in comments if family != "py" or c.kind != "docstring"}
+    if family == "py":
+        lines |= _py_docstring_lines(text)
+    return lines
+
+
 def _comment_pressure_finding(
     path: Path,
-    comments: list[Comment],
+    comment_lines: set[int],
     non_blank: int,
 ) -> Finding | None:
     """Flag files where comments outweigh code (AI padding tell)."""
     if non_blank < BLOAT_COMMENT_MIN_LINES:
         return None
-    comment_lines = {c.line for c in comments}
     ratio = len(comment_lines) / non_blank
     if ratio <= BLOAT_COMMENT_RATIO:
         return None
@@ -105,6 +141,7 @@ def _banner_padding_finding(
 def _file_bloat_findings(
     path: Path,
     text: str,
+    family: str,
     comments: list[Comment],
     rel: str,
 ) -> list[Finding]:
@@ -122,7 +159,7 @@ def _file_bloat_findings(
                 advisory=True,
             )
         )
-    pressure = _comment_pressure_finding(path, comments, non_blank)
+    pressure = _comment_pressure_finding(path, _comment_lines_of(family, comments, text), non_blank)
     if pressure:
         findings.append(pressure)
     padding = _banner_padding_finding(path, comments, non_blank)
@@ -257,7 +294,7 @@ def check_bloat(
     is judged from the line scanner either way: it is the one function
     fact the parser does not carry.
     """
-    findings = _file_bloat_findings(path, text, comments, rel)
+    findings = _file_bloat_findings(path, text, family, comments, rel)
     facts = parse_functions(str(path), text)
     if family == "py":
         # Python's length, nesting and parameter budgets are AST-backed in

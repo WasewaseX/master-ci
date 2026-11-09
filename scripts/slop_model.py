@@ -156,6 +156,10 @@ REMEDIES = {
         "Remove the dependency from the manifest or add the import that "
         "justifies it; declared weight slows every install"
     ),
+    "import-cycle": (
+        "Break the loop at the lowest-level module; move the shared "
+        "symbols down so both sides depend on a leaf instead of each other"
+    ),
     "java-broad-throws": (
         "Throw the specific exception type; a broad Exception hides every "
         "failure mode behind one signature"
@@ -309,6 +313,9 @@ ADVISORY_ONLY_CHECKS = frozenset(
         # whose occurrences are exactly its own definition is reported.
         "unused-declaration",
         "unused-dependency",
+        # v2.0: the module dependency graph. Cycles are design debt with
+        # legitimate lazy-loading escape hatches, so the finding advises.
+        "import-cycle",
         # scanaislop round-5 adoption (languages page): broad Java throws.
         "java-broad-throws",
         # scanaislop round-6 adoption: dynamic evaluation and the

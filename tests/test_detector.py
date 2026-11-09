@@ -1934,3 +1934,149 @@ def test_arch_findings_report_under_architecture_dimension(tmp_path):
     rows = dict(mod.category_breakdown(findings))
     assert rows["architecture"]["blocking"] > 0
     assert rows["ai-integrity"]["count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# v2.0: the module dependency graph - import-cycle detection
+# ---------------------------------------------------------------------------
+
+
+def test_import_cycle_fires_on_python_pair(tmp_path):
+    findings = scan(
+        tmp_path,
+        {"a.py": "import b\n\ndef fa():\n    return 1\n", "b.py": "from a import fa\n"},
+    )
+    hits = [f for f in findings if f.check == "import-cycle"]
+    assert len(hits) == 1
+    assert hits[0].advisory
+    assert hits[0].path == "a.py" and hits[0].line == 1
+    assert "a.py -> b.py -> a.py" in hits[0].message
+
+
+def test_import_cycle_fires_inside_package_modules(tmp_path):
+    findings = scan(
+        tmp_path,
+        {
+            "pkg/__init__.py": "",
+            "pkg/core.py": "from pkg.helpers import g\n",
+            "pkg/helpers.py": "from pkg.core import run\n",
+        },
+    )
+    hits = [f for f in findings if f.check == "import-cycle"]
+    assert len(hits) == 1 and hits[0].path == "pkg/core.py"
+
+
+def test_package_init_glue_never_completes_a_cycle(tmp_path):
+    findings = scan(
+        tmp_path,
+        {
+            "pkg/__init__.py": "from pkg.core import run\n",
+            "pkg/core.py": "from pkg import helpers\n",
+            "pkg/helpers.py": "def g():\n    return 1\n",
+        },
+    )
+    assert not [f for f in findings if f.check == "import-cycle"]
+
+
+def test_js_barrel_glue_never_completes_a_cycle(tmp_path):
+    findings = scan(
+        tmp_path,
+        {
+            "index.ts": "export { a } from './a.js';\nexport { b } from './b.js';\n",
+            "a.ts": "import { helpers } from './index.js';\n",
+            "b.ts": "import { helpers } from './index.js';\n",
+        },
+    )
+    assert not [f for f in findings if f.check == "import-cycle"]
+
+
+def test_js_cycle_fires_even_when_a_barrel_is_present(tmp_path):
+    findings = scan(
+        tmp_path,
+        {
+            "index.ts": "export { a } from './a.js';\n",
+            "a.ts": "import { b } from './b.js';\n",
+            "b.ts": "import { a } from './a.js';\n",
+        },
+    )
+    hits = [f for f in findings if f.check == "import-cycle"]
+    assert len(hits) == 1 and "a.ts -> b.ts -> a.ts" in hits[0].message
+
+
+def test_js_cycle_fires_and_dynamic_import_is_not_an_edge(tmp_path):
+    findings = scan(
+        tmp_path,
+        {
+            "a.ts": "import { b } from './b.js';\n\nexport async function lazy():\n    return import('./b.js')\n",
+            "b.ts": "import { a } from './a.js';\n",
+        },
+    )
+    hits = [f for f in findings if f.check == "import-cycle"]
+    assert len(hits) == 1 and "a.ts -> b.ts -> a.ts" in hits[0].message
+
+
+def test_go_package_cycle_fires(tmp_path):
+    (tmp_path / "go.mod").write_text("module example.com/app\n", encoding="utf-8")
+    findings = scan(
+        tmp_path,
+        {
+            "internal/a/a.go": 'package a\nimport "example.com/app/internal/b"\nvar _ = b.X\n',
+            "internal/b/b.go": 'package b\nimport "example.com/app/internal/a"\nvar _ = a.Y\n',
+        },
+    )
+    hits = [f for f in findings if f.check == "import-cycle"]
+    assert len(hits) == 1 and "internal/a -> internal/b -> internal/a" in hits[0].message
+
+
+def test_ruby_require_relative_cycle_fires(tmp_path):
+    findings = scan(
+        tmp_path,
+        {"lib/a.rb": 'require_relative "b"\n', "lib/b.rb": 'require_relative "a"\n'},
+    )
+    hits = [f for f in findings if f.check == "import-cycle"]
+    assert len(hits) == 1 and "lib/a.rb -> lib/b.rb -> lib/a.rb" in hits[0].message
+
+
+def test_acyclic_chain_and_self_import_are_clean(tmp_path):
+    findings = scan(
+        tmp_path,
+        {"a.py": "import b\nimport a\n", "b.py": "import c\n", "c.py": "x = 1\n"},
+    )
+    assert not [f for f in findings if f.check == "import-cycle"]
+
+
+def test_import_cycles_capped_at_eight(tmp_path):
+    files = {}
+    for i in range(10):
+        files[f"c{i}/a.py"] = f"import c{i}.b\n"
+        files[f"c{i}/b.py"] = f"from c{i} import a\n"
+    findings = scan(tmp_path, files)
+    hits = [f for f in findings if f.check == "import-cycle"]
+    assert len(hits) == 8
+
+
+def test_import_cycle_respects_ignore_globs(tmp_path):
+    findings = scan(
+        tmp_path,
+        {"vendored/a.py": "import vendored.b\n", "vendored/b.py": "import vendored.a\n"},
+        extra_globs=["vendored/"],
+    )
+    assert not [f for f in findings if f.check == "import-cycle"]
+
+
+def test_import_cycle_is_registered_advisory_maintainability():
+    assert mod.category_of("import-cycle") == "maintainability"
+    assert "import-cycle" in mod.REMEDIES
+    assert mod.Finding(path="x", line=1, check="import-cycle", message="m", weight=3).advisory
+
+
+def test_long_cycle_chain_renders_bounded(tmp_path):
+    for i in range(12):
+        (tmp_path / f"r{i}.py").write_text(f"import r{(i + 1) % 12}\n", encoding="utf-8")
+    hits = [
+        f
+        for f in scan(tmp_path, {})
+        if f.check == "import-cycle"
+    ]
+    assert len(hits) == 1
+    assert "... ->" in hits[0].message and "12 modules" in hits[0].message

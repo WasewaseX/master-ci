@@ -91,6 +91,9 @@ CHECK_CATEGORIES: dict[str, str] = {
     "lint-escape": "maintainability",
     "ts-suppression": "maintainability",
     "blanket-suppression": "maintainability",
+    # v2.0: the module dependency graph. An undeclared cycle is design
+    # debt, not a declared-law violation - maintainability, not architecture.
+    "import-cycle": "maintainability",
     # Security: injection surfaces and credential handling.
     "eval-usage": "security",
     "placeholder-credential": "security",
