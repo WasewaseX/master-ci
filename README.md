@@ -83,7 +83,7 @@ which keeps its baseline reproducible across template releases:
 ```yaml
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v2.8.1
+      template_ref: v2.9.0
 ```
 
 ### Required check
@@ -103,7 +103,7 @@ alone cannot fail on a red CodeQL analysis (audit finding F). Two honest
 shapes:
 
 - **One required check (recommended):** call
-  `WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.8.1`
+  `WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.9.0`
   instead of `master-ci.yml` and require **`required-quality-check / gate`**.
   The first segment is the job id the caller gives the call, so the
   example below names its job `required-quality-check`; a caller naming
@@ -116,7 +116,7 @@ shapes:
   ```yaml
   jobs:
     required-quality-check:
-      uses: WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.8.1
+      uses: WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.9.0
       permissions:
         contents: read
         security-events: write
@@ -731,7 +731,7 @@ Nightly ──> audit tracking issue (secrets, vulns, prose: humans)
 | **Self-Heal** | `heal.yml` | after CI failures on the default branch | Applies the **same fix engine** reactively, opens/updates the `ci/autofix` PR; circuit breakers: default-branch failures only, one heal at a time, stops while a fix PR is open |
 | Deep sweep | `nightly.yml` | nightly + manual | Full-severity Trivy, CodeQL quality suites, verbose AI report |
 | **Flake hunt** | `flaky.yml` | weekly (Mondays) + manual | Runs the test suite 2-5 times in one job and reports every test whose verdict changed between iterations; a committed `.flaky-baseline.json` quarantines known flakes and fails the hunt on a *new* one - test assurance's third leg, beside coverage and mutation |
-| **Mutation testing** | `mutation.yml` | weekly (Mondays) + manual | Opt-in by declaration - `[tool.mutmut]` (Python), `stryker.conf.*` (Node), `.cargo-mutants.toml` (Rust), `.gremlins.yaml` (Go, thresholds are the gate) - surviving mutants fail the run: the weekly proof that the tests can fail |
+| **Mutation testing** | `mutation.yml` | weekly (Mondays) + manual | Opt-in by declaration - `[tool.mutmut]` (Python), `stryker.conf.*` (Node), `.cargo-mutants.toml` (Rust), `.gremlins.yaml` (Go, thresholds are the gate) - surviving mutants fail the run: the weekly proof that the tests can fail. Since v2.9 it is also a reusable workflow: call it from your own scheduled wrapper, one pinned line |
 | **Deep Audit** | `audit.yml` | weekly (Saturdays) + manual | Whole-repository sweep - full git history (gitleaks), every file (integrity engine), every dependency manifest (osv-scanner), Go modules (govulncheck), SQL (sqlfluff) - one tracking issue labeled `audit`; never gates CI. Its completion is the trigger for the Autofix response above |
 | Housekeeping | `stale.yml` | weekly | Marks and closes inactive issues and PRs (never security-labeled ones) |
 | Auto-label | `label.yml` | every PR | Labels PRs by touched paths |
@@ -768,7 +768,7 @@ carries a `SKILL.md`, so assistants with a skills directory can load it
 with one command:
 
 ```bash
-git clone --depth 1 --branch v2.8.1 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+git clone --depth 1 --branch v2.9.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
 ```
 
 MCP clients configure the same install like this:
@@ -1001,6 +1001,22 @@ a server. The template stays what it is - the coordinator of proven
 analyzers (CodeQL for deep semantics, Semgrep for security, the
 language toolchains for their own truths) - never a pile of homemade
 heuristics.
+
+And since v2.9: the **callable proof** - mutation testing joins the
+reusable surface. `mutation.yml` no longer has to be copied whole the
+way `flaky.yml` still requires; it now takes `workflow_call` with
+the codeql.yml helper contract (explicit `template_repo`, `template_ref`
+defaulting to the moving `v2` tag), so one pinned `uses:` line from the
+caller's own scheduled wrapper is the whole adoption - and the caller
+keeps owning its schedule. Opt-in stays a declaration in the calling
+repository: the detection step reads the caller's checkout, so a call
+without a committed mutation config reports "nothing ran" and passes.
+The dashboard's Mutation testing row is now verified the way the CodeQL
+row has been since v2.7 - both reporting tables grep the caller's own
+workflow files for the call, and the row flips to *armed via own
+workflow* only when the call is really committed. Every workflow file
+is scanned, not just the first hit: a mutation call in a file sorted
+after the aggregate's must still be seen.
 
 ## License
 

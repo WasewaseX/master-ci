@@ -427,6 +427,19 @@ Profile presets (quick / standard / strict / custom) only change the
   breached; without declared thresholds gremlins never trips, so the
   config file is the gate). Every install is pinned in
   `configs/tool-versions.yml`.
+  **Adoption (v2.9):** `mutation.yml` is a reusable workflow as well as
+  a scheduled one. The consumer owns the schedule trigger - a called
+  workflow cannot carry one - by wrapping one job that calls
+  `WasewaseX/master-ci/.github/workflows/mutation.yml@<pinned tag>`
+  with `template_repo` / `template_ref` (defaults: `WasewaseX/master-ci`
+  @ `v2`, the `codeql.yml` contract: a cross-repo call cannot
+  auto-detect the helper repo because `GITHUB_WORKFLOW_REF` names the
+  caller there). Opt-in stays a declaration in the calling repository:
+  the detection step reads the caller's checkout, and a call without a
+  committed mutation config reports that nothing ran. The Test
+  assurance tables verify the call the way they verify the CodeQL one -
+  the Mutation testing row flips to *armed via own workflow* only when
+  the call is really committed.
 - **v2.0 - the module dependency graph (`import-cycle`, advisory):**
   the repo-level structural verification that closes the roadmap's
   "deeper analysis" arc. `slop_cycles.py` builds a module dependency
@@ -764,10 +777,14 @@ Profile presets (quick / standard / strict / custom) only change the
   off state of the coverage floor, new-code ceilings, quality ratchet,
   mutation testing and the flake hunt, each with its one-line enable
   hint - an opt-in layer is reported, never silently absent. The
-  **Semantic analysis (CodeQL)** row (v2.7) is the first verified one:
-  both jobs check out the calling repository and grep its own workflow
-  files for the `codeql.yml` call, so the row shows *armed via own
-  workflow* only when the call is really committed.
+  **Semantic analysis (CodeQL)** row (v2.7) and the **Mutation
+  testing** row (v2.9) are the verified ones: both jobs check out the
+  calling repository and grep its own workflow files for the
+  `codeql.yml`, `required-quality.yml` or `mutation.yml` call, so a row
+  shows *armed via own workflow* only when the call is really
+  committed. The grep scans every workflow file, not just the first
+  hit - a call in a file sorted after the aggregate's must still be
+  seen.
 
 ## `codeql.yml` - CodeQL Advanced, semantic security analysis (standalone)
 
@@ -905,7 +922,10 @@ one JSON read and a diff - seconds, no additional tooling.
   on Mondays plus manual dispatch with an `iterations` input (2-5,
   default 3). It is a standalone scheduled workflow, like
   `mutation.yml` - it never gates PRs and is never part of
-  `ci-success`.
+  `ci-success`. Unlike `mutation.yml` (reusable since v2.9), the hunt
+  is not callable: a consumer adopts it by copying the workflow and
+  pinning the helper default, because the quarantine loop needs the
+  write-holding job to live where the caller's token can open PRs.
 - **What it does:** runs the repository's own test suite N times in one
   job, reads every `run-<i>` result file the iterations produced, and
   classifies each test: **flaky** (both a pass and a fail across

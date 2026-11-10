@@ -2643,14 +2643,16 @@ jobs:
               print(f"| Quality ratchet | opted-in when `{ratchet_file}` is committed |")
           else:
               print(f"| Quality ratchet | off - commit `{ratchet_file}` or set `ratchet: true` |")
-          print("| Mutation testing | scheduled workflow (`mutation.yml`) - opt-in, Python, Node, Go and Rust |")
           print("| Flake hunt | scheduled workflow (`flaky.yml`) - arms when `.flaky-baseline.json` is committed |")
           # Verified, not declared: the caller's own workflow files are
-          # grepped for the codeql.yml or required-quality.yml call, so
-          # the row cannot claim an analysis that is not wired.
+          # grepped for the codeql.yml, required-quality.yml or
+          # mutation.yml call, so a row cannot claim an analysis that is
+          # not wired. Every file is scanned - a call in a file sorted
+          # after the aggregate's must still be seen.
           workflows_dir = Path(".github/workflows")
           codeql_wf = ""
           aggregate_wf = ""
+          mutation_wf = ""
           if workflows_dir.is_dir():
               for wf in sorted(workflows_dir.glob("*.y*ml")):
                   try:
@@ -2659,15 +2661,20 @@ jobs:
                       continue
                   if not codeql_wf and "workflows/codeql.yml@" in text:
                       codeql_wf = wf.name
-                  if "workflows/required-quality.yml@" in text:
+                  if not aggregate_wf and "workflows/required-quality.yml@" in text:
                       aggregate_wf = wf.name
-                      break
+                  if not mutation_wf and "workflows/mutation.yml@" in text:
+                      mutation_wf = wf.name
           if aggregate_wf:
               print(f"| Semantic analysis (CodeQL) | armed via required-quality aggregate - `{aggregate_wf}` calls `required-quality.yml` (master + CodeQL, one required check) |")
           elif codeql_wf:
               print(f"| Semantic analysis (CodeQL) | armed via own workflow - `{codeql_wf}` calls `codeql.yml` |")
           else:
               print("| Semantic analysis (CodeQL) | off - add `uses: WasewaseX/master-ci/.github/workflows/codeql.yml@v2` (auto-detects languages) |")
+          if mutation_wf:
+              print(f"| Mutation testing | armed via own workflow - `{mutation_wf}` calls `mutation.yml` |")
+          else:
+              print("| Mutation testing | off - add a scheduled caller of `mutation.yml` (opt-in by declaration, Python, Node, Go and Rust) |")
           print()
           print("Findings: Security tab, inline annotations, step summaries.")
           PY
@@ -2845,21 +2852,19 @@ jobs:
                           ),
                       ),
                       (
-                          "Mutation testing",
-                          "scheduled workflow (`mutation.yml`) - opt-in, Python, Node, Go and Rust",
-                      ),
-                      (
                           "Flake hunt",
                           "scheduled workflow (`flaky.yml`) - arms when `.flaky-baseline.json` is committed",
                       ),
                   ]
                   # Verified, not declared: the caller's own workflow files
-                  # are grepped for the codeql.yml or required-quality.yml
-                  # call, so the row cannot claim an analysis that is not
-                  # wired.
+                  # are grepped for the codeql.yml, required-quality.yml or
+                  # mutation.yml call, so a row cannot claim an analysis
+                  # that is not wired. Every file is scanned - a call in a
+                  # file sorted after the aggregate's must still be seen.
                   workflows_dir = Path(".github/workflows")
                   codeql_wf = ""
                   aggregate_wf = ""
+                  mutation_wf = ""
                   if workflows_dir.is_dir():
                       for wf in sorted(workflows_dir.glob("*.y*ml")):
                           try:
@@ -2868,9 +2873,10 @@ jobs:
                               continue
                           if not codeql_wf and "workflows/codeql.yml@" in text:
                               codeql_wf = wf.name
-                          if "workflows/required-quality.yml@" in text:
+                          if not aggregate_wf and "workflows/required-quality.yml@" in text:
                               aggregate_wf = wf.name
-                              break
+                          if not mutation_wf and "workflows/mutation.yml@" in text:
+                              mutation_wf = wf.name
                   if aggregate_wf:
                       assurance.append(
                           (
@@ -2893,6 +2899,21 @@ jobs:
                               "Semantic analysis (CodeQL)",
                               "off - add `uses: WasewaseX/master-ci/.github/workflows/codeql.yml@v2` "
                               "(auto-detects languages)",
+                          )
+                      )
+                  if mutation_wf:
+                      assurance.append(
+                          (
+                              "Mutation testing",
+                              f"armed via own workflow - `{mutation_wf}` calls `mutation.yml`",
+                          )
+                      )
+                  else:
+                      assurance.append(
+                          (
+                              "Mutation testing",
+                              "off - add a scheduled caller of `mutation.yml` "
+                              "(opt-in by declaration, Python, Node, Go and Rust)",
                           )
                       )
                   handle.write("### Test assurance\n\n| Layer | State |\n|---|---|\n")

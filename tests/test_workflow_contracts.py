@@ -1696,3 +1696,56 @@ def test_doc_workflow_refs_move_with_the_release():
         f"(a stale exact pin sends consumers to a tag whose contract may "
         f"differ): {stale}"
     )
+
+
+# ---------------------------------------------------------------------------
+# v2.9: the callable proof - mutation.yml becomes a reusable workflow and
+# the Mutation testing row is verified, not declared
+# ---------------------------------------------------------------------------
+
+
+def test_mutation_workflow_is_callable():
+    """A scheduled surface a foreign repository cannot call is a
+    capability the consumer must copy by hand. mutation.yml joins
+    codeql.yml as a reusable workflow: the caller owns the schedule
+    trigger (a called workflow cannot carry one), the call is one pinned
+    line, and the helper defaults follow the codeql contract -
+    template_repo explicit, because GITHUB_WORKFLOW_REF names the
+    caller's workflow on a cross-repo call and auto-detection would
+    fetch helpers from the wrong repo. The self-run triggers keep their
+    own inputs: the weekly schedule passes none, so the resolve step's
+    auto-detection still serves the template's own runs."""
+    data = load(WF_DIR / "mutation.yml")
+    on = _on(data)
+    assert set(on) >= {"schedule", "workflow_call", "workflow_dispatch"}
+    assert on["schedule"] == [{"cron": "0 3 * * 1"}]
+    call = on["workflow_call"]["inputs"]
+    assert call["template_repo"]["default"] == "WasewaseX/master-ci"
+    assert call["template_ref"]["default"] == "v2"
+    dispatch = on["workflow_dispatch"]["inputs"]
+    assert dispatch["template_repo"]["default"] == ""
+    assert dispatch["template_ref"]["default"] == "main"
+    assert data["permissions"] == {"contents": "read"}
+    text = (WF_DIR / "mutation.yml").read_text(encoding="utf-8")
+    # one job serves every trigger; the helper inputs reach it through
+    # the same env passthrough the self-run uses
+    assert text.count("TEMPLATE_REPO_INPUT: ${{ inputs.template_repo }}") == 1
+    assert text.count("TEMPLATE_REF: ${{ inputs.template_ref }}") == 1
+    assert "tool=none" in text, "opt-in stays a declaration in the caller's checkout"
+
+
+def test_assurance_verifies_mutation_wiring(master_ci_text: str):
+    """The Mutation testing row is verified, not declared: dashboard and
+    ci-success grep the caller's workflow files for the mutation.yml
+    call before claiming the layer is armed - two states, both tables.
+    The scan must reach every workflow file: the old loop stopped at the
+    aggregate's file, which would hide a mutation call in a file sorted
+    after it."""
+    text = master_ci_text
+    assert text.count("armed via own workflow - `{mutation_wf}` calls `mutation.yml`") == 2
+    assert text.count("off - add a scheduled caller of `mutation.yml`") == 2
+    assert text.count('"workflows/mutation.yml@" in text') == 2
+    assert text.count('mutation_wf = ""') == 2
+    # the declared row that claimed a scheduled workflow unconditionally
+    # is gone from both tables
+    assert "scheduled workflow (`mutation.yml`)" not in text

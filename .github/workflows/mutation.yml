@@ -19,6 +19,18 @@
 # project's own dependencies are installed first: a fresh runner
 # without them would measure mutants against a bare environment, which
 # reports false survivors (or false kills).
+#
+# Since v2.9 this workflow is also a reusable workflow: a consumer calls
+# it from its own scheduled (or dispatched) wrapper, because a called
+# workflow cannot carry a schedule trigger:
+#   uses: WasewaseX/master-ci/.github/workflows/mutation.yml@v2.9.0
+# The helper defaults follow the codeql.yml contract - template_repo is
+# explicit so a cross-repo call never fetches helpers from the caller
+# (GITHUB_WORKFLOW_REF names the caller's workflow there), and
+# template_ref defaults to the moving v2 tag; pin an exact vX.Y.Z to
+# freeze behavior. Opting in stays a declaration in the CALLING repo:
+# the detection step reads the caller's checkout, so a call without a
+# committed mutation config reports "nothing ran" and passes.
 # ===============================================================================
 
 name: Mutation Testing
@@ -26,6 +38,20 @@ name: Mutation Testing
 on:
   schedule:
     - cron: '0 3 * * 1'
+  workflow_call:
+    inputs:
+      template_repo:
+        description: Repo holding master-ci helpers (override for forks)
+        required: false
+        type: string
+        default: WasewaseX/master-ci
+      template_ref:
+        description: >-
+          Ref of template_repo to fetch helpers from. The v2 tag moves
+          with every release; pin an exact vX.Y.Z tag to freeze behavior.
+        required: false
+        type: string
+        default: v2
   workflow_dispatch:
     inputs:
       template_repo:
