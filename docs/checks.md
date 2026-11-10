@@ -790,6 +790,16 @@ Both jobs gate on the merge-base diff (`diff_base`), fetch the ref with the
 shared `fetch_diff_base.sh` helper, and fail closed: a requested gate that
 cannot be evaluated is exit 2, never a silent pass.
 
+On a `pull_request` event the runner checks out the merge ref at depth 1,
+so no common history exists and the merge-base (three-dot) diff cannot be
+computed even though both refs resolve - the hosted canary PR exercise
+hit exactly that (exit 128 on `origin/main...HEAD`). The shared diff
+(v2.7.2) then falls back to the two-dot tree diff, which needs no
+ancestry: on a merge ref the tree already contains the base branch, so
+the tree diff is exactly the change under review. If both forms fail the
+gate still exits 2 - the fallback widens what can be measured, never what
+passes.
+
 - `coverage-gate` (v1.21) enforces `coverage_min` against every uploaded
   report (coverage.json, Cobertura XML, Go coverprofile, JaCoCo XML -
   v2.6 dispatches on the XML root tag, so cargo-llvm-cov's cobertura
@@ -811,7 +821,8 @@ cannot be evaluated is exit 2, never a silent pass.
     over-approximation on purpose: a gate may over-flag a legacy
     neighbor, never miss a new offender.
   - `new_code_gates: false` disables the whole job. Exit 1 = a ceiling
-    breached by the change; exit 2 = no diff base, git failure, or a
+    breached by the change; exit 2 = no diff base, git failure (with the
+    v2.7.2 shallow-checkout tree-diff fallback in between), or a
     missing parser under a requested ceiling (v2.5 parser guarantee:
     lizard is demanded for the cyclomatic ceiling and tree-sitter for
     the cognitive ceiling - the job installs the pins from

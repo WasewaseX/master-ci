@@ -193,6 +193,83 @@ def test_git_changed_lines_reads_real_diff(git_repo):
     assert changed == {"mod.py": {3, 4, 5, 6, 7, 8, 9, 10}}
 
 
+def _shallow_merge_ref(tmp_path: Path) -> Path:
+    """A runner-shaped pull_request checkout, built locally.
+
+    The upstream repo holds main at the base commit, a feature branch,
+    and a merge commit on a pr-merge ref (mirroring GitHub's
+    refs/pull/N/merge, which exists before the PR is merged). The
+    checkout fetches the base branch and the merge ref at depth 1 -
+    exactly what actions/checkout does for pull_request events with
+    fetch-depth: 1 - so neither side carries the common history.
+    """
+    src = tmp_path / "src"
+    src.mkdir()
+    _git(src, "init", "-q", "-b", "main")
+    _git(src, "config", "user.email", "t@example.com")
+    _git(src, "config", "user.name", "t")
+    (src / "mod.py").write_text("def a():\n    return 1\n", encoding="utf-8")
+    _git(src, "add", ".")
+    _git(src, "commit", "-qm", "base")  # main tip: the PR base
+    _git(src, "checkout", "-qb", "feature")
+    (src / "mod.py").write_text(
+        "def a():\n    return 1\n\n\ndef b():\n    return 2\n\n\ndef c():\n    return 3\n",
+        encoding="utf-8",
+    )
+    _git(src, "add", ".")
+    _git(src, "commit", "-qm", "feature")  # the change under review
+    _git(src, "checkout", "-q", "main")
+    _git(src, "checkout", "-qb", "pr-merge")
+    _git(src, "merge", "--no-ff", "-qm", "merge", "feature")  # refs/pull/N/merge
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    _git(checkout, "init", "-q")
+    _git(checkout, "config", "user.email", "t@example.com")
+    _git(checkout, "config", "user.name", "t")
+    _git(checkout, "remote", "add", "origin", f"file://{src}")
+    _git(
+        checkout,
+        "fetch",
+        "--depth=1",
+        "-q",
+        "origin",
+        "+refs/heads/main:refs/remotes/origin/main",
+    )
+    _git(
+        checkout,
+        "fetch",
+        "--depth=1",
+        "-q",
+        "origin",
+        "+refs/heads/pr-merge:refs/remotes/pull/1/merge",
+    )
+    _git(checkout, "checkout", "-q", "refs/remotes/pull/1/merge")
+    return checkout
+
+
+def test_git_changed_lines_survives_shallow_pull_request_checkout(tmp_path):
+    checkout = _shallow_merge_ref(tmp_path)
+    # The hosted canary PR run's exact failure mode: both refs resolve,
+    # but the depth-1 merge ref shares no recorded history with the
+    # base, so the merge-base (three-dot) diff exits 128.
+    raw = subprocess.run(
+        ["git", "diff", "--unified=0", "origin/main...HEAD"],
+        cwd=checkout,
+        capture_output=True,
+        text=True,
+    )
+    assert raw.returncode == 128
+    # The tree-diff fallback still reads the change under review.
+    changed = cg.git_changed_lines(checkout, "origin/main")
+    assert changed == {"mod.py": {3, 4, 5, 6, 7, 8, 9, 10}}
+
+
+def test_git_changed_lines_fails_closed_when_no_diff_is_possible(tmp_path):
+    checkout = _shallow_merge_ref(tmp_path)
+    with pytest.raises(cg.CoverageGateError):
+        cg.git_changed_lines(checkout, "origin/missing-base")
+
+
 def test_new_code_view_counts_intersection_only():
     report = cg.CoverageReport(
         "python-json",

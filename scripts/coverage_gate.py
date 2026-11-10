@@ -114,17 +114,45 @@ def _flush_hunk(
         changed[current] |= _hunk_added_lines(hunk_rows, start, count)
 
 
-def git_changed_lines(root: Path, base: str) -> dict[str, set[int]]:
-    """Added lines per file between base (merge-base diff) and HEAD."""
+def _diff_raw(root: Path, spec: str) -> str:
+    """Run one unified=0 diff and return its stdout; raise on failure."""
+    return subprocess.run(
+        ["git", "diff", "--unified=0", spec],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=120,
+    ).stdout
+
+
+def _diff_change(root: Path, base: str) -> str:
+    """Diff text of the change under review against base.
+
+    Primary reading is the merge-base (three-dot) diff. On a
+    pull_request checkout the runner fetches the merge ref at depth 1,
+    so neither side carries the common history and three-dot fails with
+    exit 128 (no merge base) even though both refs resolve - the hosted
+    canary PR exercise hit exactly that. The fallback is the two-dot
+    tree diff, which needs no ancestry: on a merge ref the tree already
+    contains the base branch, so the tree diff is exactly the change
+    under review. Both failing is fatal - the gate never guesses.
+    """
     try:
-        raw = subprocess.run(
-            ["git", "diff", "--unified=0", f"{base}...HEAD"],
-            cwd=root,
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=120,
-        ).stdout
+        return _diff_raw(root, f"{base}...HEAD")
+    except (subprocess.SubprocessError, OSError):
+        return _diff_raw(root, f"{base}..HEAD")
+
+
+def git_changed_lines(root: Path, base: str) -> dict[str, set[int]]:
+    """Added lines per file between base and HEAD.
+
+    The diff semantics - merge-base first, tree-diff fallback on the
+    shallow pull_request checkout - live in `_diff_change`; the gate
+    maps every git failure to its own fail-closed error.
+    """
+    try:
+        raw = _diff_change(root, base)
     except (subprocess.SubprocessError, OSError) as exc:
         raise CoverageGateError(f"git diff against {base!r} failed: {exc}") from exc
     changed: dict[str, set[int]] = {}
