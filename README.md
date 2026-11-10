@@ -83,7 +83,7 @@ which keeps its baseline reproducible across template releases:
 ```yaml
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v2.8.0
+      template_ref: v2.8.1
 ```
 
 ### Required check
@@ -97,7 +97,7 @@ reusable workflow, so a branch protection rule on `ci-success` alone cannot
 fail on a red CodeQL analysis (audit finding F). Two honest shapes:
 
 - **One required check (recommended):** call
-  `WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.8.0`
+  `WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.8.1`
   instead of `master-ci.yml` and require **`required-quality-check / gate`**.
   The aggregate calls master-ci.yml and codeql.yml itself and its gate is
   green only when both succeeded - a skipped or failed CodeQL run is a red
@@ -746,7 +746,7 @@ carries a `SKILL.md`, so assistants with a skills directory can load it
 with one command:
 
 ```bash
-git clone --depth 1 --branch v2.8.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+git clone --depth 1 --branch v2.8.1 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
 ```
 
 MCP clients configure the same install like this:

@@ -1648,3 +1648,44 @@ def test_required_quality_gate_fails_closed():
     assert '[ "$master" != "success" ]' in run
     assert '[ "$codeql" != "success" ]' in run
     assert "exit $fail" in run
+
+
+def test_required_quality_check_name_matches_the_docs():
+    """Branch protection sees '<workflow name> / <job id>'; README and
+    examples/ci.yml tell callers to require 'required-quality-check /
+    gate'. The name in the file is the contract - the v2.8.0 tag shipped
+    'Required quality check', a name the docs never mention, so callers
+    following the docs configured a required check that never reports."""
+    aggregate = load(WF_DIR / "required-quality.yml")
+    assert aggregate["name"] == "required-quality-check"
+    for doc in ("README.md", "examples/ci.yml"):
+        text = (ROOT / doc).read_text(encoding="utf-8")
+        assert "required-quality-check / gate" in text, (
+            f"{doc} must state the required check name exactly as the aggregate names it"
+        )
+
+
+def test_doc_workflow_refs_move_with_the_release():
+    """An exact pin in the docs is a promise about that tag's behavior:
+    the README hands consumers required-quality.yml@v2.8.0 while the fix
+    for that tag's stale check name lived unreleased on main, so every
+    reader kept being pointed at the mismatched tag. Any exact vX.Y.Z
+    workflow ref in README, SKILL.md, docs/ or examples/ must be the
+    release baseline; the @v2 major tag stays the documented default."""
+    mcp = _load_mcp_server()
+    baseline = f"v{mcp.SERVER_VERSION}"
+    docs = [ROOT / "README.md", ROOT / "SKILL.md"]
+    docs += sorted((ROOT / "docs").glob("*.md"))
+    docs += sorted((ROOT / "examples").glob("*.yml"))
+    stale = []
+    for path in docs:
+        text = path.read_text(encoding="utf-8")
+        pattern = r"WasewaseX/master-ci/\.github/workflows/[\w-]+\.yml@(v\d+\.\d+\.\d+)"
+        for ref in re.findall(pattern, text):
+            if ref != baseline:
+                stale.append(f"{path.name}: {ref}")
+    assert not stale, (
+        f"docs pin an exact release other than the baseline {baseline} "
+        f"(a stale exact pin sends consumers to a tag whose contract may "
+        f"differ): {stale}"
+    )
