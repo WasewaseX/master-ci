@@ -381,23 +381,23 @@ def test_low_new_coverage_check_is_advisory_test_assurance():
 JACOCO_XML = """<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE report PUBLIC "-//JACOCO//DTD Report 1.1//EN" "report.dtd">
 <report name="demo">
-  <sessioninfo id="x" start="1" dump="2"/>
-  <package name="com/example/app">
-    <class name="com/example/app/Foo" sourcefilename="Foo.java">
-      <counter type="INSTRUCTION" missed="0" covered="10"/>
-    </class>
-    <sourcefile name="Foo.java">
-      <line nr="1" mi="0" ci="5" mb="0" cb="0"/>
-      <line nr="2" mi="4" ci="0" mb="0" cb="0"/>
-      <line nr="3" mi="0" ci="7" mb="0" cb="0"/>
-    </sourcefile>
-    <sourcefile name="Bar.kt">
-      <line nr="1" mi="0" ci="9" mb="0" cb="0"/>
-    </sourcefile>
-  </package>
-  <counter type="INSTRUCTION" missed="4" covered="16"/>
-  <counter type="LINE" missed="1" covered="3"/>
-  <counter type="CLASS" missed="0" covered="2"/>
+    <sessioninfo id="x" start="1" dump="2"/>
+    <package name="com/example/app">
+        <class name="com/example/app/Foo" sourcefilename="Foo.java">
+            <counter type="INSTRUCTION" missed="0" covered="10"/>
+        </class>
+        <sourcefile name="Foo.java">
+            <line nr="1" mi="0" ci="5" mb="0" cb="0"/>
+            <line nr="2" mi="4" ci="0" mb="0" cb="0"/>
+            <line nr="3" mi="0" ci="7" mb="0" cb="0"/>
+        </sourcefile>
+        <sourcefile name="Bar.kt">
+            <line nr="1" mi="0" ci="9" mb="0" cb="0"/>
+        </sourcefile>
+    </package>
+    <counter type="INSTRUCTION" missed="4" covered="16"/>
+    <counter type="LINE" missed="1" covered="3"/>
+    <counter type="CLASS" missed="0" covered="2"/>
 </report>
 """
 

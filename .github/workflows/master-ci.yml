@@ -1038,6 +1038,8 @@ jobs:
           # Exit 1 = a floor is breached, exit 2 = the gate cannot be
           # evaluated (no report / corrupt report / fetch failure). Both
           # fail the run: a requested gate is a contract, not advice.
+          # GATE_ARGS is a flag list by design; word splitting is the point.
+          # shellcheck disable=SC2086
           python3 _ci/scripts/coverage_gate.py . $GATE_ARGS | tee gate-report.md
           rc=${PIPESTATUS[0]}
           if [ -f gate-report.md ]; then

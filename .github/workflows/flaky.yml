@@ -243,11 +243,11 @@ jobs:
           for i in $(seq 1 "$ITERATIONS"); do
             dotnet test --logger "trx;LogFilePrefix=raw-$i-" \
               --results-directory flaky-results || true
-            for f in flaky-results/raw-$i-*.trx; do
+            for f in flaky-results/raw-"$i"-*.trx; do
               [ -f "$f" ] || continue
-              mv "$f" "flaky-results/run-$i-${f##*/raw-$i-}"
+              mv "$f" "flaky-results/run-$i-${f##*/raw-"$i"-}"
             done
-            ls flaky-results/run-$i-*.trx >/dev/null 2>&1 || \
+            ls flaky-results/run-"$i"-*.trx >/dev/null 2>&1 || \
               echo "::warning::dotnet iteration $i produced no TRX"
           done
       # --- Ruby: RSpec JUnit formatter ------------------------------------------
@@ -299,6 +299,8 @@ jobs:
             echo "No .flaky-baseline.json committed - report-only mode."
             echo "Adopt enforcement by committing the baseline this run produces."
           fi
+          # args accumulates CLI flags by design; word splitting is the point.
+          # shellcheck disable=SC2086
           python3 _ci/scripts/flaky_detect.py $args | tee flaky-summary.md
       - name: Verdict for the quarantine loop
         if: always()
