@@ -17,7 +17,7 @@
 # committed manifests. Every master-ci input is forwarded 1:1.
 # =============================================================================
 
-name: Required quality check
+name: required-quality-check
 
 on:
   workflow_call:
