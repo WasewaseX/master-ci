@@ -20,7 +20,7 @@ release tag (v2.7.2 - one clear stable baseline, kept in lockstep with
 the MCP server version and the GitHub Release):
 
 ```bash
-git clone --depth 1 --branch v2.7.2 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+git clone --depth 1 --branch v2.8.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
 ```
 
 MCP clients configure it the same way Claude Desktop does:

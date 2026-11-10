@@ -1,0 +1,369 @@
+# =============================================================================
+# Required quality check - the single check that gates on everything
+# =============================================================================
+# The external audit's finding F: ci-success aggregates the master-ci
+# jobs, but CodeQL rides a separate reusable workflow - so branch
+# protection requiring only ci-success could not fail on a red CodeQL
+# analysis. This aggregate is the fix: it calls master-ci.yml AND
+# codeql.yml, and exposes exactly one gate job whose only input is the
+# pair of results. Require `required-quality-check / gate` in branch
+# protection and a failed CodeQL analysis blocks the merge, same as a
+# failed quality gate. Callers who prefer separate required checks can
+# keep calling the two workflows directly (documented in the README);
+# the aggregate exists so the default shape cannot be mis-armed.
+#
+# Zero configuration: with no inputs at all, master-ci runs the
+# standard profile and CodeQL auto-detects languages from the
+# committed manifests. Every master-ci input is forwarded 1:1.
+# =============================================================================
+
+name: Required quality check
+
+on:
+  workflow_call:
+
+    inputs:
+      profile:
+        description: 'quick | standard | strict | custom - preset enforcement table'
+        required: false
+        type: string
+        default: standard
+      runs_on:
+        description: Runner label for every job (e.g. ubuntu-latest, macos-latest)
+        required: false
+        type: string
+        default: ubuntu-latest
+      node_version:
+        description: Node.js version for the TypeScript/Node stack
+        required: false
+        type: string
+        default: '22'
+      python_version:
+        description: Python version for the Python stack
+        required: false
+        type: string
+        default: '3.13'
+      rust_toolchain:
+        description: Rust toolchain for the Rust stack
+        required: false
+        type: string
+        default: 'stable'
+      run_node:
+        description: 'auto | true | false - run the Node/TS stack'
+        required: false
+        type: string
+        default: auto
+      run_python:
+        description: 'auto | true | false - run the Python stack'
+        required: false
+        type: string
+        default: auto
+      run_rust:
+        description: 'auto | true | false - run the Rust stack'
+        required: false
+        type: string
+        default: auto
+      run_go:
+        description: 'auto | true | false - run the Go stack'
+        required: false
+        type: string
+        default: auto
+      go_version:
+        description: Go toolchain for the Go stack
+        required: false
+        type: string
+        default: 'stable'
+      run_java:
+        description: 'auto | true | false - run the JVM stack (Java, Kotlin, Scala via Maven/Gradle)'
+        required: false
+        type: string
+        default: auto
+      java_version:
+        description: JDK version for the JVM stack (Temurin)
+        required: false
+        type: string
+        default: '21'
+      run_cpp:
+        description: 'auto | true | false - run the C/C++ stack'
+        required: false
+        type: string
+        default: auto
+      run_csharp:
+        description: 'auto | true | false - run the .NET stack (C#/F#)'
+        required: false
+        type: string
+        default: auto
+      dotnet_version:
+        description: .NET SDK for the .NET stack (ignored when global.json pins one)
+        required: false
+        type: string
+        default: '10.0'
+      run_ruby:
+        description: 'auto | true | false - run the Ruby stack'
+        required: false
+        type: string
+        default: auto
+      ruby_version:
+        description: Ruby version for the Ruby stack
+        required: false
+        type: string
+        default: '3.4'
+      run_php:
+        description: 'auto | true | false - run the PHP stack'
+        required: false
+        type: string
+        default: auto
+      php_version:
+        description: PHP version for the PHP stack
+        required: false
+        type: string
+        default: '8.4'
+      run_docker:
+        description: 'auto | true | false - run the Docker stack (hadolint, image build, image scan)'
+        required: false
+        type: string
+        default: auto
+      select:
+        description: >-
+          Comma-separated job names to run (empty = all): hygiene, secrets,
+          ai-integrity, docs, node-lint, node-test, python, rust, go-lint,
+          go-test, java, cpp, csharp, ruby, php, docker, security,
+          deps-review, scorecard. Unknown names fail the run in meta -
+          never silently skipped.
+        required: false
+        type: string
+        default: ''
+      semgrep_config:
+        description: Space-separated Semgrep registry packs (used by standard/strict/custom)
+        required: false
+        type: string
+        default: 'p/default p/security-audit p/secrets'
+      fail_on_ai_slop:
+        description: 'Fail the build on AI-integrity blocking score (advisory by default)'
+        required: false
+        type: boolean
+        default: false
+      ai_slop_max_score:
+        description: Blocking score cap tolerated by the AI-integrity detector
+        required: false
+        type: number
+        default: 8
+      ai_slop_max_deficit:
+        description: 'Project slop-score ceiling (0=clean..100=awful); PRs above it fail when fail_on_ai_slop is set'
+        required: false
+        type: number
+        default: 30
+      complexity_max:
+        description: Max cyclomatic complexity per function
+        required: false
+        type: number
+        default: 15
+      duplication_threshold_pct:
+        description: Max allowed duplicated code percentage
+        required: false
+        type: number
+        default: 5
+      coverage_min:
+        description: >-
+          Measured coverage floor in percent (0 = off). Above 0, the
+          Python/Go/Node stacks run tests under coverage and upload the
+          report as an artifact; ai-integrity consumes it and fails below
+          the floor. A requested floor with no report fails closed
+          (exit 2), never silently passes.
+        required: false
+        type: number
+        default: 0
+      diff_base:
+        description: >-
+          Git ref (e.g. origin/main) defining the new-code coverage
+          window: the same coverage_min floor then applies to the lines
+          the change adds (merge-base diff). Empty disables the
+          new-code gate. When set, it also enables the new-code
+          dimension ceilings unless new_code_gates is false.
+        required: false
+        type: string
+        default: ''
+      new_code_gates:
+        description: >-
+          Enforce the new-code dimension ceilings on the merge-base diff
+          (requires diff_base): zero blocking findings plus cognitive 15
+          and cyclomatic 15 on the functions the change touches, by
+          default. Legacy files keep their history; every added line
+          must meet today's bar.
+        required: false
+        type: boolean
+        default: true
+      new_code_max_slop:
+        description: Blocking-score ceiling for findings on added lines (0 = zero tolerance)
+        required: false
+        type: number
+        default: 0
+      new_code_max_cognitive:
+        description: Cognitive-complexity ceiling for touched functions (0 = off)
+        required: false
+        type: number
+        default: 15
+      new_code_max_cyclomatic:
+        description: Cyclomatic-complexity ceiling for touched functions (0 = off)
+        required: false
+        type: number
+        default: 15
+      ratchet:
+        description: >-
+          auto | true | false - the quality ratchet: a committed baseline
+          file records per-check finding counts and any check pushed above
+          its count fails the run. auto (default) runs only when the
+          baseline file exists; true demands the file (missing = fail
+          closed, exit 2); false skips the job.
+        required: false
+        type: string
+        default: auto
+      ratchet_file:
+        description: Baseline file the ratchet enforces (write it once with --write-quality-baseline)
+        required: false
+        type: string
+        default: .quality-baseline.json
+      scorecard_publish:
+        description: Run and publish OSSF Scorecard (badge/API). false skips the whole job, so id-token is not needed.
+        required: false
+        type: boolean
+        default: true
+      template_repo:
+        description: Repo holding master-ci helpers (auto-detected when empty)
+        required: false
+        type: string
+        default: ''
+      template_ref:
+        description: >-
+          Ref of the master-ci repo to fetch helpers from. Empty resolves to
+          the exact commit of this workflow file, so helpers always match the
+          workflow version. Explicit main/master print a mutable-ref warning.
+        required: false
+        type: string
+        default: ''
+      concurrency_key:
+        description: Extra key for the concurrency group (set when calling this workflow several times from one workflow)
+        required: false
+        type: string
+        default: ''
+      # --- CodeQL (forwarded to .github/workflows/codeql.yml) -----------
+      languages:
+        description: >-
+          Comma-separated CodeQL languages or 'auto' to detect them from
+          the repository's committed manifests
+        required: false
+        type: string
+        default: auto
+      queries:
+        description: CodeQL query suites (security-extended, security-and-quality)
+        required: false
+        type: string
+        default: security-and-quality
+      config_file:
+        description: Optional path to a CodeQL config file inside the calling repo
+        required: false
+        type: string
+        default: ''
+
+
+permissions:
+  contents: read
+
+jobs:
+  master:
+    # Fixed string on purpose: expressions in `uses` may not read
+    # `inputs`, so the aggregate pins the template repo directly. The
+    # release commit bumps this pin in lockstep with SERVER_VERSION,
+    # and the workflow contract test asserts that equality - the pin
+    # cannot go stale silently. Forks must edit these two uses: lines;
+    # the template_repo/template_ref inputs below still steer every
+    # helper fetch the child workflows make.
+    uses: WasewaseX/master-ci/.github/workflows/master-ci.yml@v2.8.0
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
+      id-token: write   # only for Scorecard publishing inside the template
+    with:
+      profile: ${{ inputs.profile }}
+      runs_on: ${{ inputs.runs_on }}
+      node_version: ${{ inputs.node_version }}
+      python_version: ${{ inputs.python_version }}
+      rust_toolchain: ${{ inputs.rust_toolchain }}
+      run_node: ${{ inputs.run_node }}
+      run_python: ${{ inputs.run_python }}
+      run_rust: ${{ inputs.run_rust }}
+      run_go: ${{ inputs.run_go }}
+      go_version: ${{ inputs.go_version }}
+      run_java: ${{ inputs.run_java }}
+      java_version: ${{ inputs.java_version }}
+      run_cpp: ${{ inputs.run_cpp }}
+      run_csharp: ${{ inputs.run_csharp }}
+      dotnet_version: ${{ inputs.dotnet_version }}
+      run_ruby: ${{ inputs.run_ruby }}
+      ruby_version: ${{ inputs.ruby_version }}
+      run_php: ${{ inputs.run_php }}
+      php_version: ${{ inputs.php_version }}
+      run_docker: ${{ inputs.run_docker }}
+      select: ${{ inputs.select }}
+      semgrep_config: ${{ inputs.semgrep_config }}
+      fail_on_ai_slop: ${{ inputs.fail_on_ai_slop }}
+      ai_slop_max_score: ${{ inputs.ai_slop_max_score }}
+      ai_slop_max_deficit: ${{ inputs.ai_slop_max_deficit }}
+      complexity_max: ${{ inputs.complexity_max }}
+      duplication_threshold_pct: ${{ inputs.duplication_threshold_pct }}
+      coverage_min: ${{ inputs.coverage_min }}
+      diff_base: ${{ inputs.diff_base }}
+      new_code_gates: ${{ inputs.new_code_gates }}
+      new_code_max_slop: ${{ inputs.new_code_max_slop }}
+      new_code_max_cognitive: ${{ inputs.new_code_max_cognitive }}
+      new_code_max_cyclomatic: ${{ inputs.new_code_max_cyclomatic }}
+      ratchet: ${{ inputs.ratchet }}
+      ratchet_file: ${{ inputs.ratchet_file }}
+      scorecard_publish: ${{ inputs.scorecard_publish }}
+      template_repo: ${{ inputs.template_repo }}
+      template_ref: ${{ inputs.template_ref }}
+      concurrency_key: ${{ inputs.concurrency_key }}
+
+  codeql:
+    uses: WasewaseX/master-ci/.github/workflows/codeql.yml@v2.8.0
+    permissions:
+      contents: read
+      security-events: write
+    with:
+      languages: ${{ inputs.languages }}
+      queries: ${{ inputs.queries }}
+      config_file: ${{ inputs.config_file }}
+      template_repo: ${{ inputs.template_repo }}
+      template_ref: ${{ inputs.template_ref }}
+
+  gate:
+    # The one check to require: green only when BOTH workflows were.
+    # always() on purpose - a skipped or failed child is a red gate,
+    # never a silent pass; that is the whole point of the aggregate.
+    # Results ride env, not inline ${{ }}: the template's own hygiene
+    # gate bans template interpolation inside run blocks.
+    needs: [master, codeql]
+    if: always()
+    runs-on: ${{ inputs.runs_on || 'ubuntu-latest' }}
+    timeout-minutes: 5
+    steps:
+      - name: Enforce the aggregate
+        env:
+          MASTER_RESULT: ${{ needs.master.result }}
+          CODEQL_RESULT: ${{ needs.codeql.result }}
+        run: |
+          master="$MASTER_RESULT"
+          codeql="$CODEQL_RESULT"
+          echo "master-ci: $master"
+          echo "codeql:     $codeql"
+          fail=0
+          if [ "$master" != "success" ]; then
+            echo "::error::required-quality-check: master-ci result is '$master', not 'success'"
+            fail=1
+          fi
+          if [ "$codeql" != "success" ]; then
+            echo "::error::required-quality-check: CodeQL result is '$codeql', not 'success'"
+            fail=1
+          fi
+          exit $fail

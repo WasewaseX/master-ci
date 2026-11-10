@@ -20,6 +20,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 import new_code_gate as ng  # noqa: E402
+import slop_analysis_coverage as sac  # noqa: E402
 from slop_cognitive import _TS_OK  # noqa: E402
 from slop_lizard import _LIZARD_OK  # noqa: E402
 from slop_model import Finding  # noqa: E402
@@ -124,7 +125,7 @@ def test_cognitive_ceiling_breaches_on_new_function(repo: Path) -> None:
         repo, diff_base=_base(repo), max_slop=100, max_cognitive=15, max_cyclomatic=0
     )
     assert exit_code == 1
-    assert "complexity of touched functions" in sections[0]
+    assert any("complexity of touched functions" in s for s in sections)
 
 
 @needs_lizard
@@ -267,3 +268,103 @@ def test_require_parsers_passes_when_analyzers_are_importable(
     monkeypatch.setattr(slop_cli, "lizard_available", lambda: True)
     monkeypatch.setattr(slop_cli, "tree_sitter_available", lambda: True)
     assert slop_cli.main([str(tmp_path), "--require-parsers"]) != 2
+
+
+# ---------------------------------------------------------------------------
+# Analysis coverage (v2.8): unanalyzed never reads as clean
+# ---------------------------------------------------------------------------
+
+
+def test_analysis_coverage_buckets_states(repo: Path) -> None:
+    (repo / "mod.py").write_text("def a():\n    return 1\n", encoding="utf-8")
+    (repo / "README.md").write_text("# doc\n", encoding="utf-8")
+    (repo / "new.ex").write_text("defmodule X do\nend\n", encoding="utf-8")
+    (repo / "notes.py").write_text("# a comment, no functions\n", encoding="utf-8")
+    _commit(repo, "mixed")
+    coverage = sac.analysis_coverage(
+        repo,
+        {"mod.py": {1}, "README.md": {1}, "new.ex": {1}, "notes.py": {1}},
+        want_cognitive=True,
+        want_cyclomatic=True,
+    )
+    assert coverage.parsed == ["mod.py"]
+    assert coverage.excluded == ["README.md"]
+    assert coverage.unsupported == ["new.ex"]
+    assert coverage.no_functions == ["notes.py"]
+    assert coverage.parse_failed == []
+
+
+def test_engine_state_distinguishes_none_from_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    f = tmp_path / "m.py"
+    f.write_text("x = 1\n", encoding="utf-8")
+    # the real parser already proves the empty case: x = 1 parses, no functions
+    assert sac._engine_state(f, ".py", True, False) == "no-functions"
+    monkeypatch.setattr(sac, "parse_functions", lambda *a, **k: None)
+    assert sac._engine_state(f, ".py", True, False) == "parse-failed"
+    monkeypatch.setattr(sac, "parse_functions", lambda *a, **k: [])
+    monkeypatch.setattr(sac, "cognitive_facts", lambda *a, **k: None)
+    assert sac._engine_state(f, ".py", True, True) == "parse-failed"
+
+
+def test_parse_failure_is_fatal_under_requested_ceiling(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (repo / "mod.py").write_text(
+        "def a():\n    return 1\n\n\ndef b():\n    return 2\n", encoding="utf-8"
+    )
+    _commit(repo, "change")
+    # simulate the lexer failing on a supported extension: the v2.7.2-era
+    # gate would have silently treated this as "no functions touched"
+    monkeypatch.setattr(sac, "parse_functions", lambda *a, **k: None)
+    with pytest.raises(ng.NewCodeGateError) as err:
+        ng.run_gate(
+            repo,
+            diff_base=_base(repo),
+            max_slop=100,
+            max_cognitive=0,
+            max_cyclomatic=15,
+        )
+    assert "parse failures: mod.py (lizard)" in str(err.value)
+    assert "unanalyzed" in str(err.value)
+
+
+def test_unsupported_language_reported_not_blocking(repo: Path) -> None:
+    (repo / "new.ex").write_text("defmodule X do\n  def f, do: 1\nend\n", encoding="utf-8")
+    _commit(repo, "elixir")
+    exit_code, sections, _ = ng.run_gate(
+        repo, diff_base=_base(repo), max_slop=100, max_cognitive=15, max_cyclomatic=15
+    )
+    assert exit_code == 0
+    joined = "\n".join(sections)
+    assert "Unsupported language" in joined
+    assert "`new.ex`" in joined
+
+
+def test_docs_only_diff_renders_excluded_state(repo: Path) -> None:
+    (repo / "README.md").write_text("# hi\n", encoding="utf-8")
+    _commit(repo, "docs")
+    exit_code, sections, _ = ng.run_gate(
+        repo, diff_base=_base(repo), max_slop=100, max_cognitive=15, max_cyclomatic=15
+    )
+    assert exit_code == 0
+    joined = "\n".join(sections)
+    assert "Excluded (non-source) | 1" in joined
+    assert "| Parsed and analyzed | 0 |" in joined
+
+
+def test_coverage_section_renders_rows() -> None:
+    coverage = sac.AnalysisCoverage(
+        parsed=["a.py"],
+        no_functions=["b.py"],
+        excluded=["README.md"],
+        unsupported=["c.ex"],
+        parse_failed=["d.py (lizard)"],
+    )
+    text = sac.coverage_section(coverage)
+    assert "| Parsed and analyzed | 1 | - |" in text
+    assert "| Parsed, no functions | 1 | - |" in text
+    assert "| Excluded (non-source) | 1 | - |" in text
+    assert "| Unsupported language | 1 | `c.ex` |" in text
+    assert "| Parse failure | 1 | `d.py (lizard)` |" in text

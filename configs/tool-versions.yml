@@ -16,11 +16,16 @@ pip:
   semgrep: 1.184.0
   tree-sitter: 0.26.0
   tree-sitter-language-pack: 1.25.0
+  # Mutation testing (scheduled workflow). Pinning these matters more
+  # than for a linter: a mutmut or Stryker release can change the mutant
+  # vocabulary mid-quarter and turn a stable survivor list into noise.
+  mutmut: 3.8.1
 npm:
   "@biomejs/biome": 2.6.6
   depcheck: 1.4.7
   markdownlint-cli2: 0.24.0
   jscpd: 5.4.2
+  "@stryker-mutator/core": 10.1.1
 go:
   golangci-lint: v2.13.0
   gremlins: v0.6.0

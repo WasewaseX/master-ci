@@ -1590,14 +1590,61 @@ def test_codeql_language_sets_cannot_drift():
 def test_assurance_verifies_codeql_wiring(master_ci_text: str):
     """The Semantic analysis row is verified, not declared: dashboard and
     ci-success both check out the caller and grep its own workflow files
-    for the codeql.yml call before claiming the layer is armed."""
+    for the codeql.yml or required-quality.yml call before claiming the
+    layer is armed."""
     text = master_ci_text
-    # two tables x (armed + off) branches: the row exists in both the PR
-    # dashboard and the ci-success summary, each with both states.
-    assert text.count("Semantic analysis (CodeQL)") == 4
-    assert text.count('if "workflows/codeql.yml@" in text:') == 2
+    # two tables x three states (aggregate, own workflow, off): the row
+    # exists in both the PR dashboard and the ci-success summary, each
+    # with all three branches.
+    assert text.count("Semantic analysis (CodeQL)") == 6
+    assert text.count('"workflows/codeql.yml@" in text') == 2
+    assert text.count('"workflows/required-quality.yml@" in text') == 2
     data = load(WF_DIR / "master-ci.yml")
     for job_id in ("dashboard", "ci-success"):
         first = data["jobs"][job_id]["steps"][0]
         assert first.get("name") == "Check out the calling repository", job_id
         assert first["with"]["persist-credentials"] is False
+
+
+def test_required_quality_aggregate_forwards_every_master_input():
+    """Audit P0 F: the aggregate is the check callers REQUIRE, so it must
+    expose the whole master-ci input surface - a new master input without
+    an aggregate twin is a silent feature loss for aggregate users. The
+    contract makes the drift equality explicit."""
+    master = load(WF_DIR / "master-ci.yml")
+    aggregate = load(WF_DIR / "required-quality.yml")
+    master_inputs = set(_on(master)["workflow_call"]["inputs"])
+    aggregate_inputs = set(_on(aggregate)["workflow_call"]["inputs"])
+    missing = master_inputs - aggregate_inputs
+    assert not missing, f"aggregate lacks master-ci inputs: {sorted(missing)}"
+    master_with = aggregate["jobs"]["master"]["with"]
+    for name in master_inputs:
+        assert master_with.get(name) == f"${{{{ inputs.{name} }}}}", name
+    codeql_with = aggregate["jobs"]["codeql"]["with"]
+    for name in ("languages", "queries", "config_file"):
+        assert codeql_with.get(name) == f"${{{{ inputs.{name} }}}}", name
+    for name in ("template_repo", "template_ref"):
+        assert codeql_with.get(name) == f"${{{{ inputs.{name} }}}}", name
+
+
+def test_required_quality_pin_moves_with_the_release():
+    """The aggregate's uses: lines are fixed strings (expressions may not
+    read inputs there), so the release commit must bump them; the
+    contract ties the pins to SERVER_VERSION so they cannot go stale."""
+    mcp = _load_mcp_server()
+    text = (WF_DIR / "required-quality.yml").read_text(encoding="utf-8")
+    assert f".github/workflows/master-ci.yml@v{mcp.SERVER_VERSION}" in text
+    assert f".github/workflows/codeql.yml@v{mcp.SERVER_VERSION}" in text
+
+
+def test_required_quality_gate_fails_closed():
+    """The gate job is the single required check: green only when both
+    children succeeded - skipped counts as red, never as a pass."""
+    aggregate = load(WF_DIR / "required-quality.yml")
+    gate = aggregate["jobs"]["gate"]
+    assert gate["needs"] == ["master", "codeql"]
+    assert gate["if"] == "always()"
+    run = gate["steps"][0]["run"]
+    assert '[ "$master" != "success" ]' in run
+    assert '[ "$codeql" != "success" ]' in run
+    assert "exit $fail" in run

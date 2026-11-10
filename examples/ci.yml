@@ -39,6 +39,19 @@ on:
     branches: [main]
   pull_request:
 
+# One required check, security included (recommended): swap the two jobs
+# below for this aggregate and require `required-quality-check / gate`
+# in branch protection - a red CodeQL analysis then blocks the merge:
+#
+# jobs:
+#   required:
+#     uses: WasewaseX/master-ci/.github/workflows/required-quality.yml@v2
+#     permissions:
+#       contents: read
+#       security-events: write
+#       pull-requests: write
+#       id-token: write
+
 jobs:
   master:
     uses: WasewaseX/master-ci/.github/workflows/master-ci.yml@v2

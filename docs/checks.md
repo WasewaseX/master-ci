@@ -135,7 +135,8 @@ Profile presets (quick / standard / strict / custom) only change the
   (glob lines, `check:<id>` lines, `check:<id>:<glob>` for a scoped
   disable), or record existing findings with `--write-baseline` and run
   with `--baseline` so only new slop appears.
-- **Bloat budget (advisory):** the anti-bloatware guard for machine-written
+- **Bloat budget (advisory by default; `strict` escalates to blocking):**
+  the anti-bloatware guard for machine-written
   padding - code that does 100 lines of work in 300, aligned with
   scanaislop.com's quality bar. `bloat-long-file` (over 400 non-blank
   lines, test files exempt), `god-function` (a function over 80
@@ -170,9 +171,10 @@ Profile presets (quick / standard / strict / custom) only change the
   is its own project). The Node jobs run install, lint, type-check and
   tests per discovered project, and `--fail-empty` turns a
   triggered-but-empty family into a loud failure instead of a green
-  no-op. Go, JVM, .NET, Ruby and PHP jobs still analyze root manifests
-  only, but emit a `::warning::` listing nested manifests they skip, so
-  no stack can silently do nothing.
+  no-op. Go, Rust and JVM discovered their own projects since v2.5; the
+  .NET, Ruby and PHP jobs still analyze root manifests only, and emit a
+  `::warning::` listing nested manifests they skip, so no stack can
+  silently do nothing.
 - **Pinned analyzers (v1.11):** `configs/tool-versions.yml` pins every
   analyzer the template installs (ruff, mypy, vulture, lizard, pytest,
   yamllint, semgrep, Biome, depcheck, markdownlint-cli2, jscpd);
@@ -409,9 +411,14 @@ Profile presets (quick / standard / strict / custom) only change the
   paths by suffix; a changed file absent from the report counts as
   0% new-code coverage. Companion on the schedule side:
   `.github/workflows/mutation.yml` runs mutmut (Python, when
-  `[tool.mutmut]` is declared) or Stryker (Node, when a
-  `stryker.conf.*` is committed) weekly - coverage says which lines
-  ran, mutation says whether the assertions would notice.
+  `[tool.mutmut]` is declared) or Stryker (Node, when any valid Stryker
+  config filename is committed - `stryker.conf.*`, `stryker.config.*`,
+  `.stryker.conf.*`, `.stryker.config.*`, json/js/mjs/cjs) weekly -
+  coverage says which lines ran, mutation says whether the assertions
+  would notice. The mutation job installs the project's own
+  dependencies first (mutmut drives the project's pytest; Stryker's
+  test-runner plugin lives in the project's node_modules) - mutants are
+  never measured against a bare environment.
   As of v2.6 the scheduled hunt spans four ecosystems, each opt-in by
   declaration: mutmut (Python, `[tool.mutmut]`), Stryker (Node,
   `stryker.conf.*`), cargo-mutants (Rust, `.cargo-mutants.toml` - exit

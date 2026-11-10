@@ -22,11 +22,15 @@ Contract:
 - exit 0  every requested ceiling holds (or no ceiling requested)
 - exit 1  a ceiling is breached by code the change added
 - exit 2  a requested gate cannot be evaluated: no diff base, git
-    failed, or the parser a requested ceiling needs is not importable
+    failed, the parser a requested ceiling needs is not importable
     (v2.5: the gate demands lizard for cyclomatic and tree-sitter for
-    cognitive instead of silently reporting zero touched functions).
-    Fail-closed - a gate that cannot be evaluated never silently
-    passes, same semantics as the coverage gate.
+    cognitive instead of silently reporting zero touched functions), or
+    a changed file that a requested ceiling's own parser failed to
+    parse (v2.8: the analysis-coverage pass - the hosted canary PR run
+    showed a parse failure was indistinguishable from "no functions
+    here"; unanalyzed must never read as clean). Fail-closed - a gate
+    that cannot be evaluated never silently passes, same semantics as
+    the coverage gate.
 """
 
 from __future__ import annotations
@@ -38,6 +42,7 @@ from pathlib import Path
 
 from ai_slop_detector import scan
 from coverage_gate import git_changed_lines
+from slop_analysis_coverage import analysis_coverage, coverage_section
 from slop_cognitive import cognitive_facts, tree_sitter_available
 from slop_files import load_phrases, read_text_lax
 from slop_lizard import FunctionFact, lizard_available, parse_functions
@@ -162,11 +167,36 @@ def run_gate(
         changed = git_changed_lines(root, diff_base)
     except Exception as exc:  # noqa: BLE001 - the gate maps any git failure to exit 2
         raise NewCodeGateError(f"cannot diff against {diff_base!r}: {exc}") from exc
-    exit_code, sections, findings = _slop_ceiling(root, changed, max_slop)
+    sections: list[str] = []
+    if max_cognitive > 0 or max_cyclomatic > 0:
+        # Analysis coverage (v2.8): a file the requested parser cannot
+        # read is fatal here - downstream it would degrade into "no
+        # functions touched", the silent pass v2.5 exists to prevent.
+        coverage = analysis_coverage(
+            root,
+            changed,
+            want_cognitive=max_cognitive > 0,
+            want_cyclomatic=max_cyclomatic > 0,
+        )
+        if coverage.parse_failed:
+            shown = ", ".join(coverage.parse_failed[:10])
+            more = (
+                f" (+{len(coverage.parse_failed) - 10} more)"
+                if len(coverage.parse_failed) > 10
+                else ""
+            )
+            raise NewCodeGateError(
+                "a requested ceiling's parser could not measure every changed "
+                f"file - parse failures: {shown}{more}; fix the syntax or "
+                "document an exclusion, the gate refuses to treat unanalyzed "
+                "code as clean"
+            )
+        sections.append(coverage_section(coverage))
+    exit_code, slop_sections, findings = _slop_ceiling(root, changed, max_slop)
     complexity_exit, complexity_sections = _complexity_ceiling(
         root, changed, max_cognitive, max_cyclomatic
     )
-    sections += complexity_sections
+    sections += slop_sections + complexity_sections
     exit_code = max(exit_code, complexity_exit)
     return exit_code, sections, findings
 

@@ -2646,20 +2646,25 @@ jobs:
           print("| Mutation testing | scheduled workflow (`mutation.yml`) - opt-in, Python, Node, Go and Rust |")
           print("| Flake hunt | scheduled workflow (`flaky.yml`) - arms when `.flaky-baseline.json` is committed |")
           # Verified, not declared: the caller's own workflow files are
-          # grepped for the codeql.yml call, so the row cannot claim an
-          # analysis that is not wired.
+          # grepped for the codeql.yml or required-quality.yml call, so
+          # the row cannot claim an analysis that is not wired.
           workflows_dir = Path(".github/workflows")
           codeql_wf = ""
+          aggregate_wf = ""
           if workflows_dir.is_dir():
               for wf in sorted(workflows_dir.glob("*.y*ml")):
                   try:
                       text = wf.read_text(encoding="utf-8")
                   except OSError:
                       continue
-                  if "workflows/codeql.yml@" in text:
+                  if not codeql_wf and "workflows/codeql.yml@" in text:
                       codeql_wf = wf.name
+                  if "workflows/required-quality.yml@" in text:
+                      aggregate_wf = wf.name
                       break
-          if codeql_wf:
+          if aggregate_wf:
+              print(f"| Semantic analysis (CodeQL) | armed via required-quality aggregate - `{aggregate_wf}` calls `required-quality.yml` (master + CodeQL, one required check) |")
+          elif codeql_wf:
               print(f"| Semantic analysis (CodeQL) | armed via own workflow - `{codeql_wf}` calls `codeql.yml` |")
           else:
               print("| Semantic analysis (CodeQL) | off - add `uses: WasewaseX/master-ci/.github/workflows/codeql.yml@v2` (auto-detects languages) |")
@@ -2849,20 +2854,33 @@ jobs:
                       ),
                   ]
                   # Verified, not declared: the caller's own workflow files
-                  # are grepped for the codeql.yml call, so the row cannot
-                  # claim an analysis that is not wired.
+                  # are grepped for the codeql.yml or required-quality.yml
+                  # call, so the row cannot claim an analysis that is not
+                  # wired.
                   workflows_dir = Path(".github/workflows")
                   codeql_wf = ""
+                  aggregate_wf = ""
                   if workflows_dir.is_dir():
                       for wf in sorted(workflows_dir.glob("*.y*ml")):
                           try:
                               text = wf.read_text(encoding="utf-8")
                           except OSError:
                               continue
-                          if "workflows/codeql.yml@" in text:
+                          if not codeql_wf and "workflows/codeql.yml@" in text:
                               codeql_wf = wf.name
+                          if "workflows/required-quality.yml@" in text:
+                              aggregate_wf = wf.name
                               break
-                  if codeql_wf:
+                  if aggregate_wf:
+                      assurance.append(
+                          (
+                              "Semantic analysis (CodeQL)",
+                              "armed via required-quality aggregate - "
+                              f"`{aggregate_wf}` calls `required-quality.yml` "
+                              "(master + CodeQL, one required check)",
+                          )
+                      )
+                  elif codeql_wf:
                       assurance.append(
                           (
                               "Semantic analysis (CodeQL)",
@@ -2888,6 +2906,13 @@ jobs:
           raise SystemExit(1 if failed else 0)
           PY
       - name: Fetch master-ci helpers
+        # always() on purpose: the historian below runs under always()
+        # so failed runs are recorded too - the trajectory table exists
+        # to mark the red runs - and it reads _ci/scripts. A skipped
+        # checkout here made the record step die on a missing file
+        # exactly when it mattered most (the hosted canary PR run hit
+        # this: gate red, history secondary-error instead of recorded).
+        if: always()
         # The historian rides the template's own scripts: the record and
         # trend logic is versioned with the template so the file format
         # cannot drift between what writes the history and what reads it.

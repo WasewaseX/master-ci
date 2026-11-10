@@ -7,13 +7,18 @@
 # the PR-time coverage gate.
 #
 # Opt-in by declaration: the job runs mutmut when pyproject.toml declares
-# [tool.mutmut] (or setup.cfg [mutmut]), Stryker when a
-# stryker.conf.* is committed, cargo-mutants when .cargo-mutants.toml is
-# committed, and gremlins when .gremlins.yaml is committed. A repo
+# [tool.mutmut] (or setup.cfg [mutmut]), Stryker when any valid Stryker
+# config filename is committed (stryker.conf.*, stryker.config.*,
+# .stryker.conf.*, .stryker.config.* - json/js/mjs/cjs), cargo-mutants
+# when .cargo-mutants.toml is committed, and gremlins when
+# .gremlins.yaml is committed. A repo
 # without any of those configs skips - and a tool that exits nonzero on
 # surviving mutants fails the run, which is the weekly signal to review
 # the tests. New installs are pinned through configs/tool-versions.yml,
-# the same trust class as every other analyzer in the template.
+# the same trust class as every other analyzer in the template, and the
+# project's own dependencies are installed first: a fresh runner
+# without them would measure mutants against a bare environment, which
+# reports false survivors (or false kills).
 # ===============================================================================
 
 name: Mutation Testing
@@ -22,6 +27,17 @@ on:
   schedule:
     - cron: '0 3 * * 1'
   workflow_dispatch:
+    inputs:
+      template_repo:
+        description: Repo holding master-ci helpers (auto-detected when empty)
+        required: false
+        type: string
+        default: ''
+      template_ref:
+        description: Ref of the master-ci repo to fetch helpers from
+        required: false
+        type: string
+        default: main
 
 permissions:
   contents: read
@@ -30,20 +46,61 @@ jobs:
   mutation:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      TEMPLATE_REPO_INPUT: ${{ inputs.template_repo }}
+      TEMPLATE_REF: ${{ inputs.template_ref }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
+      - name: Validate helper ref
+        run: |
+          case "$TEMPLATE_REF" in
+            -*|*..*|*[!A-Za-z0-9._/-]*)
+              echo "::error::template_ref contains unsafe characters or sequences"
+              exit 1 ;;
+          esac
+      - name: Resolve helper repo
+        id: repo
+        run: |
+          fallback='WasewaseX/master-ci'
+          if [ -n "$TEMPLATE_REPO_INPUT" ]; then
+            echo "template_repo=$TEMPLATE_REPO_INPUT" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          ref="${GITHUB_WORKFLOW_REF:-}"
+          parsed="${ref%%/.github/*}"
+          if [ -n "$parsed" ] && [ "$parsed" != "$ref" ]; then
+            echo "template_repo=$parsed" >> "$GITHUB_OUTPUT"
+          else
+            echo "template_repo=$fallback" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Fetch master-ci helpers
+        # The tool pins are versioned with the template; without this
+        # fetch the version lookups would read the caller's tree, which
+        # for a foreign consumer has no scripts/tool_versions.py at all
+        # - the cargo-mutants and gremlins paths could never run there.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ steps.repo.outputs.template_repo }}
+          ref: ${{ env.TEMPLATE_REF }}
+          path: _ci
+          fetch-depth: 1
+          persist-credentials: false
       - name: Detect mutation config
         id: detect
         run: |
           # Opt-in by declaration, never by guessing: mutating code in a
           # repo that never asked for it would burn an hour of CI on noise.
+          # Every filename Stryker resolves is accepted - stryker.conf.*,
+          # stryker.config.* and their dot-prefixed twins, json/js/mjs/cjs.
           tool=none
           if grep -q '^\[tool\.mutmut\]' pyproject.toml 2>/dev/null \
             || grep -q '^\[mutmut\]' setup.cfg 2>/dev/null; then
             tool=mutmut
-          elif ls stryker.conf.json stryker.conf.js stryker.conf.mjs stryker.conf.cjs >/dev/null 2>&1; then
+          elif ls stryker.conf.{json,js,mjs,cjs} stryker.config.{json,js,mjs,cjs} \
+            .stryker.conf.{json,js,mjs,cjs} .stryker.config.{json,js,mjs,cjs} >/dev/null 2>&1; then
             tool=stryker
           elif ls .cargo-mutants.toml >/dev/null 2>&1; then
             tool=cargo-mutants
@@ -63,22 +120,53 @@ jobs:
         if: steps.detect.outputs.tool == 'gremlins'
         with:
           go-version: 'stable'
+      - name: Install project dependencies (mutmut)
+        if: steps.detect.outputs.tool == 'mutmut'
+        run: |
+          # mutmut drives the project's own pytest; a fresh runner without
+          # the project's packages would measure mutants against a bare
+          # environment. Install first, mirroring the python job's
+          # install contract - a packaging failure must fail loudly here
+          # too, never leave the run measuring an environment that
+          # happens to pass.
+          if [ -f pyproject.toml ] && grep -q '^\[project\]' pyproject.toml; then
+            pip install -e . || pip install .
+          elif [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            echo "No installable python project - tests run against the bare environment"
+          fi
       - name: Mutate (mutmut)
         if: steps.detect.outputs.tool == 'mutmut'
         run: |
-          python -m pip install --quiet --upgrade mutmut
+          # the pin emits name==version and is meant to word-split:
+          # shellcheck disable=SC2046
+          python -m pip install --quiet $(python3 _ci/scripts/tool_versions.py pip mutmut)
           mutmut run
           # Survivors are the deliverable: hand reviewers the list, then
           # the nonzero exit from `mutmut run` has already failed the job.
           mutmut results | tee mutmut-results.txt
+      - name: Install project dependencies (Stryker)
+        if: steps.detect.outputs.tool == 'stryker'
+        run: |
+          # Stryker's test-runner plugin comes from the project's own
+          # dependencies; a fresh runner without node_modules cannot run
+          # the configured test runner at all. Lockfile is a contract,
+          # same as the node jobs.
+          if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile
+          elif [ -f yarn.lock ]; then yarn install --immutable
+          elif [ -f package-lock.json ]; then npm ci
+          elif [ -f package.json ]; then npm install
+          else echo "No package manifest - Stryker runs from the pinned npx install alone"
+          fi
       - name: Mutate (Stryker)
         if: steps.detect.outputs.tool == 'stryker'
-        run: npx --yes @stryker-mutator/core run
+        run: npx --yes "$(python3 _ci/scripts/tool_versions.py npm @stryker-mutator/core)" run
       - name: Mutate (cargo-mutants)
         if: steps.detect.outputs.tool == 'cargo-mutants'
         run: |
           cargo install --locked --quiet cargo-mutants \
-            --version "$(python3 scripts/tool_versions.py cargo cargo-mutants)"
+            --version "$(python3 _ci/scripts/tool_versions.py cargo cargo-mutants)"
           cargo mutants
           # Exit codes verified against the tool's contract: 0 = every
           # viable mutant caught, 2 = survivors found. Survivors fail
@@ -87,7 +175,7 @@ jobs:
       - name: Mutate (gremlins)
         if: steps.detect.outputs.tool == 'gremlins'
         run: |
-          go install "github.com/go-gremlins/gremlins/cmd/gremlins@$(python3 scripts/tool_versions.py go gremlins)"
+          go install "github.com/go-gremlins/gremlins/cmd/gremlins@$(python3 _ci/scripts/tool_versions.py go gremlins)"
           # The .gremlins.yaml that opted this repo in is also the gate:
           # unleash exits 10 / 11 when the configured unleash.threshold
           # efficacy / mutant-coverage floors are breached (verified
@@ -123,7 +211,8 @@ jobs:
             case "$TOOL" in
               none)
                 echo "No mutation config declared - opt in with [tool.mutmut] in"
-                echo "pyproject.toml, a stryker.conf.json, a .cargo-mutants.toml or"
+                echo "pyproject.toml, a Stryker config (stryker.conf.* or"
+                echo "stryker.config.*, json/js/mjs/cjs), a .cargo-mutants.toml or"
                 echo "a .gremlins.yaml. Nothing ran; this is not a pass or a fail." ;;
               mutmut)
                 echo "mutmut ran; surviving mutants (if any) are listed above and in"

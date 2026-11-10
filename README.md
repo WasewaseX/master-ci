@@ -83,7 +83,7 @@ which keeps its baseline reproducible across template releases:
 ```yaml
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v2.7.2
+      template_ref: v2.8.0
 ```
 
 ### Required check
@@ -91,6 +91,23 @@ which keeps its baseline reproducible across template releases:
 Branch protection sees exactly one status: **`ci-success`**. Set it as a
 required status check (Settings > Branches > Branch protection rules) and the
 aggregate gate decides pass or fail for every PR.
+
+`ci-success` aggregates the master-ci jobs only. CodeQL rides a separate
+reusable workflow, so a branch protection rule on `ci-success` alone cannot
+fail on a red CodeQL analysis (audit finding F). Two honest shapes:
+
+- **One required check (recommended):** call
+  `WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.8.0`
+  instead of `master-ci.yml` and require **`required-quality-check / gate`**.
+  The aggregate calls master-ci.yml and codeql.yml itself and its gate is
+  green only when both succeeded - a skipped or failed CodeQL run is a red
+  gate, never a silent pass. Every master-ci input is forwarded 1:1, plus
+  the CodeQL `languages`/`queries`/`config_file` inputs.
+- **Two required checks:** keep calling `master-ci.yml` and `codeql.yml`
+  separately and require both `ci-success` **and** the CodeQL check
+  (`CodeQL / analyze (<language>)`) in branch protection. The PR
+  dashboard's Semantic analysis row shows which shape it detects in the
+  caller's own workflow files - verified, not declared.
 
 ### Doctor: verify your setup offline
 
@@ -134,7 +151,7 @@ works for consumers too.
 | `meta` | always | Validates caller inputs, resolves helper repo and enforcement profile |
 | `hygiene` | meta ok | Workflow lint, YAML, shell, whitespace, duplication |
 | `secrets` | meta ok | Full-history secret scanning |
-| `ai-integrity` | meta ok | AI slop + structural slop detection - **advisory by default** |
+| `ai-integrity` | meta ok | AI slop + structural slop detection - blocking under `standard` (the default profile) and `strict`; advisory under `quick` or `custom` with `fail_on_ai_slop: false` |
 | `docs` | docs changed | Markdown lint |
 | `node-lint` | Node changed | Lint, format, types, unused deps |
 | `node-test` | Node changed | Test suite |
@@ -729,7 +746,7 @@ carries a `SKILL.md`, so assistants with a skills directory can load it
 with one command:
 
 ```bash
-git clone --depth 1 --branch v2.7.2 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+git clone --depth 1 --branch v2.8.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
 ```
 
 MCP clients configure the same install like this:
