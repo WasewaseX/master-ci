@@ -83,7 +83,7 @@ which keeps its baseline reproducible across template releases:
 ```yaml
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v2.9.0
+      template_ref: v2.9.1
 ```
 
 ### Required check
@@ -103,7 +103,7 @@ alone cannot fail on a red CodeQL analysis (audit finding F). Two honest
 shapes:
 
 - **One required check (recommended):** call
-  `WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.9.0`
+  `WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.9.1`
   instead of `master-ci.yml` and require **`required-quality-check / gate`**.
   The first segment is the job id the caller gives the call, so the
   example below names its job `required-quality-check`; a caller naming
@@ -116,7 +116,7 @@ shapes:
   ```yaml
   jobs:
     required-quality-check:
-      uses: WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.9.0
+      uses: WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.9.1
       permissions:
         contents: read
         security-events: write
@@ -768,7 +768,7 @@ carries a `SKILL.md`, so assistants with a skills directory can load it
 with one command:
 
 ```bash
-git clone --depth 1 --branch v2.9.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+git clone --depth 1 --branch v2.9.1 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
 ```
 
 MCP clients configure the same install like this:

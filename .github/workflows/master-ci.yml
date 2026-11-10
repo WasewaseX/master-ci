@@ -1479,7 +1479,11 @@ jobs:
             echo "No python files - skipping mypy"
             exit 0
           fi
-          mypy --ignore-missing-imports .
+          # The scan excludes _ci the way the probe above does: the
+          # transient helper checkout is the template's code, and a
+          # consumer tree with same-named modules must never collide
+          # with it ("Duplicate module named" would fail the run).
+          mypy --ignore-missing-imports --exclude '(^|/)_ci/' .
       - name: Vulture dead-code scan (advisory)
         run: |
           vulture . --min-confidence 80 --exclude '_ci,build,dist,vendor' \

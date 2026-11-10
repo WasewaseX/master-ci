@@ -556,6 +556,19 @@ Profile presets (quick / standard / strict / custom) only change the
   pinned install (v2.5 parser guarantee, exit 2).
 - **False positives:** vulture on dynamically-dispatched code; mypy on
   untyped third parties (mitigated by the flag above).
+- **The helper checkout is invisible (v2.9.1):** every workflow fetches
+  master-ci's helpers into a transient `_ci/` directory inside the
+  consumer's tree before the stack jobs run. That code is the
+  template's, versioned and linted by the template's own battery - a
+  consumer's scan must never judge it. Vulture and lizard excluded
+  `_ci` from the start; the default ruff config (copied only when the
+  consumer ships none) now extends-excludes it, and the mypy scan
+  carries the same exclusion its own file probe always declared
+  (`grep -v '^_ci/'`) - which also removes the latent duplicate-module
+  collision for consumer trees that name their files like the
+  template's helpers. Repos committing their own ruff or mypy config
+  are their own authority: add `_ci` to your excludes if you fetch
+  helpers and name files like the template does.
 - **Disable:** `run_python: 'false'`.
 - **Time:** 2-5 minutes.
 

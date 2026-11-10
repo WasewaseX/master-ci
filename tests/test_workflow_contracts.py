@@ -1749,3 +1749,20 @@ def test_assurance_verifies_mutation_wiring(master_ci_text: str):
     # the declared row that claimed a scheduled workflow unconditionally
     # is gone from both tables
     assert "scheduled workflow (`mutation.yml`)" not in text
+
+
+def test_python_stack_cannot_see_the_helper_checkout(master_ci_text: str):
+    """The transient _ci helper checkout is the template's own code,
+    versioned and linted by the template's battery; a consumer's scan
+    must never judge it. Vulture and lizard already exclude it; the
+    default ruff config - copied when the consumer ships none - and the
+    mypy invocation must too. The ci-canary caught the gap as an I001
+    on _ci/scripts/discover_projects.py, the first time its python
+    stack ever ran beside a helper checkout (every earlier canary
+    exercise touched only workflows, and the path filter skipped the
+    stack)."""
+    text = (ROOT / "configs" / "ruff.toml").read_text(encoding="utf-8")
+    assert 'extend-exclude = ["_ci"]' in text
+    assert "--exclude '(^|/)_ci/'" in master_ci_text, (
+        "the mypy scan must exclude the helper checkout the way its own file probe does"
+    )

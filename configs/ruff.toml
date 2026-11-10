@@ -2,6 +2,14 @@
 # Commit your own ruff.toml (or [tool.ruff] in pyproject.toml) to override.
 line-length = 100
 
+# _ci is master-ci's transient helper checkout - every workflow fetches
+# it into the consumer's tree before the stack jobs run. The helpers
+# are the template's own code, versioned and linted by the template's
+# battery; a consumer's scan must never judge them (the ci-canary
+# caught the gap: an I001 on _ci/scripts/discover_projects.py the
+# first time its python stack ran beside a helper checkout).
+extend-exclude = ["_ci"]
+
 [lint]
 select = ["E", "F", "W", "I"]
 ignore = ["E501"]
