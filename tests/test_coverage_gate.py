@@ -371,3 +371,115 @@ def test_low_new_coverage_check_is_advisory_test_assurance():
     finding = Finding(path="mod.py", line=4, check="low-new-coverage", message="m", weight=1)
     assert finding.advisory
     assert category_of("low-new-coverage") == "test-assurance"
+
+
+# ---------------------------------------------------------------------------
+# JaCoCo - the JVM dialect rides the same gate (cargo-llvm-cov cobertura,
+# Go coverprofile, Python json, JaCoCo report XML: four shapes, one floor)
+# ---------------------------------------------------------------------------
+
+JACOCO_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE report PUBLIC "-//JACOCO//DTD Report 1.1//EN" "report.dtd">
+<report name="demo">
+  <sessioninfo id="x" start="1" dump="2"/>
+  <package name="com/example/app">
+    <class name="com/example/app/Foo" sourcefilename="Foo.java">
+      <counter type="INSTRUCTION" missed="0" covered="10"/>
+    </class>
+    <sourcefile name="Foo.java">
+      <line nr="1" mi="0" ci="5" mb="0" cb="0"/>
+      <line nr="2" mi="4" ci="0" mb="0" cb="0"/>
+      <line nr="3" mi="0" ci="7" mb="0" cb="0"/>
+    </sourcefile>
+    <sourcefile name="Bar.kt">
+      <line nr="1" mi="0" ci="9" mb="0" cb="0"/>
+    </sourcefile>
+  </package>
+  <counter type="INSTRUCTION" missed="4" covered="16"/>
+  <counter type="LINE" missed="1" covered="3"/>
+  <counter type="CLASS" missed="0" covered="2"/>
+</report>
+"""
+
+
+def _write_jacoco(tmp_path: Path, text: str = JACOCO_XML) -> Path:
+    report = tmp_path / "jacoco.xml"
+    report.write_text(text, encoding="utf-8")
+    return report
+
+
+def test_jacoco_report_parses_line_sets_and_totals(tmp_path):
+    parsed = cg.parse_report(_write_jacoco(tmp_path))
+    assert parsed.source == "jacoco"
+    # the report-level LINE counter is the headline: 3 covered of 4
+    assert parsed.total_percent == pytest.approx(75.0)
+    foo = parsed.files["com/example/app/Foo.java"]
+    assert foo.covered == {1, 3}
+    assert foo.missed == {2}
+    # dotted package folds to the diff's own path shape
+    assert "com/example/app/Bar.kt" in parsed.files
+
+
+def test_jacoco_and_cobertura_dispatch_on_root_tag(tmp_path):
+    cobertura = tmp_path / "coverage.xml"
+    cobertura.write_text(
+        '<?xml version="1.0"?><coverage line-rate="0.5">'
+        '<class filename="mod.py"><line number="1" hits="1"/></class>'
+        "</coverage>",
+        encoding="utf-8",
+    )
+    assert cg.parse_report(cobertura).source == "cobertura"
+    assert cg.parse_report(_write_jacoco(tmp_path)).source == "jacoco"
+
+
+def test_jacoco_line_counter_wins_over_instruction(tmp_path):
+    # LINE says 50%, INSTRUCTION says 25% - the gate promises line
+    # semantics, so the LINE counter is the headline number.
+    text = JACOCO_XML.replace(
+        '<counter type="LINE" missed="1" covered="3"/>',
+        '<counter type="LINE" missed="2" covered="2"/>',
+    )
+    parsed = cg.parse_report(_write_jacoco(tmp_path, text))
+    assert parsed.total_percent == pytest.approx(50.0)
+
+
+def test_jacoco_instruction_counter_is_the_fallback(tmp_path):
+    text = JACOCO_XML.replace('  <counter type="LINE" missed="1" covered="3"/>\n', "")
+    parsed = cg.parse_report(_write_jacoco(tmp_path, text))
+    assert parsed.source == "jacoco"
+    assert parsed.total_percent == pytest.approx(100.0 * 16 / 20)
+
+
+def test_jacoco_without_any_counter_fails_closed(tmp_path):
+    text = JACOCO_XML.replace('  <counter type="LINE" missed="1" covered="3"/>\n', "")
+    text = text.replace('<counter type="INSTRUCTION" missed="4" covered="16"/>', "")
+    with pytest.raises(cg.CoverageGateError, match="counter"):
+        cg.parse_report(_write_jacoco(tmp_path, text))
+
+
+def test_jacoco_with_no_sourcefiles_fails_closed(tmp_path):
+    text = JACOCO_XML.replace("<package", "<x:package").replace("</package>", "</x:package>")
+    with pytest.raises(cg.CoverageGateError, match="sourcefile"):
+        cg.parse_report(_write_jacoco(tmp_path, text))
+
+
+def test_jacoco_slice_joins_the_overall_floor_gate(tmp_path):
+    # a full stack's worth of reports: one dialect below the floor fails
+    # the whole gate no matter which tool produced it
+    _python_report(tmp_path / "coverage.json", 100.0)
+    cg.parse_report(_write_jacoco(tmp_path))
+    reports = cg.discover_reports(tmp_path, [tmp_path / "coverage.json", tmp_path / "jacoco.xml"])
+    assert [r.source for r in reports] == ["python-json", "jacoco"]
+    lines, failing = cg._overall_section(reports, 70.0)
+    assert failing == 0
+    lines, failing = cg._overall_section(reports, 80.0)
+    assert failing == 1  # the jacoco slice sits at 75%
+    assert any("jacoco" in line and "below floor" in line for line in lines)
+
+
+def test_jacoco_new_code_intersection_counts_uncovered_added_lines(tmp_path):
+    report = cg.parse_report(_write_jacoco(tmp_path))
+    changed = {"com/example/app/Foo.java": {2}}
+    view = cg.new_code_view([report], changed)
+    assert view.changed_total == 1
+    assert view.covered_total == 0  # line 2 is missed: added-but-unexercised

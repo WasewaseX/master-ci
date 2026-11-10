@@ -40,12 +40,16 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 WF_DIR = ROOT / ".github" / "workflows"
+# The reusable workflow source, read once for the whole module: ten
+# tests assert on it and the boilerplate detector is right - one
+# helper, not ten copies of the same line.
+MASTER_CI_TEXT = (WF_DIR / "master-ci.yml").read_text(encoding="utf-8")
 
 
 @pytest.fixture(scope="module")
 def master_ci_text() -> str:
-    """The reusable workflow source, read once for the v2.5 contracts."""
-    return (WF_DIR / "master-ci.yml").read_text(encoding="utf-8")
+    """The reusable workflow source, shared module-wide."""
+    return MASTER_CI_TEXT
 
 
 def _on(data: dict) -> dict:
@@ -285,7 +289,7 @@ def test_stale_never_closes_security_issues():
 
 
 def test_meta_validates_untrusted_inputs():
-    text = (WF_DIR / "master-ci.yml").read_text(encoding="utf-8")
+    text = MASTER_CI_TEXT
     meta = text.split("meta:")[1].split("\n  changes:")[0]
     assert "Validate caller inputs" in meta, "meta must validate template_repo/template_ref/profile"
     for needle in ("template_repo", "template_ref", "PROFILE"):
@@ -313,7 +317,7 @@ def test_dependency_review_probe_is_authenticated():
 
 def test_node_installs_never_fall_back_past_a_lockfile():
     """A lockfile is a contract: no silent `||` fallback to mutable installs."""
-    text = (WF_DIR / "master-ci.yml").read_text(encoding="utf-8")
+    text = MASTER_CI_TEXT
     for forbidden in (
         "pnpm install --frozen-lockfile ||",
         "yarn install --immutable ||",
@@ -329,7 +333,7 @@ def test_node_installs_never_fall_back_past_a_lockfile():
 
 def test_meta_validates_stack_toggles_and_select():
     """Invalid run_* toggles or select tokens must fail the run, not skip."""
-    text = (WF_DIR / "master-ci.yml").read_text(encoding="utf-8")
+    text = MASTER_CI_TEXT
     meta = text.split("meta:")[1].split("\n  changes:")[0]
     for needle in (
         "RUN_NODE",
@@ -373,14 +377,14 @@ def test_meta_validates_stack_toggles_and_select():
 
 def test_python_project_install_failure_fails_the_job():
     """A packaging failure must never degrade to testing a bare environment."""
-    text = (WF_DIR / "master-ci.yml").read_text(encoding="utf-8")
+    text = MASTER_CI_TEXT
     assert "pip install -e . || pip install . || true" not in text
     assert "pip install -e . || pip install ." in text
 
 
 def test_mutable_template_ref_warns_loudly():
     """Helpers fetched from a moving branch must announce themselves."""
-    text = (WF_DIR / "master-ci.yml").read_text(encoding="utf-8")
+    text = MASTER_CI_TEXT
     meta = text.split("meta:")[1].split("\n  changes:")[0]
     assert "::warning::template_ref=" in meta
     assert "main|master" in meta, "warning must cover the mutable branch defaults"
@@ -402,7 +406,7 @@ def test_template_ref_fails_closed_for_foreign_callers():
     everything else fails meta with pin instructions instead of silently
     fetching a mutable branch.
     """
-    text = (WF_DIR / "master-ci.yml").read_text(encoding="utf-8")
+    text = MASTER_CI_TEXT
     assert "default: main" not in text, "template_ref must not default to a mutable branch"
     block = text.split("template_ref:")[1].split("concurrency_key:")[0]
     assert "default: ''" in block, "template_ref input must default to the empty string"
@@ -422,8 +426,11 @@ def test_template_ref_fails_closed_for_foreign_callers():
     assert "ref: ${{ inputs.template_ref }}" not in text, (
         "helper checkouts must consume the resolved ref, not the raw input"
     )
-    assert text.count("ref: ${{ needs.meta.outputs.template_ref }}") == 14, (
-        "all fourteen helper checkouts must use the resolved ref"
+    helper_checkouts = text.count("ref: ${{ needs.meta.outputs.template_ref }}")
+    assert helper_checkouts == 15, (
+        f"all {helper_checkouts} helper checkouts must use the resolved ref "
+        "(bump the count when a job gains one - every checkout consumes "
+        "the resolved ref, never the raw input)"
     )
 
 
@@ -432,7 +439,7 @@ def test_meta_verifies_helper_presence_before_fallback():
     auto-detected template_repo is their own project. Meta must probe for
     the helper module and fall back loudly (or die with instructions)
     instead of letting every job fail on a cryptic clone of the caller."""
-    text = (WF_DIR / "master-ci.yml").read_text(encoding="utf-8")
+    text = MASTER_CI_TEXT
     meta = text.split("meta:")[1].split("\n  changes:")[0]
     assert "raw.githubusercontent.com" in meta, "meta must probe the helper file"
     assert "scripts/ai_slop_detector.py" in meta, "probe must target a helper module"
@@ -1194,7 +1201,7 @@ def test_new_code_gate_job_contract():
     coverage gate so the two code paths cannot drift."""
     data = load(WF_DIR / "master-ci.yml")
     job = data["jobs"]["new-code-gate"]
-    text = (WF_DIR / "master-ci.yml").read_text(encoding="utf-8")
+    text = MASTER_CI_TEXT
     assert "needs.meta.outputs.diff_base != ''" in job["if"], (
         "the gate must not run without a diff base"
     )
@@ -1404,3 +1411,129 @@ def test_assurance_summary_reports_armed_and_off_layers(master_ci_text: str):
         "RATCHET: ${{ needs.meta.outputs.ratchet }}",
     ):
         assert text.count(needle) >= 2
+
+
+# ---------------------------------------------------------------------------
+# v2.6: the wider net - coverage and mutation across the whole map,
+# dependency hygiene on every stack, the quality trend history
+# ---------------------------------------------------------------------------
+
+
+def test_coverage_gate_consumes_every_measured_slice():
+    """The gate downloads all four stacks' artifacts and waits on the
+    stacks that can produce them - a slice that ships no report can
+    never silently opt itself out of the floor."""
+    data = load(WF_DIR / "master-ci.yml")
+    gate = data["jobs"]["coverage-gate"]
+    assert {"meta", "python", "go-test", "node-test", "rust", "java"} <= set(gate["needs"])
+    text = MASTER_CI_TEXT
+    assert "pattern: coverage-*" in text, "artifact download must keep the wildcard"
+
+
+def test_rust_stack_measures_coverage_when_armed(master_ci_text: str):
+    """COVERAGE_MIN arms the Rust slice: the pinned cargo-llvm-cov emits
+    a cobertura report per discovered crate, and the artifact carries
+    them to the gate."""
+    assert "cargo llvm-cov --workspace --all-features" in master_ci_text
+    assert "tool_versions.py cargo cargo-llvm-cov" in master_ci_text, "pinned install"
+    assert "--cobertura --output-path" in master_ci_text
+    assert "name: coverage-rust" in master_ci_text
+    assert "rustup component add llvm-tools-preview" in master_ci_text
+
+
+def test_jvm_stack_injects_the_pinned_jacoco_agent(master_ci_text: str):
+    """Maven receives JaCoCo from the command line (prepare-agent +
+    report goals, no pom edit); Gradle projects with the plugin get
+    their report task invoked; the collected jacoco.xml files ride the
+    coverage-jvm artifact."""
+    assert "tool_versions.py maven jacoco" in master_ci_text
+    assert "jacoco-maven-plugin:${jacoco_version}:prepare-agent" in master_ci_text
+    assert "jacoco-maven-plugin:${jacoco_version}:report" in master_ci_text
+    assert "test jacocoTestReport" in master_ci_text
+    assert "*/target/site/jacoco/jacoco.xml" in master_ci_text
+    assert "*/build/reports/jacoco/*jacocoTestReport.xml" in master_ci_text
+    assert "name: coverage-jvm" in master_ci_text
+
+
+def test_dependency_hygiene_spans_every_stack(master_ci_text: str):
+    """Unused-dependency analysis is the coordinator pattern: depcheck
+    (Node), vulture (Python), cargo-machete (Rust) and `go mod tidy
+    -diff` (Go) - every one advisory, every install pinned."""
+    assert "go mod tidy -diff" in master_ci_text
+    assert "tool_versions.py cargo cargo-machete" in master_ci_text
+    assert "cargo-machete flagged unused dependencies" in master_ci_text
+    assert "go mod tidy would change go.mod/go.sum" in master_ci_text
+    assert "depcheck flagged unused or missing dependencies" in master_ci_text
+
+
+def test_pins_file_covers_the_new_families():
+    pins = yaml.safe_load((ROOT / "configs" / "tool-versions.yml").read_text(encoding="utf-8"))
+    assert pins["cargo"]["cargo-llvm-cov"]
+    assert pins["cargo"]["cargo-mutants"]
+    assert pins["cargo"]["cargo-machete"]
+    assert pins["go"]["gremlins"]
+    assert pins["maven"]["jacoco"]
+    out = subprocess_run_tool_versions(["maven", "jacoco"])
+    assert out == "0.8.16"
+
+
+def subprocess_run_tool_versions(argv: list[str]) -> str:
+    import subprocess
+
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "tool_versions.py"), *argv],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
+def test_mutation_workflow_knows_four_ecosystems(master_ci_text: str):
+    """Opt-in by declaration: mutmut/stryker keep their signals and
+    cargo-mutants (.cargo-mutants.toml) and gremlins (.gremlins.yaml)
+    join - both installs pinned through the pins file."""
+    text = (WF_DIR / "mutation.yml").read_text(encoding="utf-8")
+    assert ".cargo-mutants.toml" in text
+    assert ".gremlins.yaml" in text
+    assert "tool_versions.py cargo cargo-mutants" in text
+    assert "go-gremlins/gremlins/cmd/gremlins@" in text
+    assert "gremlins unleash" in text
+    assert "cargo mutants" in text
+    # the summary must advertise the widening, not keep the old lie
+    assert "Python, Node, Go and Rust" in master_ci_text
+
+
+def test_gremlins_gate_needs_declared_thresholds():
+    """Verified against gremlins v0.6.0: without thresholds the run
+    exits 0 no matter how many mutants live, so the workflow comment
+    must say the .gremlins.yaml is the gate."""
+    text = (WF_DIR / "mutation.yml").read_text(encoding="utf-8")
+    assert "threshold" in text, "the gate contract must be documented in place"
+
+
+def test_ci_success_records_the_quality_trend(master_ci_text: str):
+    """SonarQube's lesson, wired: the cache rolls the history forward on
+    the ref, record and save run under always() (failures are exactly
+    the rows the trend exists to mark), and the trend table lands in
+    the summary."""
+    assert "actions/cache/restore@" in master_ci_text
+    assert "actions/cache/save@" in master_ci_text
+    assert "quality-history.jsonl" in master_ci_text
+    assert "restore-keys:" in master_ci_text
+    assert "quality_history.py record" in master_ci_text
+    assert "quality_history.py trend" in master_ci_text
+    # both record and save must survive red runs
+    restore_idx = master_ci_text.index("Restore quality history")
+    record_idx = master_ci_text.index("Record and render quality trend")
+    save_idx = master_ci_text.index("Save quality history")
+    for name, idx in (("record", record_idx), ("save", save_idx)):
+        block = master_ci_text[idx : idx + 600]
+        assert "if: always()" in block, f"{name} step must run under always()"
+    assert restore_idx < record_idx < save_idx, "restore, record, save in order"
+
+
+def test_quality_history_module_is_the_only_history_writer():
+    text = MASTER_CI_TEXT
+    assert text.count("quality-history.jsonl") >= 4
+    assert ">> quality-history.jsonl" not in text, "append only through the module"

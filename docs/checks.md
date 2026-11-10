@@ -412,6 +412,14 @@ Profile presets (quick / standard / strict / custom) only change the
   `[tool.mutmut]` is declared) or Stryker (Node, when a
   `stryker.conf.*` is committed) weekly - coverage says which lines
   ran, mutation says whether the assertions would notice.
+  As of v2.6 the scheduled hunt spans four ecosystems, each opt-in by
+  declaration: mutmut (Python, `[tool.mutmut]`), Stryker (Node,
+  `stryker.conf.*`), cargo-mutants (Rust, `.cargo-mutants.toml` - exit
+  2 = survivors found) and gremlins (Go, `.gremlins.yaml` - exit 10/11
+  when the declared threshold efficacy or mutant-coverage floors are
+  breached; without declared thresholds gremlins never trips, so the
+  config file is the gate). Every install is pinned in
+  `configs/tool-versions.yml`.
 - **v2.0 - the module dependency graph (`import-cycle`, advisory):**
   the repo-level structural verification that closes the roadmap's
   "deeper analysis" arc. `slop_cycles.py` builds a module dependency
@@ -536,16 +544,24 @@ Profile presets (quick / standard / strict / custom) only change the
 - **Inspects:** every discovered Cargo root - the repository root,
   `[workspace]` members and nested independent crates (v2.5 project
   discovery): rustfmt, clippy (`-D warnings`), cargo-deny per project
-  (advisories, licenses, sources - pinned source install), tests.
+  (advisories, licenses, sources - pinned source install),
+  cargo-machete unused-dependency analysis (advisory, v2.6 - the
+  Rust counterpart to depcheck), and tests; with `coverage_min`
+  armed the same test run emits a cobertura report per crate through
+  the pinned `cargo-llvm-cov` (v2.6 - the Rust slice joins the
+  measured floors the Go slice has had since the gate existed).
 - **Does not inspect:** benches beyond clippy's `--all-targets`,
   no_std targets, MSRV matrix (single toolchain input).
 - **Fails when:** fmt/clippy/deny/test failures in any discovered
   project - one red project fails the stack, every project still runs.
 - **False positives:** clippy lints on generated code (add `#[allow]`
-  attributes); cargo-deny on unpublishable dev deps.
+  attributes); cargo-deny on unpublishable dev deps; cargo-machete on
+  macros whose name only appears in a derive (document it in
+  `package.metadata` per the tool's own convention).
 - **Disable:** `run_rust: 'false'`.
 - **Time:** 5-20 minutes cold, 1-5 warm (shared `rust-cache`); the
-  pinned cargo-deny source build adds a few minutes.
+  pinned cargo-deny source build adds a few minutes; coverage adds
+  one instrumented rebuild (v2.6, only when `coverage_min` is set).
 
 ## `go-lint` / `go-test` - Go stack
 
@@ -554,7 +570,10 @@ Profile presets (quick / standard / strict / custom) only change the
   golangci-lint (pinned, built via `go install`, per module, honoring
   each module's own `.golangci.yml`), `go build ./...`, and the test
   suite under the race detector (`go test -race -shuffle=on ./...`);
-  coverage emits one coverprofile per module when `coverage_min` is set.
+  coverage emits one coverprofile per module when `coverage_min` is
+  set, and `go mod tidy -diff` (advisory, v2.6 - the toolchain's own
+  unused/missing-requirement oracle, needs Go >= 1.23) flags any
+  go.mod/go.sum that tidy would change.
 - **Does not inspect:** vendored trees (`vendor/` is excluded from path
   filtering like every stack).
 - **Fails when:** formatting drift, vet findings, golangci-lint
@@ -573,7 +592,13 @@ Profile presets (quick / standard / strict / custom) only change the
   wrapper checksums are validated repo-wide before any code runs; each
   Maven project runs the full `mvn verify` lifecycle (compile, unit +
   integration tests, packaging), each Gradle build runs `gradle build`
-  (compile + test).
+  (compile + test); with `coverage_min` armed (v2.6) Maven projects
+  get the pinned JaCoCo agent injected from the command line
+  (`prepare-agent` + `report` goals - no pom edit needed) and Gradle
+  projects that apply the jacoco plugin get `test jacocoTestReport`
+  invoked, with an enable hint for the ones that do not - Gradle
+  cannot receive the agent without the plugin, and the template does
+  not rewrite build files.
 - **Does not inspect:** `build/` and `target/` outputs (excluded from
   path filtering).
 - **Fails when:** wrapper checksum mismatch, compile, test, or packaging
@@ -736,7 +761,9 @@ shared `fetch_diff_base.sh` helper, and fail closed: a requested gate that
 cannot be evaluated is exit 2, never a silent pass.
 
 - `coverage-gate` (v1.21) enforces `coverage_min` against every uploaded
-  report (coverage.json, Cobertura XML, Go coverprofile) and, when
+  report (coverage.json, Cobertura XML, Go coverprofile, JaCoCo XML -
+  v2.6 dispatches on the XML root tag, so cargo-llvm-cov's cobertura
+  and Maven/Gradle jacoco reports ride the same floor) and, when
   `diff_base` is set, the same floor on the lines the change adds. Only
   coverage subjects enter the new-code denominator: test files and
   non-code files (configs, docs, manifests) are not coverage subjects

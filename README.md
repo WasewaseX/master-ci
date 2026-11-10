@@ -81,7 +81,7 @@ which keeps its baseline reproducible across template releases:
 ```yaml
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v2.5.0
+      template_ref: v2.6.0
 ```
 
 ### Required check
@@ -515,7 +515,7 @@ Full semantics live in [docs/checks.md](docs/checks.md).
 | `ai_slop_max_score` | `8` | Blocking score cap |
 | `complexity_max` | `15` | Cyclomatic complexity gate |
 | `duplication_threshold_pct` | `5` | jscpd failure threshold |
-| `coverage_min` | `0` | Measured coverage floor (percent, `0` = off). Above 0 the Python/Go/Node stacks run tests under coverage and `ai-integrity` gates on the reports; no report fails closed (exit 2) |
+| `coverage_min` | `0` | Measured coverage floor (percent, `0` = off). Above 0 the Python/Go/Node/Rust/JVM stacks run tests under coverage (Go coverprofiles, cargo-llvm-cov cobertura, JaCoCo via Maven CLI injection or Gradle's own plugin) and `ai-integrity` gates on the reports; no report fails closed (exit 2) |
 | `diff_base` | `''` | Git ref defining the new-code window - the same `coverage_min` floor then applies to the added lines (merge-base diff). When set, it also enables the new-code dimension ceilings unless `new_code_gates: false`. Empty = off |
 | `new_code_gates` | `true` | Enforce the new-code dimension ceilings on the `diff_base` diff - legacy files keep their history, every added line meets today's bar |
 | `new_code_max_slop` | `0` | Blocking-score ceiling for findings landing on added lines (zero tolerance by default) |
@@ -682,6 +682,7 @@ Nightly ──> audit tracking issue (secrets, vulns, prose: humans)
 | **Self-Heal** | `heal.yml` | after CI failures on the default branch | Applies the **same fix engine** reactively, opens/updates the `ci/autofix` PR; circuit breakers: default-branch failures only, one heal at a time, stops while a fix PR is open |
 | Deep sweep | `nightly.yml` | nightly + manual | Full-severity Trivy, CodeQL quality suites, verbose AI report |
 | **Flake hunt** | `flaky.yml` | weekly (Mondays) + manual | Runs the test suite 2-5 times in one job and reports every test whose verdict changed between iterations; a committed `.flaky-baseline.json` quarantines known flakes and fails the hunt on a *new* one - test assurance's third leg, beside coverage and mutation |
+| **Mutation testing** | `mutation.yml` | weekly (Mondays) + manual | Opt-in by declaration - `[tool.mutmut]` (Python), `stryker.conf.*` (Node), `.cargo-mutants.toml` (Rust), `.gremlins.yaml` (Go, thresholds are the gate) - surviving mutants fail the run: the weekly proof that the tests can fail |
 | **Deep Audit** | `audit.yml` | weekly (Saturdays) + manual | Whole-repository sweep - full git history (gitleaks), every file (integrity engine), every dependency manifest (osv-scanner), Go modules (govulncheck), SQL (sqlfluff) - one tracking issue labeled `audit`; never gates CI. Its completion is the trigger for the Autofix response above |
 | Housekeeping | `stale.yml` | weekly | Marks and closes inactive issues and PRs (never security-labeled ones) |
 | Auto-label | `label.yml` | every PR | Labels PRs by touched paths |
@@ -718,7 +719,7 @@ carries a `SKILL.md`, so assistants with a skills directory can load it
 with one command:
 
 ```bash
-git clone --depth 1 --branch v2.5.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+git clone --depth 1 --branch v2.6.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
 ```
 
 MCP clients configure the same install like this:
@@ -927,6 +928,30 @@ discovery drives the Go, Rust and JVM stacks the way it already drove
 Node - nested modules, crates and builds are analyzed, not warned
 about - and the PR dashboard reports which test-assurance layers are
 armed and which are waiting for opt-in.
+
+And since v2.6: the **wider net and the trend** - the audit's
+build-next list, learned from the competitors rather than rebuilt from
+scratch. Coverage now measures the whole map: the Rust slice emits
+cobertura through the pinned `cargo-llvm-cov` and the JVM slice gets
+the pinned JaCoCo agent injected from the Maven command line (Gradle
+projects with the plugin get their report task invoked; the gate's
+parser dispatches JaCoCo's own XML dialect by root tag). Mutation
+testing spans four ecosystems, each opt-in by declaration:
+cargo-mutants (Rust, exit 2 = survivors) and gremlins (Go, the
+thresholds declared in `.gremlins.yaml` are the gate - verified
+against the tool's own exit codes) join mutmut and Stryker.
+Dependency hygiene spans every stack the template can see: depcheck
+(Node) and vulture (Python) keep their advisory findings, and the
+toolchains' own oracles join them - `go mod tidy -diff` (exits 1 when
+go.mod would change) and cargo-machete (exits 1 on unused deps), both
+advisory, both pinned. And the ci-success summary carries a
+**quality trend**: a cache-rolled JSONL history records every run -
+verdict, floor, failed jobs - and renders the last ten, so the
+trajectory is visible the way SonarQube's history is, without running
+a server. The template stays what it is - the coordinator of proven
+analyzers (CodeQL for deep semantics, Semgrep for security, the
+language toolchains for their own truths) - never a pile of homemade
+heuristics.
 
 ## License
 

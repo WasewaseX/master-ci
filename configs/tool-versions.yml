@@ -23,5 +23,13 @@ npm:
   jscpd: 5.4.2
 go:
   golangci-lint: v2.13.0
+  gremlins: v0.6.0
 cargo:
   cargo-deny: 0.20.2
+  cargo-llvm-cov: 0.9.1
+  cargo-mutants: 27.1.0
+  cargo-machete: 0.9.2
+maven:
+  # The JaCoCo version the JVM stack injects from the command line
+  # (prepare-agent + report goals) and the coverage gate's parser reads.
+  jacoco: 0.8.16

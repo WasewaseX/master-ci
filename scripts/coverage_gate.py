@@ -7,13 +7,10 @@ coverage, the reports land as artifacts, and the gate consumes them, so
 the test-assurance dimension can show measured coverage instead of a
 guess.
 
-Formats (the three outputs that cover the mainstream toolchains):
-
-- ``coverage.json``  Python ``coverage json``: totals.percent_covered,
-    per-file executed/missing line lists.
-- ``coverage.xml``   Cobertura XML: jest/c8/vitest ``--coverage-reporter
-    cobertura``, JaCoCo, PHPUnit, gocover-cobertura - one dialect.
-- ``cover.out``      Go native coverprofile (``go test -coverprofile``).
+The report dialects (coverage.json, Cobertura XML, JaCoCo XML, Go
+coverprofile) live in ``coverage_parsers.py``; this module is the gate:
+the overall floor across every report, the new-code floor on the lines
+the merge-base diff adds, and the fail-closed contract.
 
 Contract:
 - exit 0  every requested gate holds (or no gate requested)
@@ -32,177 +29,56 @@ line data, so "coverage" means the lines this change actually added.
 from __future__ import annotations
 
 import argparse
-import json
 import subprocess
 import sys
-import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
+from coverage_parsers import (  # noqa: F401 - re-exported, one import door
+    STANDARD_REPORTS,
+    CoverageGateError,
+    CoverageReport,
+    FileCoverage,
+    discover_reports,
+    parse_report,
+)
 from coverage_subjects import is_coverage_subject
-from slop_files import read_text_lax
-
-
-class CoverageGateError(Exception):
-    """A requested gate cannot be evaluated - maps to exit 2."""
-
-
-@dataclass
-class FileCoverage:
-    path: str
-    percent: float
-    covered: set[int] = field(default_factory=set)
-    missed: set[int] = field(default_factory=set)
-
-
-@dataclass
-class CoverageReport:
-    source: str  # python-json | cobertura | go-cover
-    path: str  # report file path, for the report table
-    total_percent: float
-    files: dict[str, FileCoverage]
-
-    def entry_for(self, changed_path: str) -> FileCoverage | None:
-        """Exact match first, then Go-module-style suffix match."""
-        entry = self.files.get(changed_path)
-        if entry is not None:
-            return entry
-        suffix = "/" + changed_path
-        for candidate in self.files.values():
-            if candidate.path.endswith(suffix):
-                return candidate
-        return None
 
 
 def _normalize(path: str) -> str:
     return path.replace("\\", "/").removeprefix("./")
 
 
-def _parse_python_json(path: Path) -> CoverageReport:
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise CoverageGateError(f"unparseable coverage report {path}: {exc}") from exc
-    totals = data.get("totals") or {}
-    if "percent_covered" not in totals:
-        # coverage.py always writes totals.percent_covered; its absence
-        # means the file is not the report we were promised
-        raise CoverageGateError(f"unparseable coverage report {path}: no totals.percent_covered")
-    files: dict[str, FileCoverage] = {}
-    for name, body in (data.get("files") or {}).items():
-        summary = body.get("summary") or {}
-        files[_normalize(name)] = FileCoverage(
-            path=_normalize(name),
-            percent=float(summary.get("percent_covered", 0.0)),
-            covered=set(body.get("executed_lines") or []),
-            missed=set(body.get("missing_lines") or []),
-        )
-    total = float(totals.get("percent_covered", 0.0))
-    return CoverageReport("python-json", str(path), total, files)
+@dataclass
+class NewCodeView:
+    total_percent: float
+    changed_total: int
+    covered_total: int
+    per_file: dict[str, tuple[int, int, int]]  # path -> (covered, changed, first_line)
 
 
-def _parse_cobertura(path: Path) -> CoverageReport:
-    try:
-        root = ET.parse(path).getroot()
-    except (OSError, ET.ParseError) as exc:
-        raise CoverageGateError(f"unparseable coverage report {path}: {exc}") from exc
-    rate = root.get("line-rate")
-    if rate is None:
-        raise CoverageGateError(f"unparseable coverage report {path}: no line-rate")
-    files: dict[str, FileCoverage] = {}
-    for klass in root.iter("class"):
-        name = _normalize(klass.get("filename") or "")
-        if not name:
+def new_code_view(
+    reports: list[CoverageReport],
+    changed: dict[str, set[int]],
+) -> NewCodeView:
+    """Coverage restricted to the added lines, across all reports."""
+    per_file: dict[str, tuple[int, int, int]] = {}
+    covered_total = 0
+    changed_total = 0
+    for path, lines in sorted(changed.items()):
+        if not is_coverage_subject(path):
             continue
-        covered: set[int] = set()
-        missed: set[int] = set()
-        for line in klass.iter("line"):
-            number = int(line.get("number", 0))
-            if int(line.get("hits", 0)) > 0:
-                covered.add(number)
-            else:
-                missed.add(number)
-        count = len(covered) + len(missed)
-        percent = 100.0 * len(covered) / count if count else 0.0
-        files[name] = FileCoverage(name, percent, covered, missed)
-    return CoverageReport("cobertura", str(path), 100.0 * float(rate), files)
-
-
-def _cover_row(row: str, path: Path, files: dict[str, FileCoverage]) -> tuple[int, int]:
-    """(statements, hits) for one coverprofile row; mutates ``files``."""
-    location, _, rest = row.partition(" ")
-    stmts_text, _, count_text = rest.partition(" ")
-    file_part, _, span = location.rpartition(":")
-    if not file_part or "." not in span:
-        return 0, 0
-    name = _normalize(file_part)
-    start_text, _, end_text = span.partition(",")
-    try:
-        start_line = int(start_text.split(".")[0])
-        end_line = int(end_text.split(".")[0])
-        stmts = int(stmts_text)
-        hits = int(count_text)
-    except ValueError as exc:
-        raise CoverageGateError(f"unparseable coverage report {path}: {exc}") from exc
-    entry = files.setdefault(name, FileCoverage(name, 0.0))
-    span_lines = set(range(start_line, end_line + 1))
-    if hits > 0:
-        entry.covered |= span_lines
-    else:
-        entry.missed |= span_lines
-    return stmts, hits
-
-
-def _parse_go_cover(path: Path) -> CoverageReport:
-    files: dict[str, FileCoverage] = {}
-    total_stmts = 0
-    covered_stmts = 0
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError as exc:
-        raise CoverageGateError(f"unparseable coverage report {path}: {exc}") from exc
-    for row in lines:
-        if not row or row.startswith("mode:"):
-            continue
-        stmts, hits = _cover_row(row, path, files)
-        total_stmts += stmts
-        if hits > 0:
-            covered_stmts += stmts
-    if total_stmts <= 0:
-        raise CoverageGateError(f"unparseable coverage report {path}: no statement rows")
-    for entry in files.values():
-        seen = len(entry.covered) + len(entry.missed)
-        entry.percent = 100.0 * len(entry.covered) / seen if seen else 0.0
-        entry.covered -= entry.missed
-    total = 100.0 * covered_stmts / total_stmts
-    return CoverageReport("go-cover", str(path), total, files)
-
-
-def parse_report(path: Path) -> CoverageReport:
-    """Dispatch on the report's actual shape, not just its name."""
-    if path.name == "cover.out":
-        return _parse_go_cover(path)
-    text = read_text_lax(path)
-    if text.lstrip().startswith("{"):
-        return _parse_python_json(path)
-    if text.lstrip().startswith("<"):
-        return _parse_cobertura(path)
-    return _parse_go_cover(path)
-
-
-STANDARD_REPORTS = ("coverage.json", "coverage.xml", "cover.out")
-
-
-def discover_reports(root: Path, explicit: list[str]) -> list[CoverageReport]:
-    """Explicit paths win; otherwise the standard names at the root."""
-    if explicit:
-        candidates = [Path(p) for p in explicit]
-        missing = [str(p) for p in candidates if not p.exists()]
-        if missing:
-            raise CoverageGateError(f"coverage report(s) not found: {', '.join(missing)}")
-    else:
-        candidates = [root / name for name in STANDARD_REPORTS if (root / name).exists()]
-    return [parse_report(path) for path in candidates]
+        entry = None
+        for report in reports:
+            entry = report.entry_for(path)
+            if entry is not None:
+                break
+        covered = len(lines & entry.covered) if entry else 0
+        per_file[path] = (covered, len(lines), min(lines))
+        covered_total += covered
+        changed_total += len(lines)
+    total = 100.0 * covered_total / changed_total if changed_total else 100.0
+    return NewCodeView(total, changed_total, covered_total, per_file)
 
 
 def _hunk_added_lines(rows: list[str], start: int, count: int) -> set[int]:
@@ -275,38 +151,6 @@ def git_changed_lines(root: Path, base: str) -> dict[str, set[int]]:
             hunk_rows.append(row)
     _flush_hunk(changed, current, hunk_rows, start, count)
     return {path: lines for path, lines in changed.items() if lines}
-
-
-@dataclass
-class NewCodeView:
-    total_percent: float
-    changed_total: int
-    covered_total: int
-    per_file: dict[str, tuple[int, int, int]]  # path -> (covered, changed, first_line)
-
-
-def new_code_view(
-    reports: list[CoverageReport],
-    changed: dict[str, set[int]],
-) -> NewCodeView:
-    """Coverage restricted to the added lines, across all reports."""
-    per_file: dict[str, tuple[int, int, int]] = {}
-    covered_total = 0
-    changed_total = 0
-    for path, lines in sorted(changed.items()):
-        if not is_coverage_subject(path):
-            continue
-        entry = None
-        for report in reports:
-            entry = report.entry_for(path)
-            if entry is not None:
-                break
-        covered = len(lines & entry.covered) if entry else 0
-        per_file[path] = (covered, len(lines), min(lines))
-        covered_total += covered
-        changed_total += len(lines)
-    total = 100.0 * covered_total / changed_total if changed_total else 100.0
-    return NewCodeView(total, changed_total, covered_total, per_file)
 
 
 @dataclass

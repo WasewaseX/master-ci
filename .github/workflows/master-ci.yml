@@ -975,15 +975,19 @@ jobs:
   # to catch.
   # ---------------------------------------------------------------------------
   coverage-gate:
-    needs: [meta, python, go-test, node-test]
+    needs: [meta, python, go-test, node-test, rust, java]
     if: >-
       always() && needs.meta.result == 'success'
       && needs.python.result != 'failure'
       && needs.go-test.result != 'failure'
       && needs.node-test.result != 'failure'
+      && needs.rust.result != 'failure'
+      && needs.java.result != 'failure'
       && (needs.python.result == 'success'
           || needs.go-test.result == 'success'
-          || needs.node-test.result == 'success')
+          || needs.node-test.result == 'success'
+          || needs.rust.result == 'success'
+          || needs.java.result == 'success')
       && needs.meta.outputs.coverage_min != '0'
       && needs.meta.outputs.coverage_min != ''
     runs-on: ${{ inputs.runs_on }}
@@ -1619,6 +1623,18 @@ jobs:
             (cd "$dir" && cargo clippy --all-targets -- -D warnings) || clippy_fail=1
           done < "$RUNNER_TEMP/rust-projects.txt"
           exit "$clippy_fail"
+      - name: Unused dependencies (cargo-machete, advisory)
+        # cargo-machete flags dependencies the code never references -
+        # the Rust counterpart to depcheck (Node) and vulture (Python).
+        # Advisory: the finding is a warning, the gate is the review.
+        if: steps.detect.outputs.manifest == 'true'
+        run: |
+          cargo install --locked --quiet cargo-machete \
+            --version "$(python3 _ci/scripts/tool_versions.py cargo cargo-machete)"
+          while IFS= read -r dir; do
+            (cd "$dir" && cargo-machete) \
+              || echo "::warning::cargo-machete flagged unused dependencies in $dir (advisory)"
+          done < "$RUNNER_TEMP/rust-projects.txt"
       - name: Advisories, licenses, sources (cargo-deny, per project)
         if: steps.detect.outputs.manifest == 'true'
         run: |
@@ -1637,13 +1653,41 @@ jobs:
           exit "$deny_fail"
       - name: Test
         if: steps.detect.outputs.manifest == 'true'
+        env:
+          COVERAGE_MIN: ${{ needs.meta.outputs.coverage_min }}
         run: |
+          # COVERAGE_MIN > 0 opts into measured test assurance: the same
+          # test run emits a cobertura report per discovered crate
+          # (covdir/<crate>/coverage.xml) through the pinned
+          # cargo-llvm-cov, consumed by the coverage gate's recursive
+          # report discovery - the Rust slice gets the same measured
+          # floor the Go slice has had since the gate existed.
           test_fail=0
+          if [ -n "$COVERAGE_MIN" ] && [ "$COVERAGE_MIN" != "0" ]; then
+            rustup component add llvm-tools-preview
+            cargo install --locked --quiet cargo-llvm-cov \
+              --version "$(python3 _ci/scripts/tool_versions.py cargo cargo-llvm-cov)"
+          fi
           while IFS= read -r dir; do
-            echo "cargo test: $dir"
-            (cd "$dir" && cargo test --workspace --all-features) || test_fail=1
+            if [ -n "$COVERAGE_MIN" ] && [ "$COVERAGE_MIN" != "0" ]; then
+              safe="covdir/$(printf '%s' "$dir" | tr '/' '_')"
+              mkdir -p "$safe"
+              echo "cargo llvm-cov: $dir"
+              (cd "$dir" && cargo llvm-cov --workspace --all-features \
+                --cobertura --output-path "$GITHUB_WORKSPACE/$safe/coverage.xml") || test_fail=1
+            else
+              echo "cargo test: $dir"
+              (cd "$dir" && cargo test --workspace --all-features) || test_fail=1
+            fi
           done < "$RUNNER_TEMP/rust-projects.txt"
           exit "$test_fail"
+      - name: Upload coverage reports
+        if: steps.detect.outputs.manifest == 'true' && needs.meta.outputs.coverage_min != '0' && needs.meta.outputs.coverage_min != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-rust
+          path: covdir
+          if-no-files-found: ignore
 
   # ---------------------------------------------------------------------------
   # Go stack: formatting, vet, golangci-lint (workspace-aware, per module)
@@ -1730,6 +1774,18 @@ jobs:
             (cd "$dir" && golangci-lint run --timeout=10m) || lint_fail=1
           done < "$RUNNER_TEMP/go-projects.txt"
           exit "$lint_fail"
+      - name: Unused dependencies (go mod tidy -diff, advisory)
+        # `go mod tidy -diff` prints the unified diff tidy would apply
+        # and exits 1 when go.mod/go.sum would change (Go >= 1.23), so a
+        # missing or unused requirement cannot hide - the Go
+        # counterpart to depcheck (Node) and cargo-machete (Rust).
+        # Advisory: the finding is a warning, the gate is the review.
+        if: steps.detect.outputs.manifest == 'true'
+        run: |
+          while IFS= read -r dir; do
+            (cd "$dir" && go mod tidy -diff >/dev/null) \
+              || echo "::warning::go mod tidy would change go.mod/go.sum in $dir (advisory)"
+          done < "$RUNNER_TEMP/go-projects.txt"
 
   # ---------------------------------------------------------------------------
   # Go stack: build + race-tested tests
@@ -1873,27 +1929,85 @@ jobs:
         # lifecycle: Maven `verify` / Gradle `build` compiles, tests and
         # packages the way the project itself declares. One red project
         # fails the stack - accumulation, never first-failure abort.
+        # COVERAGE_MIN > 0 arms measured test assurance for the JVM
+        # slice too: Maven gets the pinned JaCoCo agent injected from
+        # the command line (prepare-agent + report goals - no pom edit
+        # required); Gradle projects that already apply the jacoco
+        # plugin get their report task invoked, and ones that do not
+        # get an enable hint - Gradle cannot receive the agent without
+        # the plugin, and the template does not rewrite build files.
         if: steps.detect.outputs.tool != 'none'
+        env:
+          COVERAGE_MIN: ${{ needs.meta.outputs.coverage_min }}
         run: |
+          jacoco_version="$(python3 _ci/scripts/tool_versions.py maven jacoco)"
+          armed=0
+          if [ -n "$COVERAGE_MIN" ] && [ "$COVERAGE_MIN" != "0" ]; then
+            armed=1
+          fi
           build_fail=0
           while IFS= read -r dir; do
             if [ -f "$dir/pom.xml" ] || [ -f "$dir/mvnw" ]; then
               echo "Maven verify: $dir"
+              mvn_cmd="mvn"
               if [ -x "$dir/mvnw" ]; then
-                (cd "$dir" && ./mvnw -B -ntp verify) || build_fail=1
+                mvn_cmd="$dir/mvnw"
+              fi
+              if [ "$armed" = "1" ]; then
+                (cd "$dir" && $mvn_cmd -B -ntp \
+                  "org.jacoco:jacoco-maven-plugin:${jacoco_version}:prepare-agent" \
+                  verify \
+                  "org.jacoco:jacoco-maven-plugin:${jacoco_version}:report") || build_fail=1
               else
-                (cd "$dir" && mvn -B -ntp verify) || build_fail=1
+                (cd "$dir" && $mvn_cmd -B -ntp verify) || build_fail=1
               fi
             else
               echo "Gradle build: $dir"
+              gradle_cmd="gradle"
               if [ -x "$dir/gradlew" ]; then
-                (cd "$dir" && ./gradlew --no-daemon build) || build_fail=1
+                gradle_cmd="$dir/gradlew"
+              fi
+              if [ "$armed" = "1" ] && grep -qs jacoco "$dir"/build.gradle "$dir"/build.gradle.kts; then
+                (cd "$dir" && $gradle_cmd --no-daemon test jacocoTestReport) || build_fail=1
               else
-                (cd "$dir" && gradle --no-daemon build) || build_fail=1
+                if [ "$armed" = "1" ]; then
+                  echo "::warning::JaCoCo not applied in $dir - JVM coverage not measured (add 'apply plugin: jacoco' or the maven plugin needs no change)"
+                fi
+                if [ "$armed" = "1" ]; then
+                  (cd "$dir" && $gradle_cmd --no-daemon test) || build_fail=1
+                else
+                  (cd "$dir" && $gradle_cmd --no-daemon build) || build_fail=1
+                fi
               fi
             fi
           done < "$RUNNER_TEMP/jvm-projects.txt"
           exit "$build_fail"
+      - name: Collect JVM coverage
+        # JaCoCo's own XML dialect - the coverage gate dispatches on the
+        # <report> root tag, so these files ride the same coverage-*
+        # artifact stream as cobertura, coverprofile and json reports.
+        if: steps.detect.outputs.tool != 'none' && needs.meta.outputs.coverage_min != '0' && needs.meta.outputs.coverage_min != ''
+        run: |
+          mkdir -p covdir-jvm
+          found=0
+          while IFS= read -r report; do
+            safe="$(printf '%s' "$report" | tr '/' '_')"
+            cp "$report" "covdir-jvm/$safe"
+            echo "collected: $report"
+            found=1
+          done < <(find . -type f \( \
+            -path '*/target/site/jacoco/jacoco.xml' -o \
+            -path '*/build/reports/jacoco/*jacocoTestReport.xml' \) -print 2>/dev/null)
+          if [ "$found" = "0" ]; then
+            echo "::warning::coverage armed but no JaCoCo report found - changed JVM lines will count as uncovered in the new-code gate"
+          fi
+      - name: Upload coverage reports
+        if: steps.detect.outputs.tool != 'none' && needs.meta.outputs.coverage_min != '0' && needs.meta.outputs.coverage_min != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-jvm
+          path: covdir-jvm
+          if-no-files-found: ignore
 
   # ---------------------------------------------------------------------------
   # C/C++ stack: cppcheck static analysis (advisory), opt-in clang-format
@@ -2522,7 +2636,7 @@ jobs:
               print(f"| Quality ratchet | opted-in when `{ratchet_file}` is committed |")
           else:
               print(f"| Quality ratchet | off - commit `{ratchet_file}` or set `ratchet: true` |")
-          print("| Mutation testing | scheduled workflow (`mutation.yml`) - opt-in, Python and Node |")
+          print("| Mutation testing | scheduled workflow (`mutation.yml`) - opt-in, Python, Node, Go and Rust |")
           print("| Flake hunt | scheduled workflow (`flaky.yml`) - arms when `.flaky-baseline.json` is committed |")
           print()
           print("Findings: Security tab, inline annotations, step summaries.")
@@ -2647,16 +2761,19 @@ jobs:
               "skipped": ":fast_forward:",
           }
           failed = False
+          failed_names = []
           rows = []
           for name, result in zip(names, results):
               if result in ("failure", "cancelled"):
                   failed = True
+                  failed_names.append(name)
               rows.append(f"| {labels[name]} (`{name}`) | {icon.get(result, ':question:')} `{result}` |")
           verdict = "failed" if failed else "passed"
           gh_output = os.environ.get("GITHUB_OUTPUT")
           if gh_output:
               with open(gh_output, "a", encoding="utf-8") as handle:
                   handle.write(f"verdict={verdict}\n")
+                  handle.write(f"failed_jobs={','.join(failed_names)}\n")
           summary = os.environ.get("GITHUB_STEP_SUMMARY")
           if summary:
               with open(summary, "a", encoding="utf-8") as handle:
@@ -2694,7 +2811,7 @@ jobs:
                       ),
                       (
                           "Mutation testing",
-                          "scheduled workflow (`mutation.yml`) - opt-in, Python and Node",
+                          "scheduled workflow (`mutation.yml`) - opt-in, Python, Node, Go and Rust",
                       ),
                       (
                           "Flake hunt",
@@ -2711,3 +2828,55 @@ jobs:
                   )
           raise SystemExit(1 if failed else 0)
           PY
+      - name: Fetch master-ci helpers
+        # The historian rides the template's own scripts: the record and
+        # trend logic is versioned with the template so the file format
+        # cannot drift between what writes the history and what reads it.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ needs.meta.outputs.template_repo }}
+          ref: ${{ needs.meta.outputs.template_ref }}
+          path: _ci
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Restore quality history
+        # SonarQube's durable lesson: quality is a trajectory, not a
+        # snapshot. The cache rolls forward on this ref - the unique
+        # run-id key saves a fresh entry every run, the restore-keys
+        # prefix picks up the newest history from the previous run.
+        if: always()
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: quality-history.jsonl
+          key: quality-history-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            quality-history-${{ github.ref_name }}-
+      - name: Record and render quality trend
+        if: always()
+        env:
+          VERDICT: ${{ steps.aggregate.outputs.verdict }}
+          FAILED_JOBS: ${{ steps.aggregate.outputs.failed_jobs }}
+          RUN_ID: ${{ github.run_id }}
+          REF_NAME: ${{ github.ref_name }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          # Failures are recorded too - a run that went red is exactly
+          # the point the trend table exists to mark, so both record and
+          # save run under always() and the file rides the cache out.
+          python3 _ci/scripts/quality_history.py record \
+            --file quality-history.jsonl \
+            --run-id "$RUN_ID" \
+            --ref "$REF_NAME" \
+            --sha "$HEAD_SHA" \
+            --verdict "$VERDICT" \
+            --coverage-min "${COVERAGE_MIN:-0}" \
+            --failed-jobs "$FAILED_JOBS"
+          python3 _ci/scripts/quality_history.py trend \
+            --file quality-history.jsonl --last 10 \
+            >> "${GITHUB_STEP_SUMMARY}"
+      - name: Save quality history
+        if: always()
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: quality-history.jsonl
+          key: quality-history-${{ github.ref_name }}-${{ github.run_id }}

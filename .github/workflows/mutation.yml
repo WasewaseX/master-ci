@@ -7,11 +7,14 @@
 # the PR-time coverage gate.
 #
 # Opt-in by declaration: the job runs mutmut when pyproject.toml declares
-# [tool.mutmut] (or setup.cfg [mutmut]), and Stryker when a
-# stryker.conf.* is committed. A repo without either config skips - and
-# a tool that exits nonzero on surviving mutants fails the run, which is
-# the weekly signal to review the tests.
-# =============================================================================
+# [tool.mutmut] (or setup.cfg [mutmut]), Stryker when a
+# stryker.conf.* is committed, cargo-mutants when .cargo-mutants.toml is
+# committed, and gremlins when .gremlins.yaml is committed. A repo
+# without any of those configs skips - and a tool that exits nonzero on
+# surviving mutants fails the run, which is the weekly signal to review
+# the tests. New installs are pinned through configs/tool-versions.yml,
+# the same trust class as every other analyzer in the template.
+# ===============================================================================
 
 name: Mutation Testing
 
@@ -42,12 +45,24 @@ jobs:
             tool=mutmut
           elif ls stryker.conf.json stryker.conf.js stryker.conf.mjs stryker.conf.cjs >/dev/null 2>&1; then
             tool=stryker
+          elif ls .cargo-mutants.toml >/dev/null 2>&1; then
+            tool=cargo-mutants
+          elif ls .gremlins.yaml gremlins.yaml >/dev/null 2>&1; then
+            tool=gremlins
           fi
           echo "tool=$tool" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         if: steps.detect.outputs.tool == 'mutmut'
         with:
           python-version: '3.13'
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable (branch pin; no version tags published) # zizmor: ignore[ref-version-mismatch]
+        if: steps.detect.outputs.tool == 'cargo-mutants'
+        with:
+          toolchain: stable
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: steps.detect.outputs.tool == 'gremlins'
+        with:
+          go-version: 'stable'
       - name: Mutate (mutmut)
         if: steps.detect.outputs.tool == 'mutmut'
         run: |
@@ -59,6 +74,25 @@ jobs:
       - name: Mutate (Stryker)
         if: steps.detect.outputs.tool == 'stryker'
         run: npx --yes @stryker-mutator/core run
+      - name: Mutate (cargo-mutants)
+        if: steps.detect.outputs.tool == 'cargo-mutants'
+        run: |
+          cargo install --locked --quiet cargo-mutants \
+            --version "$(python3 scripts/tool_versions.py cargo cargo-mutants)"
+          cargo mutants
+          # Exit codes verified against the tool's contract: 0 = every
+          # viable mutant caught, 2 = survivors found. Survivors fail
+          # the job; mutants.out carries the per-mutant evidence.
+          find mutants.out -name '*.json' -type f | head -50 || true
+      - name: Mutate (gremlins)
+        if: steps.detect.outputs.tool == 'gremlins'
+        run: |
+          go install "github.com/go-gremlins/gremlins/cmd/gremlins@$(python3 scripts/tool_versions.py go gremlins)"
+          # The .gremlins.yaml that opted this repo in is also the gate:
+          # unleash exits 10 / 11 when the configured unleash.threshold
+          # efficacy / mutant-coverage floors are breached (verified
+          # against gremlins v0.6.0; unset thresholds never trip).
+          gremlins unleash
       - name: Upload survivor report
         if: always() && steps.detect.outputs.tool == 'mutmut' && hashFiles('mutmut-results.txt') != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -73,6 +107,13 @@ jobs:
           name: mutation-stryker-reports
           path: reports/
           if-no-files-found: ignore
+      - name: Upload cargo-mutants evidence
+        if: always() && steps.detect.outputs.tool == 'cargo-mutants' && hashFiles('mutants.out/**') != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: mutation-cargo-mutants-out
+          path: mutants.out/
+          if-no-files-found: ignore
       - name: Summary
         if: always()
         run: |
@@ -82,8 +123,8 @@ jobs:
             case "$TOOL" in
               none)
                 echo "No mutation config declared - opt in with [tool.mutmut] in"
-                echo "pyproject.toml or a stryker.conf.json. Nothing ran; this is not"
-                echo "a pass or a fail." ;;
+                echo "pyproject.toml, a stryker.conf.json, a .cargo-mutants.toml or"
+                echo "a .gremlins.yaml. Nothing ran; this is not a pass or a fail." ;;
               mutmut)
                 echo "mutmut ran; surviving mutants (if any) are listed above and in"
                 echo "the mutation-survivors artifact. Each survivor is an assertion"
@@ -92,6 +133,14 @@ jobs:
                 echo "Stryker ran; the HTML report is in the mutation-stryker-reports"
                 echo "artifact. A low mutation score means the tests execute code but"
                 echo "do not verify behavior." ;;
+              cargo-mutants)
+                echo "cargo-mutants ran; the per-mutant evidence is in the"
+                echo "mutation-cargo-mutants-out artifact. Every surviving mutant is"
+                echo "a code change no test noticed (exit 2 = survivors found)." ;;
+              gremlins)
+                echo "gremlins ran with the thresholds declared in .gremlins.yaml;"
+                echo "exit 10 / 11 means the efficacy or mutant-coverage floor was"
+                echo "breached - the tests kill too few of the mutants they run." ;;
             esac
           } >> "$GITHUB_STEP_SUMMARY"
         env:

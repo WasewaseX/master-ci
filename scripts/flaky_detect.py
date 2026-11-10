@@ -263,17 +263,29 @@ def main(argv: list[str] | None = None) -> int:
         print(f"flake hunt: {exc}", file=sys.stderr)
         return 2
     if args.write_baseline:
-        keys = sorted(v.key for v in verdicts if v.is_flaky)
-        write_baseline(Path(args.baseline or DEFAULT_BASELINE), keys)
-        print(f"flake hunt: recorded {len(keys)} flaky test(s) in the baseline")
-        return 0
+        return _record_baseline(args, verdicts)
     try:
-        delta = BaselineDelta((), tuple(v.key for v in verdicts if v.is_flaky), ())
-        if args.baseline:
-            delta = compare(verdicts, load_baseline(Path(args.baseline)))
+        delta = _compare_to_baseline(args, verdicts)
     except HuntError as exc:
         print(f"flake hunt: {exc}", file=sys.stderr)
         return 2
+    return _emit(args, verdicts, delta, iterations)
+
+
+def _record_baseline(args: argparse.Namespace, verdicts: list) -> int:
+    keys = sorted(v.key for v in verdicts if v.is_flaky)
+    write_baseline(Path(args.baseline or DEFAULT_BASELINE), keys)
+    print(f"flake hunt: recorded {len(keys)} flaky test(s) in the baseline")
+    return 0
+
+
+def _compare_to_baseline(args: argparse.Namespace, verdicts: list):
+    if not args.baseline:
+        return BaselineDelta((), tuple(v.key for v in verdicts if v.is_flaky), ())
+    return compare(verdicts, load_baseline(Path(args.baseline)))
+
+
+def _emit(args: argparse.Namespace, verdicts: list, delta, iterations) -> int:
     report = build_report(verdicts, delta, iterations)
     Path(args.report).write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
