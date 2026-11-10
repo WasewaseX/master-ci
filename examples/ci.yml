@@ -49,9 +49,9 @@ jobs:
       id-token: write
 
   codeql:
+    # languages: auto by default - dialects are detected from the
+    # committed manifests (go.mod, Cargo.toml, package.json, pyproject.toml, ...)
     uses: WasewaseX/master-ci/.github/workflows/codeql.yml@v2
-    with:
-      languages: javascript-typescript,python
     permissions:
       contents: read
       security-events: write

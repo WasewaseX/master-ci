@@ -47,12 +47,14 @@ jobs:
 
   codeql:
     uses: WasewaseX/master-ci/.github/workflows/codeql.yml@v2
-    with:
-      languages: javascript-typescript,python
     permissions:
       contents: read
       security-events: write
 ```
+
+CodeQL needs no `with:` block: `languages` defaults to `auto` and is
+read from the manifests the repo already commits (v2.7). Pin dialects
+explicitly only when you want to override detection.
 
 Or fetch the ready-made caller with one shell line:
 
@@ -81,7 +83,7 @@ which keeps its baseline reproducible across template releases:
 ```yaml
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v2.6.0
+      template_ref: v2.7.0
 ```
 
 ### Required check
@@ -558,8 +560,16 @@ blocks, per-job permissions and timeouts.
 
 ## CodeQL languages vs. full CI stacks
 
-The `languages:` input of `codeql.yml` accepts `javascript-typescript`,
-`python`, `go`, `java-kotlin`, `c-cpp`, `ruby`, `rust` and `swift`. That is
+`codeql.yml` defaults to `languages: auto`: a detector (versioned with
+the template, `scripts/codeql_detect.py`) reads the manifests the repo
+already commits - go.mod, Cargo.toml, pom.xml/build.gradle, package.json,
+pyproject.toml, Gemfile, Package.swift, CMakeLists, .csproj - and maps
+them to the CodeQL dialects `javascript-typescript`, `python`, `go`,
+`java-kotlin`, `c-cpp`, `csharp`, `ruby`, `rust` and `swift`. A repo
+CodeQL cannot analyze fails the detect step (exit 2) with the fix
+spelled out - pass `languages:` explicitly or drop the call; it never
+analyzes an empty set silently. Explicit `languages:` still works for
+repos that want to pin the dialects. That is
 **CodeQL deep security analysis** for those languages only. The full stack
 coverage - auto-detection, lint, format, types, tests, dependency policy -
 now covers Rust, Node/TypeScript, Python, Go, JVM (Java/Kotlin), C/C++, .NET (C#/F#), Ruby, PHP and Docker.
@@ -719,7 +729,7 @@ carries a `SKILL.md`, so assistants with a skills directory can load it
 with one command:
 
 ```bash
-git clone --depth 1 --branch v2.6.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+git clone --depth 1 --branch v2.7.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
 ```
 
 MCP clients configure the same install like this:

@@ -752,7 +752,37 @@ Profile presets (quick / standard / strict / custom) only change the
 - Both summaries carry a **Test assurance** table (v2.5): the armed or
   off state of the coverage floor, new-code ceilings, quality ratchet,
   mutation testing and the flake hunt, each with its one-line enable
-  hint - an opt-in layer is reported, never silently absent.
+  hint - an opt-in layer is reported, never silently absent. The
+  **Semantic analysis (CodeQL)** row (v2.7) is the first verified one:
+  both jobs check out the calling repository and grep its own workflow
+  files for the `codeql.yml` call, so the row shows *armed via own
+  workflow* only when the call is really committed.
+
+## `codeql.yml` - CodeQL Advanced, semantic security analysis (standalone)
+
+Not a job in `master-ci.yml` but a sibling reusable workflow, free on
+public repositories, called with one line and no `with:` block:
+`uses: WasewaseX/master-ci/.github/workflows/codeql.yml@v2` plus
+`security-events: write`.
+
+- `languages: auto` (the default, v2.7) detects dialects from the
+  manifests the repo commits: `scripts/codeql_detect.py` maps go.mod,
+  Cargo.toml, pom.xml/build.gradle(.kts), package.json, pyproject.toml,
+  Gemfile, Package.swift, CMakeLists/meson/Makefile and .csproj/.sln
+  onto the nine CodeQL languages, walking a fixed skip list
+  (node_modules, dist, build, target, vendor, coverage) so vendored
+  code never votes. The detector is fetched from `template_repo` /
+  `template_ref` (defaults: `WasewaseX/master-ci` @ `v2`, overridable
+  for forks), so its manifest map is versioned with the tests that pin
+  it; the contract tests hold the detector's set and the workflow's
+  allowed set equal so the two cannot drift.
+- A repository CodeQL cannot analyze is exit 2 with the fix spelled
+  out - pass `languages:` explicitly or drop the call - never an empty
+  analysis reported as success.
+- Explicit `languages:`, `queries:` (default `security-and-quality`)
+  and `config_file:` still work unchanged; one analyze job per language
+  runs `autobuild` for compiled dialects and uploads SARIF to the
+  Security tab with a per-language category.
 
 ## `coverage-gate` and `new-code-gate` - measured floors and new-code ceilings
 

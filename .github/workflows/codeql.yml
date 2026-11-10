@@ -2,8 +2,10 @@
 # CodeQL Advanced - reusable security + quality analysis workflow
 # =============================================================================
 # Standalone from Master CI so it can run on its own schedule or matrix.
-# Free on public repositories. Call it with one line:
-#   uses: WasewaseX/master-ci/.github/workflows/codeql.yml@main
+# Free on public repositories. Call it with one line - languages are
+# auto-detected from the manifests the repo already commits:
+#   uses: WasewaseX/master-ci/.github/workflows/codeql.yml@v2
+# Explicit languages: still works for repos that want to pin the dialects.
 # =============================================================================
 
 name: CodeQL Advanced
@@ -13,11 +15,12 @@ on:
     inputs:
       languages:
         description: >-
-          Comma-separated CodeQL languages: javascript-typescript, python,
-          go, java-kotlin, c-cpp, ruby, rust, swift
+          Comma-separated CodeQL languages (javascript-typescript, python,
+          go, java-kotlin, c-cpp, ruby, rust, swift) or 'auto' to detect
+          them from the repository's committed manifests
         required: false
         type: string
-        default: 'javascript-typescript,python'
+        default: auto
       queries:
         description: CodeQL query suites (security-extended, security-and-quality)
         required: false
@@ -28,6 +31,19 @@ on:
         required: false
         type: string
         default: ''
+      template_repo:
+        description: Repo holding the language detector (override for forks)
+        required: false
+        type: string
+        default: WasewaseX/master-ci
+      template_ref:
+        description: >-
+          Ref of template_repo to fetch the detector from. The v2 tag moves
+          with every release; pin an exact vX.Y.Z tag to freeze detection
+          behavior.
+        required: false
+        type: string
+        default: v2
 
 permissions:
   contents: read
@@ -39,11 +55,33 @@ jobs:
     outputs:
       languages: ${{ steps.split.outputs.languages }}
     steps:
+      - name: Check out the calling repository
+        if: inputs.languages == 'auto'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Fetch the language detector from the template
+        if: inputs.languages == 'auto'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.template_repo }}
+          ref: ${{ inputs.template_ref }}
+          path: _ci
+          persist-credentials: false
+      - name: Auto-detect CodeQL languages
+        id: detect
+        if: inputs.languages == 'auto'
+        run: |
+          # The detector rides the template checkout so the manifest map
+          # cannot drift between what this workflow runs and what its
+          # tests pin. Nothing analyzable is exit 2 - fail closed with
+          # guidance, never an empty analysis.
+          python3 _ci/scripts/codeql_detect.py --root . --format gh-output
       - name: Split and validate languages
         id: split
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          LANGUAGES: ${{ inputs.languages }}
+          LANGUAGES: ${{ inputs.languages == 'auto' && steps.detect.outputs.languages || inputs.languages }}
         with:
           script: |
             const allowed = new Set([

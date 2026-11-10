@@ -1537,3 +1537,67 @@ def test_quality_history_module_is_the_only_history_writer():
     text = MASTER_CI_TEXT
     assert text.count("quality-history.jsonl") >= 4
     assert ">> quality-history.jsonl" not in text, "append only through the module"
+
+
+# ---------------------------------------------------------------------------
+# v2.7: the semantic eye - CodeQL auto-detection and the verified
+# Semantic analysis row in the assurance tables
+# ---------------------------------------------------------------------------
+
+
+def test_codeql_defaults_to_zero_config_detection():
+    """languages: auto is the default: CodeQL joins the template's
+    zero-config surface instead of asking every caller to enumerate
+    dialects. The detector rides the template checkout so the manifest
+    map is versioned with its tests, explicit languages short-circuit
+    the detection steps, and forks can point template_repo elsewhere."""
+    data = load(WF_DIR / "codeql.yml")
+    inputs = _on(data)["workflow_call"]["inputs"]
+    assert inputs["languages"]["default"] == "auto"
+    assert inputs["template_repo"]["default"] == "WasewaseX/master-ci"
+    assert inputs["template_ref"]["default"] == "v2"
+    text = (WF_DIR / "codeql.yml").read_text(encoding="utf-8")
+    assert "python3 _ci/scripts/codeql_detect.py --root . --format gh-output" in text
+    detect_steps = (
+        "Check out the calling repository",
+        "Fetch the language detector from the template",
+        "Auto-detect CodeQL languages",
+    )
+    names = [s.get("name", "") for s in data["jobs"]["prepare"]["steps"]]
+    for name in detect_steps:
+        assert name in names, f"prepare is missing the {name!r} step"
+    for step in data["jobs"]["prepare"]["steps"]:
+        if step.get("name") in detect_steps:
+            assert step.get("if") == "inputs.languages == 'auto'", (
+                f"{step.get('name')}: explicit languages must short-circuit detection"
+            )
+
+
+def test_codeql_language_sets_cannot_drift():
+    """The detector's SUPPORTED set and the prepare job's allowed set are
+    one contract in two places - the equality test turns drift into a
+    red test instead of a runtime surprise."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from codeql_detect import SUPPORTED
+
+    text = (WF_DIR / "codeql.yml").read_text(encoding="utf-8")
+    block = text[text.index("const allowed = new Set([") :]
+    block = block[: block.index("]);")]
+    allowed = set(re.findall(r"'([\w-]+)'", block))
+    assert set(SUPPORTED) == allowed
+
+
+def test_assurance_verifies_codeql_wiring(master_ci_text: str):
+    """The Semantic analysis row is verified, not declared: dashboard and
+    ci-success both check out the caller and grep its own workflow files
+    for the codeql.yml call before claiming the layer is armed."""
+    text = master_ci_text
+    # two tables x (armed + off) branches: the row exists in both the PR
+    # dashboard and the ci-success summary, each with both states.
+    assert text.count("Semantic analysis (CodeQL)") == 4
+    assert text.count('if "workflows/codeql.yml@" in text:') == 2
+    data = load(WF_DIR / "master-ci.yml")
+    for job_id in ("dashboard", "ci-success"):
+        first = data["jobs"][job_id]["steps"][0]
+        assert first.get("name") == "Check out the calling repository", job_id
+        assert first["with"]["persist-credentials"] is False

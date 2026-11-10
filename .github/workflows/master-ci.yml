@@ -2570,11 +2570,16 @@ jobs:
       RATCHET: ${{ needs.meta.outputs.ratchet }}
       RATCHET_FILE: ${{ needs.meta.outputs.ratchet_file }}
     steps:
+      - name: Check out the calling repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Build dashboard
         run: |
           python3 - >> dashboard.md <<'PY'
           import json
           import os
+          from pathlib import Path
 
           results = json.loads(os.environ["NEEDS_JSON"])
           labels = [
@@ -2638,6 +2643,24 @@ jobs:
               print(f"| Quality ratchet | off - commit `{ratchet_file}` or set `ratchet: true` |")
           print("| Mutation testing | scheduled workflow (`mutation.yml`) - opt-in, Python, Node, Go and Rust |")
           print("| Flake hunt | scheduled workflow (`flaky.yml`) - arms when `.flaky-baseline.json` is committed |")
+          # Verified, not declared: the caller's own workflow files are
+          # grepped for the codeql.yml call, so the row cannot claim an
+          # analysis that is not wired.
+          workflows_dir = Path(".github/workflows")
+          codeql_wf = ""
+          if workflows_dir.is_dir():
+              for wf in sorted(workflows_dir.glob("*.y*ml")):
+                  try:
+                      text = wf.read_text(encoding="utf-8")
+                  except OSError:
+                      continue
+                  if "workflows/codeql.yml@" in text:
+                      codeql_wf = wf.name
+                      break
+          if codeql_wf:
+              print(f"| Semantic analysis (CodeQL) | armed via own workflow - `{codeql_wf}` calls `codeql.yml` |")
+          else:
+              print("| Semantic analysis (CodeQL) | off - add `uses: WasewaseX/master-ci/.github/workflows/codeql.yml@v2` (auto-detects languages) |")
           print()
           print("Findings: Security tab, inline annotations, step summaries.")
           PY
@@ -2694,12 +2717,17 @@ jobs:
       RATCHET_FILE: ${{ needs.meta.outputs.ratchet_file }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
+      - name: Check out the calling repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Aggregate results
         id: aggregate
         run: |
           python3 - <<'PY'
           import json
           import os
+          from pathlib import Path
 
           results = json.loads(os.environ["NEEDS_JSON"])
           names = [
@@ -2818,6 +2846,35 @@ jobs:
                           "scheduled workflow (`flaky.yml`) - arms when `.flaky-baseline.json` is committed",
                       ),
                   ]
+                  # Verified, not declared: the caller's own workflow files
+                  # are grepped for the codeql.yml call, so the row cannot
+                  # claim an analysis that is not wired.
+                  workflows_dir = Path(".github/workflows")
+                  codeql_wf = ""
+                  if workflows_dir.is_dir():
+                      for wf in sorted(workflows_dir.glob("*.y*ml")):
+                          try:
+                              text = wf.read_text(encoding="utf-8")
+                          except OSError:
+                              continue
+                          if "workflows/codeql.yml@" in text:
+                              codeql_wf = wf.name
+                              break
+                  if codeql_wf:
+                      assurance.append(
+                          (
+                              "Semantic analysis (CodeQL)",
+                              f"armed via own workflow - `{codeql_wf}` calls `codeql.yml`",
+                          )
+                      )
+                  else:
+                      assurance.append(
+                          (
+                              "Semantic analysis (CodeQL)",
+                              "off - add `uses: WasewaseX/master-ci/.github/workflows/codeql.yml@v2` "
+                              "(auto-detects languages)",
+                          )
+                      )
                   handle.write("### Test assurance\n\n| Layer | State |\n|---|---|\n")
                   for layer, state in assurance:
                       handle.write(f"| {layer} | {state} |\n")
