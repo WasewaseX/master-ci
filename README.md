@@ -81,7 +81,7 @@ which keeps its baseline reproducible across template releases:
 ```yaml
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v2.4.2
+      template_ref: v2.5.0
 ```
 
 ### Required check
@@ -718,7 +718,7 @@ carries a `SKILL.md`, so assistants with a skills directory can load it
 with one command:
 
 ```bash
-git clone --depth 1 --branch v2.4.2 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+git clone --depth 1 --branch v2.5.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
 ```
 
 MCP clients configure the same install like this:
@@ -917,6 +917,16 @@ branch, and offered as one reviewable PR whose only possible change is
 the baseline file. Closing the PR rejects the quarantine; merging it
 silences only the listed tests. Measurement, verdict and response now
 live in one loop.
+
+And since v2.5: the **parser guarantee and the whole map** - the
+SonarQube lesson applied to our own gates: a gate that cannot run must
+fail, never skip. Every job that promises parse-backed metrics installs
+the pinned analyzers and demands them (`--require-parsers`: a missing
+lizard or tree-sitter is exit 2, never a quietly weaker scan), project
+discovery drives the Go, Rust and JVM stacks the way it already drove
+Node - nested modules, crates and builds are analyzed, not warned
+about - and the PR dashboard reports which test-assurance layers are
+armed and which are waiting for opt-in.
 
 ## License
 

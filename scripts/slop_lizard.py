@@ -67,6 +67,16 @@ except ImportError:  # pragma: no cover - exercised via the flag, not the import
     _LIZARD_OK = False
 
 
+def lizard_available() -> bool:
+    """True when the lizard analyzer is importable in this interpreter.
+
+    Gates that promise parse-backed metrics call this before trusting a
+    zero-function result: absent facts must mean "parsed, none found",
+    never "could not parse".
+    """
+    return _LIZARD_OK
+
+
 _TRAILING_PARAMS = re.compile(r"\s*\([^()]*\)\s*$")
 
 

@@ -45,6 +45,16 @@ class CognitiveFact:
     score: int
 
 
+def tree_sitter_available() -> bool:
+    """True when the tree-sitter language pack is importable.
+
+    Same contract as lizard_available(): a caller that enforces a
+    cognitive ceiling must demand the parser instead of accepting
+    silent "no facts".
+    """
+    return _TS_OK
+
+
 def _op_kind(node) -> str | None:
     """The && / || / and / or sequence kind of one operator node."""
     for child in node.children:

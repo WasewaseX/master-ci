@@ -105,6 +105,10 @@ Profile presets (quick / standard / strict / custom) only change the
   `[project.optional-dependencies]`, plus `package.json`), suppression
   abuse, code smells, placeholder credentials, UI slop, prose style and
   provenance.
+- **Parser guarantee (v2.5):** the CI scan runs `--require-parsers` -
+  lizard and tree-sitter are installed from `configs/tool-versions.yml`
+  pins, and a missing analyzer is exit 2, never a silently weakened scan
+  (parse-backed rules must never degrade to line heuristics unnoticed).
 - **Does not inspect:** authorship, commit metadata, or anything outside
   tracked text files; it never claims code *is* machine-written.
 - **Reports:** a slop score 0-100 per run (0.6x worst file + 0.4x mean file
@@ -519,8 +523,9 @@ Profile presets (quick / standard / strict / custom) only change the
   cyclomatic complexity gate (enforced in standard/strict/custom, advisory
   in quick), pytest when tests exist.
 - **Does not inspect:** runtime behavior beyond tests, notebook files.
-- **Fails when:** ruff/mypy/pytest errors, or complexity above
-  `complexity_max` when enforced.
+- **Fails when:** ruff/mypy/pytest errors, complexity above
+  `complexity_max` when enforced, or a missing lizard binary after the
+  pinned install (v2.5 parser guarantee, exit 2).
 - **False positives:** vulture on dynamically-dispatched code; mypy on
   untyped third parties (mitigated by the flag above).
 - **Disable:** `run_python: 'false'`.
@@ -528,25 +533,33 @@ Profile presets (quick / standard / strict / custom) only change the
 
 ## `rust` - Rust stack
 
-- **Inspects:** the whole cargo workspace: rustfmt, clippy
-  (`-D warnings`), cargo-deny (advisories, licenses, sources), tests.
+- **Inspects:** every discovered Cargo root - the repository root,
+  `[workspace]` members and nested independent crates (v2.5 project
+  discovery): rustfmt, clippy (`-D warnings`), cargo-deny per project
+  (advisories, licenses, sources - pinned source install), tests.
 - **Does not inspect:** benches beyond clippy's `--all-targets`,
   no_std targets, MSRV matrix (single toolchain input).
-- **Fails when:** fmt/clippy/deny/test failures.
+- **Fails when:** fmt/clippy/deny/test failures in any discovered
+  project - one red project fails the stack, every project still runs.
 - **False positives:** clippy lints on generated code (add `#[allow]`
   attributes); cargo-deny on unpublishable dev deps.
 - **Disable:** `run_rust: 'false'`.
-- **Time:** 5-20 minutes cold, 1-5 warm (shared `rust-cache`).
+- **Time:** 5-20 minutes cold, 1-5 warm (shared `rust-cache`); the
+  pinned cargo-deny source build adds a few minutes.
 
 ## `go-lint` / `go-test` - Go stack
 
-- **Inspects:** the module rooted at the repository `go.mod`: gofmt
-  formatting, `go vet`, golangci-lint, `go build ./...`, and the test suite
-  under the race detector (`go test -race -shuffle=on ./...`).
-- **Does not inspect:** nested modules (root manifest only), vendored
-  trees (`vendor/` is excluded from path filtering like every stack).
-- **Fails when:** formatting drift, vet findings, golangci-lint findings,
-  build or test failures.
+- **Inspects:** every discovered module - `go.work` members and nested
+  `go.mod` modules (v2.5 project discovery): gofmt formatting, `go vet`,
+  golangci-lint (pinned, built via `go install`, per module, honoring
+  each module's own `.golangci.yml`), `go build ./...`, and the test
+  suite under the race detector (`go test -race -shuffle=on ./...`);
+  coverage emits one coverprofile per module when `coverage_min` is set.
+- **Does not inspect:** vendored trees (`vendor/` is excluded from path
+  filtering like every stack).
+- **Fails when:** formatting drift, vet findings, golangci-lint
+  findings, build or test failures - accumulated across every module,
+  so one red module fails the stack and every module still runs.
 - **False positives:** golangci-lint defaults on legacy code - add a
   `.golangci.yml` to tune; repos with no tests still pass.
 - **Disable:** `run_go: 'false'`; force with `run_go: 'true'`, pin the
@@ -555,15 +568,17 @@ Profile presets (quick / standard / strict / custom) only change the
 
 ## `java` - JVM stack (Java, Kotlin, Scala via Maven or Gradle)
 
-- **Inspects:** the root build (`pom.xml`/`mvnw` or `build.gradle*`/
-  `settings.gradle*`): Gradle wrapper checksums are validated against the
-  recorded distributions before any code runs; Maven projects run the full
-  `mvn verify` lifecycle (compile, unit + integration tests, packaging),
-  Gradle projects run `gradle build` (compile + test).
-- **Does not inspect:** nested modules (root build only), `build/` and
-  `target/` outputs (excluded from path filtering).
+- **Inspects:** every discovered build root (`pom.xml`/`mvnw` or
+  `build.gradle*`/`settings.gradle*` - v2.5 project discovery): Gradle
+  wrapper checksums are validated repo-wide before any code runs; each
+  Maven project runs the full `mvn verify` lifecycle (compile, unit +
+  integration tests, packaging), each Gradle build runs `gradle build`
+  (compile + test).
+- **Does not inspect:** `build/` and `target/` outputs (excluded from
+  path filtering).
 - **Fails when:** wrapper checksum mismatch, compile, test, or packaging
-  failures - whatever the build tool's own lifecycle fails on.
+  failures - whatever the build tool's own lifecycle fails on,
+  accumulated across every discovered project.
 - **False positives:** none beyond the build tool itself; lint plugins
   (Checkstyle, SpotBugs, ktlint) ride the lifecycle you already configured.
 - **Disable:** `run_java: 'false'`; force with `run_java: 'true'`, pin the
@@ -709,6 +724,10 @@ Profile presets (quick / standard / strict / custom) only change the
 - `ci-success` is the only check you should mark required. It fails when
   any needed job failed or was cancelled, and succeeds when jobs were
   merely skipped. It never runs tools itself.
+- Both summaries carry a **Test assurance** table (v2.5): the armed or
+  off state of the coverage floor, new-code ceilings, quality ratchet,
+  mutation testing and the flake hunt, each with its one-line enable
+  hint - an opt-in layer is reported, never silently absent.
 
 ## `coverage-gate` and `new-code-gate` - measured floors and new-code ceilings
 
@@ -735,7 +754,13 @@ cannot be evaluated is exit 2, never a silent pass.
     over-approximation on purpose: a gate may over-flag a legacy
     neighbor, never miss a new offender.
   - `new_code_gates: false` disables the whole job. Exit 1 = a ceiling
-    breached by the change; exit 2 = no diff base or git failure.
+    breached by the change; exit 2 = no diff base, git failure, or a
+    missing parser under a requested ceiling (v2.5 parser guarantee:
+    lizard is demanded for the cyclomatic ceiling and tree-sitter for
+    the cognitive ceiling - the job installs the pins from
+    `configs/tool-versions.yml` before the gate runs, so a requested
+    metric that cannot run fails the gate instead of silently
+    reporting zero touched functions).
 
 ## `quality-ratchet` - the committed floor no check may regress from (v2.2)
 
@@ -756,6 +781,10 @@ compares the current scan against that floor:
   .quality-baseline.json` and commit the change. Git history then shows
   when and why the floor moved - the escape hatch is not a silent
   waiver.
+- **Parser guarantee (v2.5):** the enforcing scan runs
+  `--require-parsers` - a floor recorded with parsers must be enforced
+  with parsers; a missing analyzer is exit 2, not a quietly smaller
+  count that lets a regression pass.
 - **Fail-closed (exit 2) when the floor cannot be interpreted**:
   - `ratchet: true` and the file is missing (a demanded contract that
     cannot be honored),
@@ -913,6 +942,15 @@ Since v1.22 the inventory is manifest-aware:
 - Gradle is deliberately not member-enumerated: a Gradle build is
   analyzed from the root invocation, so the root project is the honest
   unit.
+
+Since v2.5 the map is consumed everywhere it matters: the Go jobs
+discover `go.work` members and nested modules, the Rust job discovers
+`[workspace]` members and nested crates (cargo-deny runs per project),
+and the JVM job discovers nested poms and Gradle builds - the old
+root-manifests-only warnings are gone because nothing is skipped
+anymore. Node keeps the `--fail-empty` contract; Go, Rust and JVM skip
+with an explicit reason when the inventory is empty (a config-only
+path-filter trigger analyzes nothing, and says so).
 
 ## Profile presets
 

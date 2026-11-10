@@ -21,3 +21,7 @@ npm:
   depcheck: 1.4.7
   markdownlint-cli2: 0.24.0
   jscpd: 5.4.2
+go:
+  golangci-lint: v2.13.0
+cargo:
+  cargo-deny: 0.20.2

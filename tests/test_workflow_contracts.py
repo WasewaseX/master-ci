@@ -35,10 +35,17 @@ import re
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 WF_DIR = ROOT / ".github" / "workflows"
+
+
+@pytest.fixture(scope="module")
+def master_ci_text() -> str:
+    """The reusable workflow source, read once for the v2.5 contracts."""
+    return (WF_DIR / "master-ci.yml").read_text(encoding="utf-8")
 
 
 def _on(data: dict) -> dict:
@@ -415,8 +422,8 @@ def test_template_ref_fails_closed_for_foreign_callers():
     assert "ref: ${{ inputs.template_ref }}" not in text, (
         "helper checkouts must consume the resolved ref, not the raw input"
     )
-    assert text.count("ref: ${{ needs.meta.outputs.template_ref }}") == 11, (
-        "all eleven helper checkouts must use the resolved ref"
+    assert text.count("ref: ${{ needs.meta.outputs.template_ref }}") == 14, (
+        "all fourteen helper checkouts must use the resolved ref"
     )
 
 
@@ -968,7 +975,8 @@ def test_self_loop_workflows_push_target_main():
 def test_new_language_stacks_are_wired_like_the_existing_ones():
     """java/cpp/csharp/ruby/php must behave exactly like the older stacks:
     gated on meta success, honored by select, auto-detected through the
-    changes filter, timeout-declared - and never fetching helpers (the
+    changes filter, timeout-declared. Since v2.5 java fetches helpers for
+    workspace-aware project discovery; the rest stay zero-config (the
     helper-ref contract test pins the checkout count below)."""
     data = load(WF_DIR / "master-ci.yml")
     jobs = data["jobs"]
@@ -986,7 +994,10 @@ def test_new_language_stacks_are_wired_like_the_existing_ones():
         fetchers = [
             s for s in job["steps"] if isinstance(s.get("with"), dict) and "repository" in s["with"]
         ]
-        assert not fetchers, f"{job_id} must not fetch helpers (zero-config detection)"
+        if job_id == "java":
+            assert fetchers, "java must fetch helpers: discovery needs the inventory script"
+        else:
+            assert not fetchers, f"{job_id} must not fetch helpers (zero-config detection)"
 
 
 def test_docker_job_builds_and_scans_the_image_it_builds():
@@ -1154,22 +1165,27 @@ def test_default_editorconfig_grants_go_tabs():
     assert "indent_style = tab" in go_section, "gofmt mandates tabs; the default must allow them"
 
 
-def test_rust_job_detect_gate_covers_config_only_triggers():
+def test_rust_job_discovery_gate_covers_config_only_triggers():
     """deny.toml and rust-toolchain* sit in the rust path filter, so a
     config-only change can trigger the Rust job on a repo with no Rust
-    code; every cargo step must be gated on the manifest detection."""
+    code. Since v2.5 the discovery step owns that gate (zero projects =
+    an explicit, reasoned skip) and every cargo step is gated on the
+    discovery verdict - including the per-project cargo-deny run."""
     data = load(WF_DIR / "master-ci.yml")
     rust = data["jobs"]["rust"]
     names = [str(s.get("name", s.get("uses", ""))) for s in rust["steps"]]
-    assert any("Detect Cargo workspace" in n for n in names)
+    assert any("Discover Rust projects" in n for n in names)
     gated = [
         s for s in rust["steps"] if str(s.get("if", "")).startswith("steps.detect.outputs.manifest")
     ]
     gated_names = [str(s.get("name", s.get("uses", ""))) for s in gated]
-    for must in ("Check formatting (rustfmt)", "Lint (clippy)", "Test"):
-        assert any(must in n for n in gated_names), (
-            f"{must} must be gated on the manifest detection"
-        )
+    for must in (
+        "Check formatting (rustfmt)",
+        "Lint (clippy)",
+        "Advisories, licenses, sources (cargo-deny, per project)",
+        "Test",
+    ):
+        assert any(must in n for n in gated_names), f"{must} must be gated on the discovery verdict"
 
 
 def test_new_code_gate_job_contract():
@@ -1328,3 +1344,63 @@ def test_zizmor_suppressions_sit_where_zizmor_parses_them():
                 "text where zizmor cannot see it - put it on the YAML key line "
                 "(`run: | # zizmor: ignore[...]`) or on a standalone line above"
             )
+
+
+def test_parser_dependent_jobs_install_and_demand_parsers(master_ci_text: str):
+    """The v2.5 parser guarantee: every job that promises parse-backed
+    metrics installs the exact pinned analyzers, the scan jobs demand
+    them (--require-parsers -> exit 2), and the python stack's lizard
+    gate refuses a missing binary."""
+    text = master_ci_text
+    install = (
+        "pip install --quiet $(python3 _ci/scripts/tool_versions.py pip lizard "
+        "tree-sitter tree-sitter-language-pack)"
+    )
+    assert text.count(install) == 3, (
+        "ai-integrity, new-code-gate and quality-ratchet must install the pinned parsers"
+    )
+    assert "--require-parsers \\\n            --report-file ai_report.md" in text, (
+        "ai-integrity must demand the analyzers (exit 2 on a missing analyzer)"
+    )
+    assert "--require-parsers | tee ratchet-report.md" in text, (
+        "quality-ratchet must demand the analyzers (exit 2 on a missing analyzer)"
+    )
+    assert "command -v lizard" in text, (
+        "the python stack's lizard gate must refuse a missing binary"
+    )
+
+
+def test_go_rust_jvm_stacks_discover_projects(master_ci_text: str):
+    """Discovery is wired into every project family: the go, rust and jvm
+    jobs loop over the discovered inventory, so nested projects can never
+    fall back to root-manifest-only analysis (the v2.5 monorepo fix)."""
+    text = master_ci_text
+    expected = {"go": 2, "rust": 1, "jvm": 1}  # go splits lint/test; rust and jvm are one job
+    for family, count in expected.items():
+        assert text.count(f"discover_projects.py --family {family} --list") == count, (
+            f"{family}: every stack job must discover projects"
+        )
+    assert "root manifests only" not in text
+    assert "root builds only" not in text
+
+
+def test_go_and_cargo_tool_pins_exist():
+    """New toolchain families are pinned like every other analyzer: a
+    silent latest can never sneak back in."""
+    pins = yaml.safe_load((ROOT / "configs" / "tool-versions.yml").read_text(encoding="utf-8"))
+    assert re.fullmatch(r"v\d+\.\d+\.\d+", pins["go"]["golangci-lint"])
+    assert re.fullmatch(r"\d+\.\d+\.\d+", pins["cargo"]["cargo-deny"])
+
+
+def test_assurance_summary_reports_armed_and_off_layers(master_ci_text: str):
+    """Opt-in test assurance must be visible, never silently absent: the
+    PR dashboard and the ci-success summary both carry a Test assurance
+    section driven by the meta profile outputs."""
+    text = master_ci_text
+    assert text.count("### Test assurance") == 2
+    for needle in (
+        "COVERAGE_MIN: ${{ needs.meta.outputs.coverage_min }}",
+        "NEW_CODE_GATES: ${{ needs.meta.outputs.new_code_gates }}",
+        "RATCHET: ${{ needs.meta.outputs.ratchet }}",
+    ):
+        assert text.count(needle) >= 2

@@ -26,8 +26,10 @@ Contract:
 - Exit code 2 when configuration cannot be honored: an architecture
     config that is present but invalid, a coverage gate that cannot
     be evaluated (no report, an unparseable report, a missing diff
-    base), or a quality baseline that cannot be interpreted (missing
-    file, invalid JSON, wrong schema version, unknown check ids).
+    base), a quality baseline that cannot be interpreted (missing
+    file, invalid JSON, wrong schema version, unknown check ids), or
+    --require-parsers set while an analyzer (lizard, tree-sitter) is
+    not importable.
     Fail-closed: a rule set or gate that cannot be evaluated fails the
     run instead of being silently skipped.
 - Blocking-grade signals are deterministic content defects (elided code,
@@ -57,7 +59,9 @@ from pathlib import Path
 
 from coverage_gate import CoverageGateError, run_gate
 from slop_arch import ArchConfigError
+from slop_cognitive import tree_sitter_available
 from slop_files import load_phrases
+from slop_lizard import lizard_available
 from slop_model import Finding, enforce_structural_budget
 from slop_ratchet import (
     RatchetError,
@@ -132,6 +136,17 @@ def _add_gate_args(parser: argparse.ArgumentParser) -> None:
         help=(
             "Report advisory provenance markers (ai-provenance) and the "
             "repository test inventory (missing-tests); default on"
+        ),
+    )
+    parser.add_argument(
+        "--require-parsers",
+        action="store_true",
+        help=(
+            "Fail closed (exit 2) when the lizard / tree-sitter analyzers "
+            "are not importable. CI jobs that promise parser-backed "
+            "dimensions install the pinned analyzers and demand them: a "
+            "parser-backed scan must never silently degrade to line "
+            "heuristics"
         ),
     )
 
@@ -260,8 +275,40 @@ def _coverage_gate(args: argparse.Namespace, findings: list) -> tuple[int, list[
     return gate.exit_code, gate.sections
 
 
+def _parser_guarantee(args: argparse.Namespace) -> int:
+    """--require-parsers: demand the analyzers or fail closed (exit 2).
+
+    CI jobs that promise parse-backed dimensions install the pinned
+    analyzers and demand them; a missing tool is the configuration-error
+    class, never a weakened, silently passing scan.
+    """
+    if not args.require_parsers:
+        return 0
+    missing = [
+        name
+        for name, ok in (
+            ("lizard", lizard_available()),
+            ("tree-sitter", tree_sitter_available()),
+        )
+        if not ok
+    ]
+    if not missing:
+        return 0
+    print(
+        "ai-integrity: --require-parsers: analyzer(s) not importable: "
+        f"{', '.join(missing)} - install the pinned versions from "
+        "configs/tool-versions.yml; a parser-backed scan must never "
+        "silently degrade to line heuristics",
+        file=sys.stderr,
+    )
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    parser_exit = _parser_guarantee(args)
+    if parser_exit:
+        return parser_exit
     if args.enforce_bloat:
         # Registry mutation must precede the scan: Finding.__post_init__
         # resolves severity from the enforced set at construction time.

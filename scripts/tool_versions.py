@@ -6,6 +6,10 @@ Usage:
         -> ruff==0.17.4 mypy==2.4.1 lizard==1.25.1
     python3 tool_versions.py npm biome depcheck
         -> biome@2.6.6 depcheck@1.4.7
+    python3 tool_versions.py go golangci-lint
+        -> v2.13.0  (bare refs: `go install pkg@$(...)`)
+    python3 tool_versions.py cargo cargo-deny
+        -> 0.20.2   (bare refs: `cargo install --version $(...)`)
 
 Works without PyYAML: the pins file is a flat two-level mapping, parsed
 by a minimal fallback when ``yaml`` is unavailable (fresh runners, slim
@@ -50,10 +54,10 @@ def _load_flat(text: str) -> dict[str, dict[str, str]]:
 
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
-        print("usage: tool_versions.py <pip|npm> <tool>...", file=sys.stderr)
+        print("usage: tool_versions.py <pip|npm|go|cargo> <tool>...", file=sys.stderr)
         return 2
     family, names = argv[0], argv[1:]
-    if family not in ("pip", "npm"):
+    if family not in ("pip", "npm", "go", "cargo"):
         print(f"unknown family: {family}", file=sys.stderr)
         return 2
     pins = _load(Path(__file__).resolve().parent.parent / "configs" / "tool-versions.yml")
@@ -68,6 +72,10 @@ def main(argv: list[str]) -> int:
         return 1
     if family == "pip":
         print(" ".join(f"{name}=={table[name]}" for name in names))
+    elif family in ("go", "cargo"):
+        # go install / cargo install want a bare version ref; the pins
+        # file stores exactly what the toolchain expects.
+        print(" ".join(table[name] for name in names))
     else:
         print(" ".join(f"{name}@{table[name]}" for name in names))
     return 0

@@ -21,9 +21,12 @@ never miss a new offender.
 Contract:
 - exit 0  every requested ceiling holds (or no ceiling requested)
 - exit 1  a ceiling is breached by code the change added
-- exit 2  a requested gate cannot be evaluated: no diff base, or git
-    failed. Fail-closed - a gate that cannot be evaluated never
-    silently passes, same semantics as the coverage gate.
+- exit 2  a requested gate cannot be evaluated: no diff base, git
+    failed, or the parser a requested ceiling needs is not importable
+    (v2.5: the gate demands lizard for cyclomatic and tree-sitter for
+    cognitive instead of silently reporting zero touched functions).
+    Fail-closed - a gate that cannot be evaluated never silently
+    passes, same semantics as the coverage gate.
 """
 
 from __future__ import annotations
@@ -35,9 +38,9 @@ from pathlib import Path
 
 from ai_slop_detector import scan
 from coverage_gate import git_changed_lines
-from slop_cognitive import cognitive_facts
+from slop_cognitive import cognitive_facts, tree_sitter_available
 from slop_files import load_phrases, read_text_lax
-from slop_lizard import FunctionFact, parse_functions
+from slop_lizard import FunctionFact, lizard_available, parse_functions
 from slop_model import Finding
 from slop_reporting import MAX_ANNOTATIONS, annotate, blocking_score
 
@@ -137,6 +140,22 @@ def run_gate(
     requested = max_slop != 100 or max_cognitive > 0 or max_cyclomatic > 0
     if not requested:
         return 0, [], []
+    # The v2.5 parser guarantee: a requested ceiling is a promise to
+    # measure, and a missing analyzer would turn the promise into a
+    # silent "0 functions touched" pass. Refuse before doing any work.
+    if max_cyclomatic > 0 and not lizard_available():
+        raise NewCodeGateError(
+            "a cyclomatic ceiling is requested but lizard is not importable - "
+            "install the pinned analyzers (configs/tool-versions.yml); the "
+            "gate refuses to pass on a metric it could not measure"
+        )
+    if max_cognitive > 0 and not tree_sitter_available():
+        raise NewCodeGateError(
+            "a cognitive ceiling is requested but tree-sitter is not "
+            "importable - install the pinned analyzers "
+            "(configs/tool-versions.yml); the gate refuses to pass on a "
+            "metric it could not measure"
+        )
     if not diff_base:
         raise NewCodeGateError("new-code gate requested but --diff-base is empty")
     try:

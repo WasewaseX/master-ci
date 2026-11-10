@@ -919,6 +919,15 @@ jobs:
           path: _ci
           fetch-depth: 1
           persist-credentials: false
+      - name: Install pinned parser tooling
+        # The parser guarantee (v2.5): this scan advertises parse-backed
+        # dimensions (god-function, cognitive complexity), so it runs
+        # with the exact pinned analyzers and --require-parsers - a
+        # missing analyzer is exit 2, never a silently weakened scan.
+        run: |
+          # the pin list is meant to word-split:
+          # shellcheck disable=SC2046
+          pip install --quiet $(python3 _ci/scripts/tool_versions.py pip lizard tree-sitter tree-sitter-language-pack)
       - name: Run AI-integrity heuristics
         run: |
           ENFORCE_ARGS=""
@@ -929,6 +938,7 @@ jobs:
             --max-score "$AI_MAX" \
             --max-slop-score "$AI_CEILING" \
             $ENFORCE_ARGS \
+            --require-parsers \
             --report-file ai_report.md \
             --sarif ai_integrity.sarif \
             --annotate
@@ -1061,6 +1071,15 @@ jobs:
           path: _ci
           fetch-depth: 1
           persist-credentials: false
+      - name: Install pinned parser tooling
+        # The parser guarantee (v2.5): the complexity ceilings promise
+        # measurement. new_code_gate.py fails closed (exit 2) when an
+        # analyzer is missing - this install makes the promise true on
+        # the runner.
+        run: |
+          # the pin list is meant to word-split:
+          # shellcheck disable=SC2046
+          pip install --quiet $(python3 _ci/scripts/tool_versions.py pip lizard tree-sitter tree-sitter-language-pack)
       - name: Fetch diff base
         # The gate diffs against diff_base (merge-base); the shared
         # helper materializes the ref for a shallow checkout.
@@ -1114,6 +1133,15 @@ jobs:
           path: _ci
           fetch-depth: 1
           persist-credentials: false
+      - name: Install pinned parser tooling
+        # The parser guarantee (v2.5): a floor recorded with parsers
+        # must be enforced with parsers - a missing analyzer would
+        # silently count fewer findings and pass a regressed baseline.
+        # --require-parsers turns that hole into exit 2.
+        run: |
+          # the pin list is meant to word-split:
+          # shellcheck disable=SC2046
+          pip install --quiet $(python3 _ci/scripts/tool_versions.py pip lizard tree-sitter tree-sitter-language-pack)
       - name: Resolve the baseline floor
         id: floor
         # hashFiles is not available in job-level if expressions, so the
@@ -1143,7 +1171,8 @@ jobs:
           # re-record the floor with --write-quality-baseline in a
           # reviewed commit.
           python3 _ci/scripts/ai_slop_detector.py . \
-            --quality-baseline "$RATCHET_FILE" | tee ratchet-report.md
+            --quality-baseline "$RATCHET_FILE" \
+            --require-parsers | tee ratchet-report.md
           rc=${PIPESTATUS[0]}
           if [ -s ratchet-report.md ]; then
             echo "### Quality ratchet" >> "$GITHUB_STEP_SUMMARY"
@@ -1200,7 +1229,7 @@ jobs:
           persist-credentials: false
       - name: Discover Node projects
         # Nested package.json manifests used to trigger this job and then
-        # skip silently ("root manifests only"). Discovery makes every
+        # skip silently ("root-manifest-only analysis"). Discovery makes every
         # project explicit; --fail-empty turns a missing inventory into a
         # loud failure instead of a green no-op.
         run: |
@@ -1451,6 +1480,13 @@ jobs:
             || echo "::warning::vulture flagged possibly dead code (advisory)"
       - name: Lizard complexity gate
         run: |
+          # The parser guarantee (v2.5): this gate is parse-backed, so a
+          # missing analyzer is a configuration error (exit 2), never a
+          # silent pass.
+          command -v lizard >/dev/null 2>&1 || {
+            echo "::error::lizard is not importable after the pinned install - the complexity gate cannot run"
+            exit 2
+          }
           out=$(lizard -l python -C "$CX_MAX" -x '_ci/*' . || true)
           echo "$out"
           if echo "$out" | grep -q '!!!!'; then
@@ -1530,30 +1566,34 @@ jobs:
           path: _ci
           fetch-depth: 1
           persist-credentials: false
-      - name: Detect Cargo workspace
+      - name: Discover Rust projects
         id: detect
-        # `deny.toml` and `rust-toolchain*` are in the rust path filter,
-        # so config-only changes can trigger this job on a repo with no
-        # Rust code. Without the manifest the toolchain steps would die
-        # on `cargo fmt` finding no project - skip explicitly instead,
-        # loudly warning when a nested workspace is being left alone.
+        # Every discovered Cargo root - the repo root, [workspace]
+        # members, and nested independent crates - is analyzed
+        # explicitly, so the old root-manifest-only warning is
+        # obsolete - nothing is left alone anymore. Zero projects means
+        # a config-only trigger (deny.toml, rust-toolchain*): skip with
+        # the reason, never a green lie about analyzed code.
         run: |
-          if [ -f Cargo.toml ]; then
+          python3 _ci/scripts/discover_projects.py --family rust --format summary
+          python3 _ci/scripts/discover_projects.py --family rust --list \
+            > "$RUNNER_TEMP/rust-projects.txt"
+          if [ -s "$RUNNER_TEMP/rust-projects.txt" ]; then
             echo "manifest=true" >> "$GITHUB_OUTPUT"
           else
             echo "manifest=false" >> "$GITHUB_OUTPUT"
-            nested=$(git ls-files '*/Cargo.toml' | head -5 | tr '\n' ' ')
-            if [ -n "$nested" ]; then
-              echo "::warning::nested Cargo workspace(s) detected but this job analyzes root manifests only: $nested"
-            fi
-            echo "No Cargo.toml at repository root - skipping the Rust stack"
+            echo "No Cargo.toml discovered - config-only trigger, skipping the Rust stack"
           fi
       - name: Default cargo-deny policy (if absent)
         # cargo-deny's built-in default has an EMPTY license allow list -
-        # even MIT gets rejected. Ship the template's baseline policy;
-        # commit your own deny.toml to take full control.
+        # even MIT gets rejected. Ship the template's baseline policy to
+        # every project without its own; commit your own deny.toml per
+        # project to take full control.
         if: steps.detect.outputs.manifest == 'true'
-        run: '[ -f deny.toml ] || cp _ci/configs/deny.toml .'
+        run: |
+          while IFS= read -r dir; do
+            [ -f "$dir/deny.toml" ] || cp _ci/configs/deny.toml "$dir/deny.toml"
+          done < "$RUNNER_TEMP/rust-projects.txt"
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable (branch pin; no version tags published) # zizmor: ignore[ref-version-mismatch]
         if: steps.detect.outputs.manifest == 'true'
         with:
@@ -1563,23 +1603,50 @@ jobs:
         if: steps.detect.outputs.manifest == 'true'
       - name: Check formatting (rustfmt)
         if: steps.detect.outputs.manifest == 'true'
-        run: cargo fmt --all -- --check
+        run: |
+          fmt_fail=0
+          while IFS= read -r dir; do
+            echo "rustfmt: $dir"
+            (cd "$dir" && cargo fmt --all -- --check) || fmt_fail=1
+          done < "$RUNNER_TEMP/rust-projects.txt"
+          exit "$fmt_fail"
       - name: Lint (clippy)
         if: steps.detect.outputs.manifest == 'true'
-        run: cargo clippy --all-targets -- -D warnings
-      - name: Advisories, licenses, sources (cargo-deny)
+        run: |
+          clippy_fail=0
+          while IFS= read -r dir; do
+            echo "clippy: $dir"
+            (cd "$dir" && cargo clippy --all-targets -- -D warnings) || clippy_fail=1
+          done < "$RUNNER_TEMP/rust-projects.txt"
+          exit "$clippy_fail"
+      - name: Advisories, licenses, sources (cargo-deny, per project)
         if: steps.detect.outputs.manifest == 'true'
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
-        with:
-          command: check
-          arguments: ''
-          command-arguments: advisories licenses sources
+        run: |
+          # The action runner cannot loop over discovered projects, so
+          # the pinned binary runs once per project: nested crates get
+          # the same advisory/license gate the root always had. Pinned
+          # --locked source install - the same trust class as the
+          # pip/npm pins in configs/tool-versions.yml.
+          cargo install --locked --quiet cargo-deny \
+            --version "$(python3 _ci/scripts/tool_versions.py cargo cargo-deny)"
+          deny_fail=0
+          while IFS= read -r dir; do
+            echo "cargo-deny: $dir"
+            (cd "$dir" && cargo deny check advisories licenses sources) || deny_fail=1
+          done < "$RUNNER_TEMP/rust-projects.txt"
+          exit "$deny_fail"
       - name: Test
         if: steps.detect.outputs.manifest == 'true'
-        run: cargo test --workspace --all-features
+        run: |
+          test_fail=0
+          while IFS= read -r dir; do
+            echo "cargo test: $dir"
+            (cd "$dir" && cargo test --workspace --all-features) || test_fail=1
+          done < "$RUNNER_TEMP/rust-projects.txt"
+          exit "$test_fail"
 
   # ---------------------------------------------------------------------------
-  # Go stack: formatting, vet, golangci-lint (root go.mod only)
+  # Go stack: formatting, vet, golangci-lint (workspace-aware, per module)
   # ---------------------------------------------------------------------------
   go-lint:
     needs: [changes, meta]
@@ -1593,18 +1660,32 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Detect Go module
+      - name: Fetch master-ci helpers
+        # Helper checkout moves ahead of discovery: workspace-aware Go
+        # analysis needs the template's project inventory script.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ needs.meta.outputs.template_repo }}
+          ref: ${{ needs.meta.outputs.template_ref }}
+          path: _ci
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Discover Go modules
         id: detect
+        # go.work members and nested go.mod modules are analyzed
+        # explicitly, so the old root-manifest-only warning is
+        # obsolete - nothing is skipped anymore. Zero modules means a
+        # config-only trigger (the go path filter also matches stray or
+        # vendored .go files): skip with the reason, not a green lie.
         run: |
-          if [ -f go.mod ]; then
+          python3 _ci/scripts/discover_projects.py --family go --format summary
+          python3 _ci/scripts/discover_projects.py --family go --list \
+            > "$RUNNER_TEMP/go-projects.txt"
+          if [ -s "$RUNNER_TEMP/go-projects.txt" ]; then
             echo "manifest=true" >> "$GITHUB_OUTPUT"
           else
             echo "manifest=false" >> "$GITHUB_OUTPUT"
-            nested=$(git ls-files '*/go.mod' | head -5 | tr '\n' ' ')
-            if [ -n "$nested" ]; then
-              echo "::warning::nested Go module(s) detected but this job analyzes root manifests only: $nested"
-            fi
-            echo "No go.mod at repository root - Go stack supports root manifests only"
+            echo "No go.mod discovered - config-only trigger, skipping the Go stack"
           fi
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         if: steps.detect.outputs.manifest == 'true'
@@ -1613,22 +1694,42 @@ jobs:
       - name: Check formatting (gofmt)
         if: steps.detect.outputs.manifest == 'true'
         run: |
-          unformatted=$(find . -name '*.go' -type f \
-            -not -path './vendor/*' -not -path './node_modules/*' -print0 \
-            | xargs -0 gofmt -l)
-          if [ -n "$unformatted" ]; then
-            echo "::error::Files not gofmt-formatted:"
-            printf '%s\n' "$unformatted"
-            exit 1
-          fi
+          fmt_fail=0
+          while IFS= read -r dir; do
+            unformatted=$(find "$dir" -name '*.go' -type f \
+              -not -path '*/vendor/*' -not -path '*/node_modules/*' -print0 \
+              | xargs -0 gofmt -l)
+            if [ -n "$unformatted" ]; then
+              echo "::error::Files not gofmt-formatted in $dir:"
+              printf '%s\n' "$unformatted"
+              fmt_fail=1
+            fi
+          done < "$RUNNER_TEMP/go-projects.txt"
+          exit "$fmt_fail"
       - name: Vet standard library checks
         if: steps.detect.outputs.manifest == 'true'
-        run: go vet ./...
-      - name: Lint (golangci-lint)
+        run: |
+          vet_fail=0
+          while IFS= read -r dir; do
+            echo "go vet: $dir"
+            (cd "$dir" && go vet ./...) || vet_fail=1
+          done < "$RUNNER_TEMP/go-projects.txt"
+          exit "$vet_fail"
+      - name: Lint (golangci-lint, per module)
         if: steps.detect.outputs.manifest == 'true'
-        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
-        with:
-          args: --timeout=10m
+        run: |
+          # golangci-lint analyzes one module per invocation, so the
+          # pinned binary runs once per discovered module: nested
+          # modules get the identical gate the root always had, and
+          # each module's own .golangci.yml is honored.
+          golangci_ref="$(python3 _ci/scripts/tool_versions.py go golangci-lint)"
+          go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${golangci_ref}"
+          lint_fail=0
+          while IFS= read -r dir; do
+            echo "golangci-lint: $dir"
+            (cd "$dir" && golangci-lint run --timeout=10m) || lint_fail=1
+          done < "$RUNNER_TEMP/go-projects.txt"
+          exit "$lint_fail"
 
   # ---------------------------------------------------------------------------
   # Go stack: build + race-tested tests
@@ -1645,18 +1746,30 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Detect Go module
+      - name: Fetch master-ci helpers
+        # Helper checkout moves ahead of discovery: workspace-aware Go
+        # analysis needs the template's project inventory script.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ needs.meta.outputs.template_repo }}
+          ref: ${{ needs.meta.outputs.template_ref }}
+          path: _ci
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Discover Go modules
         id: detect
+        # Same contract as go-lint: every go.work member and nested
+        # module is built and tested explicitly. Zero modules = a
+        # config-only trigger - skip with the reason.
         run: |
-          if [ -f go.mod ]; then
+          python3 _ci/scripts/discover_projects.py --family go --format summary
+          python3 _ci/scripts/discover_projects.py --family go --list \
+            > "$RUNNER_TEMP/go-projects.txt"
+          if [ -s "$RUNNER_TEMP/go-projects.txt" ]; then
             echo "manifest=true" >> "$GITHUB_OUTPUT"
           else
             echo "manifest=false" >> "$GITHUB_OUTPUT"
-            nested=$(git ls-files '*/go.mod' | head -5 | tr '\n' ' ')
-            if [ -n "$nested" ]; then
-              echo "::warning::nested Go module(s) detected but this job analyzes root manifests only: $nested"
-            fi
-            echo "No go.mod at repository root - skipping Go build and tests"
+            echo "No go.mod discovered - config-only trigger, skipping Go build and tests"
           fi
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         if: steps.detect.outputs.manifest == 'true'
@@ -1664,27 +1777,42 @@ jobs:
           go-version: ${{ inputs.go_version }}
       - name: Build
         if: steps.detect.outputs.manifest == 'true'
-        run: go build ./...
+        run: |
+          build_fail=0
+          while IFS= read -r dir; do
+            echo "go build: $dir"
+            (cd "$dir" && go build ./...) || build_fail=1
+          done < "$RUNNER_TEMP/go-projects.txt"
+          exit "$build_fail"
       - name: Test (race detector, shuffled)
         if: steps.detect.outputs.manifest == 'true'
         env:
           COVERAGE_MIN: ${{ needs.meta.outputs.coverage_min }}
         run: |
           # COVERAGE_MIN > 0 opts into measured test assurance: the same
-          # race+shuffle run also emits the native coverprofile consumed
-          # by the ai-integrity coverage gate.
-          if [ -n "$COVERAGE_MIN" ] && [ "$COVERAGE_MIN" != "0" ]; then
-            go test -race -shuffle=on -coverprofile=cover.out ./...
-            go tool cover -func=cover.out >/dev/null
-          else
-            go test -race -shuffle=on ./...
-          fi
-      - name: Upload coverage report
+          # race+shuffle run emits a native coverprofile per discovered
+          # module (covdir/<module>/cover.out), consumed by the
+          # ai-integrity coverage gate's recursive report discovery.
+          test_fail=0
+          while IFS= read -r dir; do
+            echo "go test: $dir"
+            if [ -n "$COVERAGE_MIN" ] && [ "$COVERAGE_MIN" != "0" ]; then
+              safe="covdir/$(printf '%s' "$dir" | tr '/' '_')"
+              mkdir -p "$safe"
+              (cd "$dir" && go test -race -shuffle=on \
+                -coverprofile="$GITHUB_WORKSPACE/$safe/cover.out" ./...) || test_fail=1
+              go tool cover -func="$GITHUB_WORKSPACE/$safe/cover.out" >/dev/null || test_fail=1
+            else
+              (cd "$dir" && go test -race -shuffle=on ./...) || test_fail=1
+            fi
+          done < "$RUNNER_TEMP/go-projects.txt"
+          exit "$test_fail"
+      - name: Upload coverage reports
         if: steps.detect.outputs.manifest == 'true' && needs.meta.outputs.coverage_min != '0' && needs.meta.outputs.coverage_min != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: coverage-go
-          path: cover.out
+          path: covdir
           if-no-files-found: ignore
 
   # ---------------------------------------------------------------------------
@@ -1704,50 +1832,68 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Detect JVM build tool
+      - name: Fetch master-ci helpers
+        # Helper checkout moves ahead of discovery: workspace-aware JVM
+        # analysis needs the template's project inventory script.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ needs.meta.outputs.template_repo }}
+          ref: ${{ needs.meta.outputs.template_ref }}
+          path: _ci
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Discover JVM projects
         id: detect
+        # Nested poms and Gradle builds are analyzed explicitly, so the
+        # old root-builds-only warning is obsolete. Zero projects =
+        # config-only trigger - skip with the reason.
         run: |
-          if [ -f pom.xml ] || [ -f mvnw ]; then
-            echo "tool=maven" >> "$GITHUB_OUTPUT"
-          elif ls build.gradle build.gradle.kts settings.gradle settings.gradle.kts >/dev/null 2>&1; then
-            echo "tool=gradle" >> "$GITHUB_OUTPUT"
+          python3 _ci/scripts/discover_projects.py --family jvm --format summary
+          python3 _ci/scripts/discover_projects.py --family jvm --list \
+            > "$RUNNER_TEMP/jvm-projects.txt"
+          if [ -s "$RUNNER_TEMP/jvm-projects.txt" ]; then
+            echo "tool=present" >> "$GITHUB_OUTPUT"
           else
             echo "tool=none" >> "$GITHUB_OUTPUT"
-            nested=$(git ls-files '*pom.xml' '*build.gradle*' '*settings.gradle*' | head -5 | tr '\n' ' ')
-            if [ -n "$nested" ]; then
-              echo "::warning::nested JVM project(s) detected but this job analyzes root builds only: $nested"
-            fi
-            echo "No pom.xml or Gradle build script at repository root - JVM stack supports root builds only"
+            echo "No pom.xml or Gradle build discovered - config-only trigger, skipping the JVM stack"
           fi
       - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         if: steps.detect.outputs.tool != 'none'
         with:
           distribution: temurin
           java-version: ${{ inputs.java_version }}
-          cache: ${{ steps.detect.outputs.tool == 'maven' && 'maven' || 'gradle' }}
+          cache: ${{ (hashFiles('**/pom.xml') != '' && 'maven') || (hashFiles('**/build.gradle*') != '' && 'gradle') || '' }}
       - name: Validate Gradle wrapper checksums
         # a wrapper jar that does not match the recorded SHA of its
         # distribution is a supply-chain incident, not a build problem
-        if: steps.detect.outputs.tool == 'gradle' && hashFiles('gradle/wrapper/gradle-wrapper.properties') != ''
+        if: steps.detect.outputs.tool != 'none' && hashFiles('**/gradle/wrapper/gradle-wrapper.properties') != ''
         uses: gradle/actions/wrapper-validation@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
-      - name: Build and verify (Maven)
-        # `verify` runs the full lifecycle the project declares: compile,
-        # tests, integration tests, packaging. A red verify is a real red.
-        if: steps.detect.outputs.tool == 'maven'
+      - name: Build and verify (per project)
+        # Each discovered project rides its own build tool's declared
+        # lifecycle: Maven `verify` / Gradle `build` compiles, tests and
+        # packages the way the project itself declares. One red project
+        # fails the stack - accumulation, never first-failure abort.
+        if: steps.detect.outputs.tool != 'none'
         run: |
-          if [ -x ./mvnw ]; then
-            ./mvnw -B -ntp verify
-          else
-            mvn -B -ntp verify
-          fi
-      - name: Build and verify (Gradle)
-        if: steps.detect.outputs.tool == 'gradle'
-        run: |
-          if [ -x ./gradlew ]; then
-            ./gradlew --no-daemon build
-          else
-            gradle --no-daemon build
-          fi
+          build_fail=0
+          while IFS= read -r dir; do
+            if [ -f "$dir/pom.xml" ] || [ -f "$dir/mvnw" ]; then
+              echo "Maven verify: $dir"
+              if [ -x "$dir/mvnw" ]; then
+                (cd "$dir" && ./mvnw -B -ntp verify) || build_fail=1
+              else
+                (cd "$dir" && mvn -B -ntp verify) || build_fail=1
+              fi
+            else
+              echo "Gradle build: $dir"
+              if [ -x "$dir/gradlew" ]; then
+                (cd "$dir" && ./gradlew --no-daemon build) || build_fail=1
+              else
+                (cd "$dir" && gradle --no-daemon build) || build_fail=1
+              fi
+            fi
+          done < "$RUNNER_TEMP/jvm-projects.txt"
+          exit "$build_fail"
 
   # ---------------------------------------------------------------------------
   # C/C++ stack: cppcheck static analysis (advisory), opt-in clang-format
@@ -2305,6 +2451,10 @@ jobs:
       pull-requests: write
     env:
       NEEDS_JSON: ${{ toJson(needs.*.result) }}
+      COVERAGE_MIN: ${{ needs.meta.outputs.coverage_min }}
+      NEW_CODE_GATES: ${{ needs.meta.outputs.new_code_gates }}
+      RATCHET: ${{ needs.meta.outputs.ratchet }}
+      RATCHET_FILE: ${{ needs.meta.outputs.ratchet_file }}
     steps:
       - name: Build dashboard
         run: |
@@ -2350,6 +2500,30 @@ jobs:
           for (name, label), result in zip(labels, results):
               state = icon.get(result, "question")
               print(f"| {label} (`{name}`) | :{state}: `{result}` |")
+          print()
+          print("### Test assurance")
+          print()
+          print("| Layer | State |")
+          print("|---|---|")
+          cov = os.environ.get("COVERAGE_MIN", "").strip()
+          if cov not in ("", "0"):
+              print(f"| Coverage floor | armed at {cov}% |")
+          else:
+              print("| Coverage floor | off - set `coverage_min` > 0 |")
+          if os.environ.get("NEW_CODE_GATES", "") == "true":
+              print("| New-code ceilings | armed on the merge-base diff |")
+          else:
+              print("| New-code ceilings | off - set `new_code_gates: true` and `diff_base` |")
+          ratchet = os.environ.get("RATCHET", "false")
+          ratchet_file = os.environ.get("RATCHET_FILE", ".quality-baseline.json")
+          if ratchet == "true":
+              print(f"| Quality ratchet | armed - `{ratchet_file}` is the floor |")
+          elif ratchet == "auto":
+              print(f"| Quality ratchet | opted-in when `{ratchet_file}` is committed |")
+          else:
+              print(f"| Quality ratchet | off - commit `{ratchet_file}` or set `ratchet: true` |")
+          print("| Mutation testing | scheduled workflow (`mutation.yml`) - opt-in, Python and Node |")
+          print("| Flake hunt | scheduled workflow (`flaky.yml`) - arms when `.flaky-baseline.json` is committed |")
           print()
           print("Findings: Security tab, inline annotations, step summaries.")
           PY
@@ -2400,6 +2574,10 @@ jobs:
       verdict: ${{ steps.aggregate.outputs.verdict }}
     env:
       NEEDS_JSON: ${{ toJson(needs.*.result) }}
+      COVERAGE_MIN: ${{ needs.meta.outputs.coverage_min }}
+      NEW_CODE_GATES: ${{ needs.meta.outputs.new_code_gates }}
+      RATCHET: ${{ needs.meta.outputs.ratchet }}
+      RATCHET_FILE: ${{ needs.meta.outputs.ratchet_file }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - name: Aggregate results
@@ -2487,6 +2665,46 @@ jobs:
                   handle.write("| Check | Result |\n")
                   handle.write("|---|---|\n")
                   handle.write("\n".join(rows) + "\n\n")
+                  cov = os.environ.get("COVERAGE_MIN", "").strip()
+                  gates = os.environ.get("NEW_CODE_GATES", "")
+                  ratchet = os.environ.get("RATCHET", "false")
+                  ratchet_file = os.environ.get("RATCHET_FILE", ".quality-baseline.json")
+                  assurance = [
+                      (
+                          "Coverage floor",
+                          f"armed at {cov}%"
+                          if cov not in ("", "0")
+                          else "off - set `coverage_min` > 0",
+                      ),
+                      (
+                          "New-code ceilings",
+                          "armed on the merge-base diff"
+                          if gates == "true"
+                          else "off - set `new_code_gates: true` and `diff_base`",
+                      ),
+                      (
+                          "Quality ratchet",
+                          f"armed - `{ratchet_file}` is the floor"
+                          if ratchet == "true"
+                          else (
+                              f"opted-in when `{ratchet_file}` is committed"
+                              if ratchet == "auto"
+                              else f"off - commit `{ratchet_file}` or set `ratchet: true`"
+                          ),
+                      ),
+                      (
+                          "Mutation testing",
+                          "scheduled workflow (`mutation.yml`) - opt-in, Python and Node",
+                      ),
+                      (
+                          "Flake hunt",
+                          "scheduled workflow (`flaky.yml`) - arms when `.flaky-baseline.json` is committed",
+                      ),
+                  ]
+                  handle.write("### Test assurance\n\n| Layer | State |\n|---|---|\n")
+                  for layer, state in assurance:
+                      handle.write(f"| {layer} | {state} |\n")
+                  handle.write("\n")
                   handle.write(
                       "Security findings live in the **Security** tab (code scanning) "
                       "and as inline annotations on pull requests.\n"

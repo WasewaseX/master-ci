@@ -199,3 +199,71 @@ def test_touched_functions_span_logic(tmp_path: Path) -> None:
     assert touched == {"one"}
     touched = {p.name for p in ng.touched_functions(tmp_path, {"m.py": {6}})}
     assert touched == {"two"}
+
+
+# The v2.5 parser guarantee: a ceiling without its parser is exit 2, never
+# a silent "0 functions touched" pass.
+
+
+def test_cyclomatic_ceiling_without_lizard_is_exit_2(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ng, "lizard_available", lambda: False)
+    with pytest.raises(ng.NewCodeGateError, match="lizard is not importable"):
+        ng.run_gate(repo, diff_base="HEAD", max_slop=0, max_cognitive=0, max_cyclomatic=15)
+
+
+def test_cognitive_ceiling_without_tree_sitter_is_exit_2(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ng, "tree_sitter_available", lambda: False)
+    with pytest.raises(ng.NewCodeGateError, match="tree-sitter"):
+        ng.run_gate(repo, diff_base="HEAD", max_slop=0, max_cognitive=15, max_cyclomatic=0)
+
+
+def test_no_ceiling_requested_needs_no_parser(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ng, "lizard_available", lambda: False)
+    monkeypatch.setattr(ng, "tree_sitter_available", lambda: False)
+    code, sections, findings = ng.run_gate(
+        repo, diff_base="HEAD", max_slop=100, max_cognitive=0, max_cyclomatic=0
+    )
+    assert code == 0
+    assert sections == []
+    assert findings == []
+
+
+# The detector side: --require-parsers fails closed (exit 2) when an
+# analyzer is missing - the CI jobs install the pins and demand them.
+
+
+def test_require_parsers_fails_closed_without_lizard(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import slop_cli
+
+    monkeypatch.setattr(slop_cli, "lizard_available", lambda: False)
+    assert slop_cli.main([".", "--require-parsers"]) == 2
+    assert "lizard" in capsys.readouterr().err
+
+
+def test_require_parsers_lists_every_missing_analyzer(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import slop_cli
+
+    monkeypatch.setattr(slop_cli, "lizard_available", lambda: False)
+    monkeypatch.setattr(slop_cli, "tree_sitter_available", lambda: False)
+    assert slop_cli.main([".", "--require-parsers"]) == 2
+    err = capsys.readouterr().err
+    assert "lizard" in err
+    assert "tree-sitter" in err
+
+
+def test_require_parsers_passes_when_analyzers_are_importable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import slop_cli
+
+    monkeypatch.setattr(slop_cli, "lizard_available", lambda: True)
+    monkeypatch.setattr(slop_cli, "tree_sitter_available", lambda: True)
+    assert slop_cli.main([str(tmp_path), "--require-parsers"]) != 2
