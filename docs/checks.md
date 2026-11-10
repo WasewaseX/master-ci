@@ -753,7 +753,11 @@ Profile presets (quick / standard / strict / custom) only change the
 
 - `dashboard` posts or updates one PR comment summarizing every job; needs
   `pull-requests: write`; PRs only.
-- `ci-success` is the only check you should mark required. It fails when
+- `ci-success` is the only check you should mark required - under the
+  full name branch protection actually sees, `<caller job id> /
+  ci-success` (a caller job named `master` reports `master /
+  ci-success`; the ci-canary aggregate caller reports `required /
+  gate`). It fails when
   any needed job failed or was cancelled, and succeeds when jobs were
   merely skipped. It never runs tools itself.
 - Both summaries carry a **Test assurance** table (v2.5): the armed or

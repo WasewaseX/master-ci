@@ -88,24 +88,46 @@ which keeps its baseline reproducible across template releases:
 
 ### Required check
 
-Branch protection sees exactly one status: **`ci-success`**. Set it as a
-required status check (Settings > Branches > Branch protection rules) and the
-aggregate gate decides pass or fail for every PR.
+Reusable-workflow jobs surface in branch protection under the caller's
+own job id: a job named `master` that calls master-ci.yml reports its
+gate as `master / ci-success`, and a job named `codeql` calling
+codeql.yml reports `codeql / analyze (python)` - the [ci-canary]
+consumer's hosted runs show exactly these names. Set the full
+`<job id> / <check>` string as the required status check (Settings >
+Branches > Branch protection rules); a bare `ci-success` entry would
+wait forever on a name that never reports.
 
 `ci-success` aggregates the master-ci jobs only. CodeQL rides a separate
-reusable workflow, so a branch protection rule on `ci-success` alone cannot
-fail on a red CodeQL analysis (audit finding F). Two honest shapes:
+reusable workflow, so a branch protection rule on a `ci-success` check
+alone cannot fail on a red CodeQL analysis (audit finding F). Two honest
+shapes:
 
 - **One required check (recommended):** call
   `WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.8.1`
   instead of `master-ci.yml` and require **`required-quality-check / gate`**.
+  The first segment is the job id the caller gives the call, so the
+  example below names its job `required-quality-check`; a caller naming
+  the job differently must require its own prefix (`<job id> / gate`).
   The aggregate calls master-ci.yml and codeql.yml itself and its gate is
   green only when both succeeded - a skipped or failed CodeQL run is a red
   gate, never a silent pass. Every master-ci input is forwarded 1:1, plus
   the CodeQL `languages`/`queries`/`config_file` inputs.
+
+  ```yaml
+  jobs:
+    required-quality-check:
+      uses: WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.8.1
+      permissions:
+        contents: read
+        security-events: write
+        pull-requests: write
+        id-token: write   # only for Scorecard publishing inside the template
+  ```
+
 - **Two required checks:** keep calling `master-ci.yml` and `codeql.yml`
-  separately and require both `ci-success` **and** the CodeQL check
-  (`CodeQL / analyze (<language>)`) in branch protection. The PR
+  separately and require both `master / ci-success` **and**
+  `codeql / analyze (<language>)` - the caller job ids of the
+  quick-start example. The PR
   dashboard's Semantic analysis row shows which shape it detects in the
   caller's own workflow files - verified, not declared.
 

@@ -40,8 +40,10 @@ on:
   pull_request:
 
 # One required check, security included (recommended): swap the two jobs
-# below for this aggregate and require `required-quality-check / gate`
-# in branch protection - a red CodeQL analysis then blocks the merge:
+# below for this aggregate and require `required / gate` in branch
+# protection - the first segment is this file's job id, so a job named
+# differently requires its own prefix. A red CodeQL analysis then blocks
+# the merge:
 #
 # jobs:
 #   required:

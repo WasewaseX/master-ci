@@ -6,9 +6,11 @@
 # protection requiring only ci-success could not fail on a red CodeQL
 # analysis. This aggregate is the fix: it calls master-ci.yml AND
 # codeql.yml, and exposes exactly one gate job whose only input is the
-# pair of results. Require `required-quality-check / gate` in branch
-# protection and a failed CodeQL analysis blocks the merge, same as a
-# failed quality gate. Callers who prefer separate required checks can
+# pair of results. Branch protection sees '<caller job id> / gate' -
+# the README's example names its job required-quality-check, so there
+# the required string is 'required-quality-check / gate'. A failed
+# CodeQL analysis blocks the merge, same as a failed quality gate.
+# Callers who prefer separate required checks can
 # keep calling the two workflows directly (documented in the README);
 # the aggregate exists so the default shape cannot be mis-armed.
 #

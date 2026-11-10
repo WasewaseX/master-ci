@@ -1651,18 +1651,25 @@ def test_required_quality_gate_fails_closed():
 
 
 def test_required_quality_check_name_matches_the_docs():
-    """Branch protection sees '<workflow name> / <job id>'; README and
-    examples/ci.yml tell callers to require 'required-quality-check /
-    gate'. The name in the file is the contract - the v2.8.0 tag shipped
-    'Required quality check', a name the docs never mention, so callers
-    following the docs configured a required check that never reports."""
+    """Branch protection sees '<caller job id> / <job id>' for a job-called
+    reusable workflow - the ci-canary's hosted runs report 'required /
+    gate' and 'master / ci-success', never a bare 'ci-success' and never
+    the callee's workflow name. The docs' required-check strings must
+    therefore name the same job id their own examples give the call: the
+    README's aggregate example names its job 'required-quality-check',
+    the examples/ci.yml aggregate comment names its job 'required'.
+    Keeping the workflow's own name in sync stays a cosmetic contract."""
     aggregate = load(WF_DIR / "required-quality.yml")
     assert aggregate["name"] == "required-quality-check"
-    for doc in ("README.md", "examples/ci.yml"):
-        text = (ROOT / doc).read_text(encoding="utf-8")
-        assert "required-quality-check / gate" in text, (
-            f"{doc} must state the required check name exactly as the aggregate names it"
-        )
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "jobs:\n    required-quality-check:" in readme, (
+        "the README's aggregate example must give the call the job id its requirement string names"
+    )
+    assert "required-quality-check / gate" in readme
+    example = (ROOT / "examples/ci.yml").read_text(encoding="utf-8")
+    assert "required / gate" in example, (
+        "examples/ci.yml must require the check its own job id produces"
+    )
 
 
 def test_doc_workflow_refs_move_with_the_release():
