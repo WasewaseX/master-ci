@@ -942,12 +942,15 @@ one JSON read and a diff - seconds, no additional tooling.
   own scheduled wrapper (`template_repo` explicit,
   `template_ref` defaulting to the moving `v2` tag), because a called
   workflow cannot carry a schedule trigger. The caller keeps owning
-  the schedule and the write scopes: the quarantine loop opens its PR
-  with the caller's token, so the calling job grants
-  `contents: write` and `pull-requests: write` only when the caller
-  wants the loop armed - a wrapper that stays read-only adopts the
-  hunt as a report-only measurement, and a committed baseline is what
-  turns enforcement on.
+  the schedule, and the calling job MUST grant the scopes the
+  quarantine job declares - `contents: write` and
+  `pull-requests: write` - because a reusable call that grants less
+  than its callee declares never starts: the ci-canary's first
+  read-only dispatch died as a startup_failure with zero jobs, before
+  any step could explain itself. The scopes let the run start; the
+  committed baseline decides whether the loop ever fires - without a
+  `.flaky-baseline.json` the hunt is a report-only measurement and the
+  scopes idle.
 - **What it does:** runs the repository's own test suite N times in one
   job, reads every `run-<i>` result file the iterations produced, and
   classifies each test: **flaky** (both a pass and a fail across

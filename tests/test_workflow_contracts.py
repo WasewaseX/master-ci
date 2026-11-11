@@ -1822,3 +1822,43 @@ def test_assurance_verifies_flaky_wiring(master_ci_text: str):
     # the declared row that claimed a scheduled workflow unconditionally
     # is gone from both tables
     assert "scheduled workflow (`flaky.yml`)" not in text
+
+
+def test_flaky_hunt_names_every_toolchain_version():
+    """Every language-setup step that demands an explicit version input
+    carries one. ruby/setup-ruby fails closed without `ruby-version`
+    when the consumer commits neither .ruby-version nor .tool-versions -
+    the ci-canary was the first hosted consumer with a Gemfile and no
+    version file, and the setup died before the hunt could run (the
+    template itself has no Gemfile, so self-runs never reach the step).
+    setup-python, -node, -go, -java and -php already pass versions; the
+    assertions pin the whole set so a new setup step cannot join the
+    hunt without one. dtolnay/rust-toolchain rides its branch pin and
+    setup-dotnet deliberately uses the runner's SDK."""
+    text = (WF_DIR / "flaky.yml").read_text(encoding="utf-8")
+    assert "ruby-version: '3.4'" in text, (
+        "ruby/setup-ruby fails closed without ruby-version or a consumer version file"
+    )
+    assert "python-version: '3.13'" in text
+    assert "node-version: '22'" in text
+    assert "go-version: stable" in text
+    assert "java-version: '21'" in text
+    assert "php-version: '8.4'" in text
+
+
+def test_flaky_call_grant_rule_is_documented():
+    """The write scopes the called quarantine job declares must be granted
+    on the CALLING job, or the call never starts - the ci-canary's first
+    read-only dispatch died as a startup_failure with zero jobs, before
+    any step could explain itself. The scopes let the run start; the
+    committed baseline decides whether the loop ever fires. The docs must
+    teach the rule the hosted run proved, not the guess that failed."""
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    checks = (ROOT / "docs" / "checks.md").read_text(encoding="utf-8")
+    assert "pull-requests: write" in readme, "the README example must grant the scopes"
+    assert "contents: write" in readme
+    for doc, name in ((readme, "README.md"), (checks, "checks.md")):
+        lowered = doc.lower()
+        assert "never starts" in lowered or "never start" in lowered, (
+            f"{name} must state that an under-granted call never starts"
+        )

@@ -83,7 +83,7 @@ which keeps its baseline reproducible across template releases:
 ```yaml
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v2.10.0
+      template_ref: v2.10.1
 ```
 
 ### Required check
@@ -103,7 +103,7 @@ alone cannot fail on a red CodeQL analysis (audit finding F). Two honest
 shapes:
 
 - **One required check (recommended):** call
-  `WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.10.0`
+  `WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.10.1`
   instead of `master-ci.yml` and require **`required-quality-check / gate`**.
   The first segment is the job id the caller gives the call, so the
   example below names its job `required-quality-check`; a caller naming
@@ -116,7 +116,7 @@ shapes:
   ```yaml
   jobs:
     required-quality-check:
-      uses: WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.10.0
+      uses: WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.10.1
       permissions:
         contents: read
         security-events: write
@@ -514,10 +514,20 @@ dispatched) wrapper,
 ```yaml
 jobs:
   hunt:
-    uses: WasewaseX/master-ci/.github/workflows/flaky.yml@v2.10.0
+    uses: WasewaseX/master-ci/.github/workflows/flaky.yml@v2.10.1
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v2.10.0
+      template_ref: v2.10.1
+    permissions:
+      # The called quarantine job declares contents: write and
+      # pull-requests: write; a reusable call that grants less than its
+      # callee declares NEVER STARTS (the ci-canary's first read-only
+      # dispatch died as a startup_failure with zero jobs). The scopes
+      # let the run start; the committed .flaky-baseline.json decides
+      # whether the loop ever fires - no baseline, no proposal, no PR,
+      # and the scopes idle.
+      contents: write
+      pull-requests: write
 ```
 
 and it runs your own test suite 2-5 times (`iterations` input, Monday
@@ -780,7 +790,7 @@ carries a `SKILL.md`, so assistants with a skills directory can load it
 with one command:
 
 ```bash
-git clone --depth 1 --branch v2.10.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+git clone --depth 1 --branch v2.10.1 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
 ```
 
 MCP clients configure the same install like this:

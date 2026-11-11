@@ -286,6 +286,12 @@ jobs:
       - uses: ruby/setup-ruby@b3aaceaef7e0ee231b499e7b5f49c03fc1d32199 # v1.338.0
         if: hashFiles('Gemfile') != ''
         with:
+          # the action fails closed without it: "input ruby-version needs
+          # to be specified if no .ruby-version or .tool-versions file
+          # exists" - the ci-canary was the first hosted consumer with a
+          # Gemfile and no version file, and the step died before the
+          # hunt could run. Same default as the Ruby stack job.
+          ruby-version: '3.4'
           bundler-cache: true
       - name: Hunt Ruby flakes (RSpec)
         if: hashFiles('Gemfile') != ''
