@@ -52,8 +52,8 @@ in this phase was verified as a real gap in the current source.
 | -------------------- | ------------------------------------------------------------------------------- | -------------------- |
 | Stryker Node setup   | `mutation.yml` installs a pinned Node and activates the package manager before pnpm/yarn/npm run | Shipped in v2.11.1: setup-node pins Node 22, pnpm/corepack activation before the lockfile contract |
 | Mutation discovery   | Every discovered project mutates; the detect block stops reading root-level declarations only | Shipped in v2.11.1: per-project scan across all families (root always included), fail-at-end loops, evidence captured on the failure path, every tool step under `always()` |
-| Flaky-hunt deps      | The Python hunt installs the project's dependencies and pytest explicitly       | `python -m pytest` runs against whatever the runner happens to have |
-| Flaky-hunt discovery | Project discovery across all supported stacks; per-project status in the summary | Root-only; a skipped suite is not distinguishable from a completed hunt |
+| Flaky-hunt deps      | The Python hunt installs the project's dependencies and pytest explicitly       | Shipped in v2.11.2: pinned pytest first, the project's install contract second, the project's own pytest wins |
+| Flaky-hunt discovery | Project discovery across all supported stacks; per-project status in the summary | Shipped in v2.11.2: discovery drives all eight families, per-suite results dirs, and `flaky_aggregate.py` names every suite - hunted with counts, skipped with the reason, failed-hunt loudly |
 | Parser-coverage policy | Per-language required-coverage policy with documented exceptions (generated, third-party) | Unsupported languages are reported, never enforceable |
 | Required aggregate   | CodeQL and Master CI stay under the single `required-quality` check              | Done since v2.8; keep |
 | Stale documentation  | Coverage input description names every integrated stack                          | Description still says "Python/Go/Node" while Rust (cargo-llvm-cov) and JVM (JaCoCo) shipped in v2.6 |
