@@ -168,9 +168,10 @@ on:
       coverage_min:
         description: >-
           Measured coverage floor in percent (0 = off). Above 0, the
-          Python/Go/Node stacks run tests under coverage and upload the
-          report as an artifact; ai-integrity consumes it and fails below
-          the floor. A requested floor with no report fails closed
+          Python/Go/Node/Rust/JVM stacks run tests under coverage (Go
+          coverprofiles, cargo-llvm-cov, JaCoCo) and upload the report
+          as an artifact; ai-integrity consumes it and fails below the
+          floor. A requested floor with no report fails closed
           (exit 2), never silently passes.
         required: false
         type: number

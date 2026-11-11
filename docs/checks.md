@@ -380,19 +380,21 @@ Profile presets (quick / standard / strict / custom) only change the
   before this release the test-assurance dimension could only report
   test *inventory* (`empty-test`, `tautological-test`, `missing-tests`);
   now it can report measured *proof*. Setting `coverage_min` above 0
-  makes the Python, Go and Node stacks run their suites under coverage
-  (Python via `coverage run`/`coverage json`, Go via
+  makes the Python, Go, Node, Rust and JVM stacks run their suites
+  under coverage (Python via `coverage run`/`coverage json`, Go via
   `-coverprofile=cover.out`, Node via the project's own
-  `test:coverage` script emitting Cobertura XML) and upload the report
+  `test:coverage` script emitting Cobertura XML, Rust via
+  `cargo llvm-cov --cobertura`, JVM via the pinned JaCoCo agent -
+  Maven CLI injection or Gradle's own plugin) and upload the report
   as an artifact; the dedicated `coverage-gate` job - which waits for
   the coverage-producing stacks and runs only when at least one of
   them actually executed (a no-code-change commit skips the stacks,
   and "nothing changed" is not a coverage failure) - downloads the
   reports and consumes them through `scripts/coverage_gate.py`
   (standalone CLI), which
-  parses all three dialects (Python `coverage.json`, Cobertura XML,
-  Go `cover.out`) and renders a "Test assurance: measured coverage"
-  table into the markdown report. The floor gates **every** report -
+  parses all four dialects (Python `coverage.json`, Cobertura XML -
+  Node and Rust, JaCoCo XML, Go `cover.out`) and renders a "Test
+  assurance: measured coverage" table into the markdown report. The floor gates **every** report -
   in a polyglot repo each stack measures its own slice, and every
   slice must clear the bar. Setting `diff_base` (e.g. `origin/main`)
   additionally applies the same floor to the **new-code window**:
