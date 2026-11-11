@@ -2166,3 +2166,67 @@ def test_flaky_call_grant_rule_is_documented():
         assert "never starts" in lowered or "never start" in lowered, (
             f"{name} must state that an under-granted call never starts"
         )
+
+
+# ---------------------------------------------------------------------------
+# v2.11.2: the flake hunt is per project - the P0 audit's remaining
+# discovery rows. Discovery drives every family, the Python hunt
+# installs what it runs against, and the summary names every suite:
+# hunted, skipped (with the reason) or failed-hunt. A skipped suite is
+# never dressed up as a completed hunt.
+# ---------------------------------------------------------------------------
+
+
+def test_flaky_hunt_is_per_project():
+    """The hunt scanned the workspace root only: nested projects were
+    skipped silently, and .NET was recursive while every other family
+    was root-only. Discovery now drives all eight families; each family
+    loops over the same project list and the setups key on what
+    discovery actually found, not on root-level hashFiles."""
+    text = (WF_DIR / "flaky.yml").read_text(encoding="utf-8")
+    assert "- name: Discover flaky-hunt projects" in text
+    discover = text.split("- name: Discover flaky-hunt projects", 1)[1].split("\n      # ---", 1)[0]
+    assert "discover_projects.py --family all --list" in discover
+    assert "echo '.'" in discover, "the workspace root must stay in the scan set"
+    assert "sort -u" in discover
+    for family in ("python", "node", "go", "rust", "jvm", "dotnet", "ruby", "php"):
+        assert f'echo "{family}=$' in discover, f"discovery must emit the {family} flag"
+        setup = f"steps.discover.outputs.{family} == '1'"
+        assert setup in text, f"the {family} setup must key on discovery"
+    assert "flaky-results/$slug/" in text, "results are per project and per suite"
+    assert "flaky_aggregate.py $args" in text, "classification is the aggregate's job"
+    # the old root-only family conditions are gone
+    assert "hashFiles('pyproject.toml') != ''" not in text
+    assert "hashFiles('**/*.csproj') != ''" not in text
+
+
+def test_flaky_python_hunt_installs_its_own_environment():
+    """P0: the Python hunt ran `python -m pytest` against whatever the
+    runner happened to have - the pinned pytest lands first as the
+    fallback, the project's own install contract follows, and a
+    packaging failure fails the project loudly instead of measuring a
+    bare environment."""
+    text = (WF_DIR / "flaky.yml").read_text(encoding="utf-8")
+    python_step = _extract_workflow_step(text, "Hunt Python flakes")
+    assert 'tool_versions.py" pip pytest' in python_step, "pytest is pinned first"
+    assert "pip install -e . || pip install ." in python_step
+    assert "pip install -r requirements.txt" in python_step
+    assert "::error file=$dir::the Python hunt" in python_step
+    assert "exit $rc_total" in python_step, "one project's failure never mutes the rest"
+
+
+def test_flaky_skips_are_named_and_node_runner_detection_widened():
+    """The audit's sharpest flaky-hunt sentence: a skipped test suite
+    must not look equivalent to a fully completed hunt. Skips leave a
+    status note the aggregate renders as its own table row; the Node
+    family recognizes vitest and jest through the package manifest when
+    no config file is committed."""
+    text = (WF_DIR / "flaky.yml").read_text(encoding="utf-8")
+    assert "status.txt" in text, "skipped suites leave their reason"
+    node_step = _extract_workflow_step(text, "Hunt Node flakes")
+    assert "devDependencies" in node_step
+    assert "no vitest or jest config or dependency in package.json" in node_step
+    aggregate = (ROOT / "scripts" / "flaky_aggregate.py").read_text(encoding="utf-8")
+    assert 'f"skipped: {self.detail}"' in aggregate, "the table names the skip reason"
+    checks = (ROOT / "docs" / "checks.md").read_text(encoding="utf-8")
+    assert "Per project since v2.11.2" in checks

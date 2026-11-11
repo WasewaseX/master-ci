@@ -7,6 +7,25 @@
 # hunt runs a repository's own test suite several times in one job and
 # reports every test whose verdict changed between iterations.
 #
+# Per project since v2.11.2: the discovery step enumerates every project
+# discover_projects.py finds across all families (the workspace root
+# always included, so root-level suites keep hunting), and every family
+# hunts every project that claims it - in its own results directory,
+# flaky-results/<project>/<suite>/. The classification step then names
+# every suite in the summary's status table: hunted (with counts),
+# skipped (with the reason) or failed-hunt (loudly). A skipped suite is
+# no longer indistinguishable from a completed hunt, and one project's
+# failure never hides another project's result - the per-project loops
+# fail at the end, the same contract mutation.yml has carried since
+# v2.11.1.
+#
+# The Python hunt installs the project's dependencies and a pinned
+# pytest before iterating (pre-v2.11.2 it ran `python -m pytest` against
+# whatever the runner happened to have); the project's own pytest, if
+# it declares one, wins. The Node hunt recognizes vitest and jest
+# through config files OR through the package manifest's dependencies,
+# so projects relying on default runner configuration are hunted too.
+#
 # Opt-in by declaration, like mutation testing: a committed
 # .flaky-baseline.json (the quarantine list) arms --fail-on-flaky, so a
 # NEW flaky test fails the hunt; known flakes are reported without
@@ -16,7 +35,7 @@
 #
 # The hunt never edits tests and never reruns CI: it is a scheduled
 # measurement with an artifact, a step summary and an exit code. A runner
-# that exists but produces no result file fails closed (exit 2) - a hunt
+# that exists but produces no result file fails closed - a hunt
 # that cannot be executed loudly is never a silent pass.
 #
 # The quarantine loop (v2.4): when the hunt fails on new flakes in
@@ -154,183 +173,367 @@ jobs:
           esac
           mkdir -p flaky-results
 
-      # --- Python: pytest junitxml --------------------------------------------
+      - name: Discover flaky-hunt projects
+        # Discovery enumerates every independent project across all
+        # families; the workspace root is appended unconditionally so
+        # root-level suites keep hunting exactly as before. Each family
+        # step scans the same list for its own manifest and skips the
+        # projects that do not claim it - per project, with the skip
+        # named in the summary. Discovery failing (a declared workspace
+        # that cannot be honored) fails closed.
+        id: discover
+        run: |
+          { python3 _ci/scripts/discover_projects.py --family all --list
+            echo '.'
+          } | sort -u > "$RUNNER_TEMP/flaky-dirs.txt"
+          python_hunt=0; node_hunt=0; go_hunt=0; rust_hunt=0
+          jvm_hunt=0; dotnet_hunt=0; ruby_hunt=0; php_hunt=0
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            echo "Scanning $dir for test suites"
+            if [ -f "$dir/pyproject.toml" ] || [ -f "$dir/pytest.ini" ] || [ -f "$dir/setup.cfg" ]; then
+              python_hunt=1
+            fi
+            if [ -f "$dir/package.json" ]; then node_hunt=1; fi
+            if [ -f "$dir/go.mod" ]; then go_hunt=1; fi
+            if [ -f "$dir/Cargo.toml" ]; then rust_hunt=1; fi
+            if [ -f "$dir/pom.xml" ] || [ -f "$dir/build.gradle" ] || [ -f "$dir/build.gradle.kts" ]; then
+              jvm_hunt=1
+            fi
+            if ls "$dir"/*.csproj >/dev/null 2>&1 || ls "$dir"/*.fsproj >/dev/null 2>&1; then
+              dotnet_hunt=1
+            fi
+            if [ -f "$dir/Gemfile" ]; then ruby_hunt=1; fi
+            if [ -f "$dir/composer.json" ]; then php_hunt=1; fi
+          done < "$RUNNER_TEMP/flaky-dirs.txt"
+          {
+            echo "python=$python_hunt"
+            echo "node=$node_hunt"
+            echo "go=$go_hunt"
+            echo "rust=$rust_hunt"
+            echo "jvm=$jvm_hunt"
+            echo "dotnet=$dotnet_hunt"
+            echo "ruby=$ruby_hunt"
+            echo "php=$php_hunt"
+          } >> "$GITHUB_OUTPUT"
+
+      # --- toolchains, only when a discovered project claims the family ---
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        if: hashFiles('pyproject.toml') != '' || hashFiles('pytest.ini') != '' || hashFiles('setup.cfg') != ''
+        if: always() && steps.discover.outputs.python == '1'
         with:
           python-version: '3.13'
-      - name: Hunt Python flakes (pytest)
-        if: hashFiles('pyproject.toml') != '' || hashFiles('pytest.ini') != '' || hashFiles('setup.cfg') != ''
-        run: |
-          for i in $(seq 1 "$ITERATIONS"); do
-            python -m pytest -q --junitxml="flaky-results/run-$i.xml" || true
-            [ -s "flaky-results/run-$i.xml" ] || \
-              echo "::warning::pytest iteration $i produced no report"
-          done
-      # --- Node/TypeScript: vitest or jest junit reporter ----------------------
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        if: hashFiles('package.json') != ''
+        if: always() && steps.discover.outputs.node == '1'
         with:
           node-version: '22'
-      - name: Install Node dependencies
-        if: hashFiles('package.json') != ''
-        run: | # zizmor: ignore[adhoc-packages]
-          if [ -f pnpm-lock.yaml ]; then
-            npm install --global pnpm
-            pnpm install --frozen-lockfile
-          elif [ -f yarn.lock ]; then
-            corepack enable
-            yarn install --immutable
-          elif [ -f package-lock.json ]; then
-            npm ci
-          else
-            npm install
-          fi
-      - name: Hunt Node flakes (vitest / jest)
-        if: hashFiles('package.json') != ''
-        run: | # zizmor: ignore[adhoc-packages]
-          if [ -f vitest.config.ts ] || [ -f vitest.config.js ] || [ -f vitest.config.mts ]; then
-            runner=vitest
-          elif [ -f jest.config.js ] || [ -f jest.config.ts ] || [ -f jest.config.mjs ]; then
-            runner=jest
-          else
-            echo "::warning::no vitest or jest config found - the Node suite is not hunted"
-            exit 0
-          fi
-          if [ "$runner" = jest ]; then
-            npm install --no-save jest-junit
-          fi
-          echo "runner=$runner"
-          for i in $(seq 1 "$ITERATIONS"); do
-            if [ "$runner" = vitest ]; then
-              npx vitest run --reporter=junit \
-                --outputFile="flaky-results/run-$i.xml" || true
-            else
-              JEST_JUNIT_OUTPUT_FILE="flaky-results/run-$i.xml" \
-                npx jest --ci --reporters=default --reporters=jest-junit || true
-            fi
-            [ -s "flaky-results/run-$i.xml" ] || \
-              echo "::warning::Node iteration $i produced no report"
-          done
-      # --- Go: go test -json ----------------------------------------------------
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        if: hashFiles('go.mod') != ''
+        if: always() && steps.discover.outputs.go == '1'
         with:
           go-version: stable
-      - name: Hunt Go flakes (go test -json)
-        if: hashFiles('go.mod') != ''
-        run: |
-          for i in $(seq 1 "$ITERATIONS"); do
-            go test -json ./... > "flaky-results/run-$i.gojson" || true
-            [ -s "flaky-results/run-$i.gojson" ] || \
-              echo "::warning::go iteration $i produced no stream"
-          done
-      # --- Rust: libtest stdout -------------------------------------------------
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
-        if: hashFiles('Cargo.toml') != ''
-      - name: Hunt Rust flakes (cargo test)
-        if: hashFiles('Cargo.toml') != ''
-        run: |
-          for i in $(seq 1 "$ITERATIONS"); do
-            cargo test > "flaky-results/run-$i.libtest" || true
-            [ -s "flaky-results/run-$i.libtest" ] || \
-              echo "::warning::cargo iteration $i produced no output"
-          done
-      # --- JVM: surefire / gradle JUnit XML -------------------------------------
+        if: always() && steps.discover.outputs.rust == '1'
       - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
-        if: hashFiles('pom.xml') != '' || hashFiles('build.gradle') != '' || hashFiles('build.gradle.kts') != ''
+        if: always() && steps.discover.outputs.jvm == '1'
         with:
           distribution: temurin
           java-version: '21'
-      - name: Hunt JVM flakes (Maven / Gradle)
-        if: hashFiles('pom.xml') != '' || hashFiles('build.gradle') != '' || hashFiles('build.gradle.kts') != ''
-        run: |
-          for i in $(seq 1 "$ITERATIONS"); do
-            if [ -f pom.xml ]; then
-              mvn -B test || true
-            else
-              # One attempt per iteration - a retry would mask the very
-              # flakiness the hunt measures.
-              if [ -f gradlew ]; then
-                chmod +x gradlew
-                ./gradlew test || true
-              else
-                gradle test || true
-              fi
-            fi
-            n=0
-            while IFS= read -r f; do
-              cp "$f" "flaky-results/run-$i-${f##*/TEST-}"
-              n=$((n + 1))
-            done < <(find . -type f \( -path '*/target/surefire-reports/TEST-*.xml' \
-              -o -path '*/build/test-results/test/TEST-*.xml' \))
-            [ "$n" -gt 0 ] || echo "::warning::JVM iteration $i produced no XML"
-          done
-      # --- .NET: TRX ------------------------------------------------------------
       - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
-        if: hashFiles('**/*.csproj') != '' || hashFiles('**/*.fsproj') != ''
-      - name: Hunt .NET flakes (dotnet test)
-        if: hashFiles('**/*.csproj') != '' || hashFiles('**/*.fsproj') != ''
-        run: |
-          for i in $(seq 1 "$ITERATIONS"); do
-            dotnet test --logger "trx;LogFilePrefix=raw-$i-" \
-              --results-directory flaky-results || true
-            for f in flaky-results/raw-"$i"-*.trx; do
-              [ -f "$f" ] || continue
-              mv "$f" "flaky-results/run-$i-${f##*/raw-"$i"-}"
-            done
-            ls flaky-results/run-"$i"-*.trx >/dev/null 2>&1 || \
-              echo "::warning::dotnet iteration $i produced no TRX"
-          done
-      # --- Ruby: RSpec JUnit formatter ------------------------------------------
+        if: always() && steps.discover.outputs.dotnet == '1'
       - uses: ruby/setup-ruby@b3aaceaef7e0ee231b499e7b5f49c03fc1d32199 # v1.338.0
-        if: hashFiles('Gemfile') != ''
+        if: always() && steps.discover.outputs.ruby == '1'
         with:
           # the action fails closed without it: "input ruby-version needs
           # to be specified if no .ruby-version or .tool-versions file
           # exists" - the ci-canary was the first hosted consumer with a
-          # Gemfile and no version file, and the step died before the
-          # hunt could run. Same default as the Ruby stack job.
+          # Gemfile and no version file, and the setup died before the
+          # hunt could run. Same default as the Ruby stack job. The
+          # bundler cache is per project now: setup-ruby's root-level
+          # cache could not see a nested project's Gemfile.
           ruby-version: '3.4'
-          bundler-cache: true
-      - name: Hunt Ruby flakes (RSpec)
-        if: hashFiles('Gemfile') != ''
-        run: |
-          grep -q rspec_junit_formatter Gemfile || {
-            echo "::warning::add rspec_junit_formatter to the Gemfile to hunt Ruby flakes"
-            exit 0
-          }
-          for i in $(seq 1 "$ITERATIONS"); do
-            bundle exec rspec --format RspecJunitFormatter \
-              --out "flaky-results/run-$i.xml" || true
-            [ -s "flaky-results/run-$i.xml" ] || \
-              echo "::warning::RSpec iteration $i produced no report"
-          done
-      # --- PHP: PHPUnit ----------------------------------------------------------
+          bundler-cache: false
       - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2
-        if: hashFiles('composer.json') != ''
+        if: always() && steps.discover.outputs.php == '1'
         with:
           php-version: '8.4'
           coverage: none
-      - name: Hunt PHP flakes (PHPUnit)
-        if: hashFiles('composer.json') != ''
+
+      # --- per-family, per-project hunts: fail at the end, name the skip ---
+      - name: Hunt Python flakes (pytest) - every discovered project
+        if: always() && steps.discover.outputs.python == '1'
         run: |
-          composer install --no-interaction --no-progress
-          for i in $(seq 1 "$ITERATIONS"); do
-            vendor/bin/phpunit --log-junit "flaky-results/run-$i.xml" || true
-            [ -s "flaky-results/run-$i.xml" ] || \
-              echo "::warning::PHPUnit iteration $i produced no report"
-          done
-      # --- Classify and gate ------------------------------------------------------
-      - name: Run the flake hunt
-        if: >-
-          hashFiles('pyproject.toml', 'pytest.ini', 'setup.cfg', 'package.json',
-                    'go.mod', 'Cargo.toml', 'pom.xml', 'build.gradle',
-                    'build.gradle.kts', '**/*.csproj', '**/*.fsproj', 'Gemfile',
-                    'composer.json') != ''
+          rc_total=0
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            { [ -f "$dir/pyproject.toml" ] || [ -f "$dir/pytest.ini" ] || [ -f "$dir/setup.cfg" ]; } || continue
+            if [ "$dir" = "." ]; then slug=root; else slug=$(printf '%s' "$dir" | tr '/ ' '--'); fi
+            results="$GITHUB_WORKSPACE/flaky-results/$slug/python"
+            mkdir -p "$results"
+            echo "::group::pytest in $dir"
+            rc=0
+            (
+              cd "$dir" || exit 1
+              # The pinned pytest lands first as the fallback; the
+              # project's own dependency install may bring a different
+              # one, and the project's version wins - the suite is
+              # hunted with the runner it ships. The install contract
+              # mirrors the python stack job: a packaging failure fails
+              # loudly instead of measuring a bare environment.
+              # shellcheck disable=SC2046
+              python -m pip install --quiet $(python3 "$GITHUB_WORKSPACE/_ci/scripts/tool_versions.py" pip pytest)
+              if [ -f pyproject.toml ] && grep -q '^\[project\]' pyproject.toml; then
+                pip install -e . || pip install .
+              elif [ -f requirements.txt ]; then
+                pip install -r requirements.txt
+              else
+                echo "No installable python project in $dir - the suite runs against the bare environment"
+              fi
+              for i in $(seq 1 "$ITERATIONS"); do
+                python -m pytest -q --junitxml="$results/run-$i.xml" || true
+                [ -s "$results/run-$i.xml" ] || \
+                  echo "::warning::pytest iteration $i in $dir produced no report"
+              done
+            ) || rc=$?
+            if [ "$rc" -ne 0 ]; then
+              echo "::error file=$dir::the Python hunt could not run in $dir (exit $rc)"
+              rc_total=1
+            fi
+            echo "::endgroup::"
+          done < "$RUNNER_TEMP/flaky-dirs.txt"
+          exit $rc_total
+
+      - name: Hunt Node flakes (vitest / jest) - every discovered project
+        if: always() && steps.discover.outputs.node == '1'
+        run: | # zizmor: ignore[adhoc-packages]
+          rc_total=0
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            [ -f "$dir/package.json" ] || continue
+            if [ "$dir" = "." ]; then slug=root; else slug=$(printf '%s' "$dir" | tr '/ ' '--'); fi
+            results="$GITHUB_WORKSPACE/flaky-results/$slug/node"
+            mkdir -p "$results"
+            echo "::group::node hunt in $dir"
+            runner=''
+            if [ -f "$dir/vitest.config.ts" ] || [ -f "$dir/vitest.config.js" ] || [ -f "$dir/vitest.config.mts" ]; then
+              runner=vitest
+            elif [ -f "$dir/jest.config.js" ] || [ -f "$dir/jest.config.ts" ] || [ -f "$dir/jest.config.mjs" ]; then
+              runner=jest
+            elif (cd "$dir" && node -e 'const p=require("./package.json");const d=Object.assign({},p.dependencies,p.devDependencies);process.exit(d.vitest?0:1)' 2>/dev/null); then
+              # v2.11.2: a runner declared in the manifest is a runner,
+              # even without a committed config file
+              runner=vitest
+            elif (cd "$dir" && node -e 'const p=require("./package.json");const d=Object.assign({},p.dependencies,p.devDependencies);process.exit(d.jest?0:1)' 2>/dev/null); then
+              runner=jest
+            fi
+            if [ -z "$runner" ]; then
+              echo "no vitest or jest config or dependency in $dir - the Node suite is not hunted"
+              echo "no vitest or jest config or dependency in package.json" > "$results/status.txt"
+              echo "::endgroup::"
+              continue
+            fi
+            rc=0
+            (
+              cd "$dir" || exit 1
+              # A lockfile is a contract, same as the node jobs - and the
+              # package manager is activated before it runs.
+              if [ -f pnpm-lock.yaml ]; then
+                npm install --global pnpm
+                pnpm install --frozen-lockfile
+              elif [ -f yarn.lock ]; then
+                corepack enable
+                yarn install --immutable
+              elif [ -f package-lock.json ]; then
+                npm ci
+              else
+                npm install
+              fi
+              if [ "$runner" = jest ]; then
+                npm install --no-save jest-junit
+              fi
+              for i in $(seq 1 "$ITERATIONS"); do
+                if [ "$runner" = vitest ]; then
+                  npx vitest run --reporter=junit \
+                    --outputFile="$results/run-$i.xml" || true
+                else
+                  JEST_JUNIT_OUTPUT_FILE="$results/run-$i.xml" \
+                    npx jest --ci --reporters=default --reporters=jest-junit || true
+                fi
+                [ -s "$results/run-$i.xml" ] || \
+                  echo "::warning::Node iteration $i in $dir produced no report"
+              done
+            ) || rc=$?
+            if [ "$rc" -ne 0 ]; then
+              echo "::error file=$dir::the Node hunt could not run in $dir (exit $rc)"
+              rc_total=1
+            fi
+            echo "::endgroup::"
+          done < "$RUNNER_TEMP/flaky-dirs.txt"
+          exit $rc_total
+
+      - name: Hunt Go flakes (go test -json) - every discovered project
+        if: always() && steps.discover.outputs.go == '1'
+        run: |
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            [ -f "$dir/go.mod" ] || continue
+            if [ "$dir" = "." ]; then slug=root; else slug=$(printf '%s' "$dir" | tr '/ ' '--'); fi
+            results="$GITHUB_WORKSPACE/flaky-results/$slug/go"
+            mkdir -p "$results"
+            echo "::group::go hunt in $dir"
+            for i in $(seq 1 "$ITERATIONS"); do
+              (cd "$dir" && go test -json ./...) > "$results/run-$i.gojson" || true
+              [ -s "$results/run-$i.gojson" ] || \
+                echo "::warning::go iteration $i in $dir produced no stream"
+            done
+            echo "::endgroup::"
+          done < "$RUNNER_TEMP/flaky-dirs.txt"
+
+      - name: Hunt Rust flakes (cargo test) - every discovered project
+        if: always() && steps.discover.outputs.rust == '1'
+        run: |
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            [ -f "$dir/Cargo.toml" ] || continue
+            if [ "$dir" = "." ]; then slug=root; else slug=$(printf '%s' "$dir" | tr '/ ' '--'); fi
+            results="$GITHUB_WORKSPACE/flaky-results/$slug/rust"
+            mkdir -p "$results"
+            echo "::group::rust hunt in $dir"
+            for i in $(seq 1 "$ITERATIONS"); do
+              (cd "$dir" && cargo test) > "$results/run-$i.libtest" || true
+              [ -s "$results/run-$i.libtest" ] || \
+                echo "::warning::cargo iteration $i in $dir produced no output"
+            done
+            echo "::endgroup::"
+          done < "$RUNNER_TEMP/flaky-dirs.txt"
+
+      - name: Hunt JVM flakes (Maven / Gradle) - every discovered project
+        if: always() && steps.discover.outputs.jvm == '1'
+        run: |
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            { [ -f "$dir/pom.xml" ] || [ -f "$dir/build.gradle" ] || [ -f "$dir/build.gradle.kts" ]; } || continue
+            if [ "$dir" = "." ]; then slug=root; else slug=$(printf '%s' "$dir" | tr '/ ' '--'); fi
+            results="$GITHUB_WORKSPACE/flaky-results/$slug/jvm"
+            mkdir -p "$results"
+            echo "::group::JVM hunt in $dir"
+            for i in $(seq 1 "$ITERATIONS"); do
+              if [ -f "$dir/pom.xml" ]; then
+                (cd "$dir" && mvn -B test) || true
+              else
+                # One attempt per iteration - a retry would mask the very
+                # flakiness the hunt measures.
+                if [ -f "$dir/gradlew" ]; then
+                  (cd "$dir" && chmod +x gradlew && ./gradlew test) || true
+                else
+                  (cd "$dir" && gradle test) || true
+                fi
+              fi
+              n=0
+              while IFS= read -r f; do
+                cp "$f" "$results/run-$i-${f##*/TEST-}"
+                n=$((n + 1))
+              done < <(find "$dir" -type f \( -path '*/target/surefire-reports/TEST-*.xml' \
+                -o -path '*/build/test-results/test/TEST-*.xml' \))
+              [ "$n" -gt 0 ] || echo "::warning::JVM iteration $i in $dir produced no XML"
+            done
+            echo "::endgroup::"
+          done < "$RUNNER_TEMP/flaky-dirs.txt"
+
+      - name: Hunt .NET flakes (dotnet test) - every discovered project
+        if: always() && steps.discover.outputs.dotnet == '1'
+        run: |
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            { ls "$dir"/*.csproj >/dev/null 2>&1 || ls "$dir"/*.fsproj >/dev/null 2>&1; } || continue
+            if [ "$dir" = "." ]; then slug=root; else slug=$(printf '%s' "$dir" | tr '/ ' '--'); fi
+            results="$GITHUB_WORKSPACE/flaky-results/$slug/dotnet"
+            mkdir -p "$results"
+            echo "::group::dotnet hunt in $dir"
+            for i in $(seq 1 "$ITERATIONS"); do
+              (cd "$dir" && dotnet test --logger "trx;LogFilePrefix=raw-$i-" \
+                --results-directory "$results") || true
+              for f in "$results"/raw-"$i"-*.trx; do
+                [ -f "$f" ] || continue
+                mv "$f" "$results/run-$i-${f##*/raw-"$i"-}"
+              done
+              ls "$results"/run-"$i"-*.trx >/dev/null 2>&1 || \
+                echo "::warning::dotnet iteration $i in $dir produced no TRX"
+            done
+            echo "::endgroup::"
+          done < "$RUNNER_TEMP/flaky-dirs.txt"
+
+      - name: Hunt Ruby flakes (RSpec) - every discovered project
+        if: always() && steps.discover.outputs.ruby == '1'
+        run: |
+          rc_total=0
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            [ -f "$dir/Gemfile" ] || continue
+            if [ "$dir" = "." ]; then slug=root; else slug=$(printf '%s' "$dir" | tr '/ ' '--'); fi
+            results="$GITHUB_WORKSPACE/flaky-results/$slug/ruby"
+            mkdir -p "$results"
+            echo "::group::ruby hunt in $dir"
+            if ! (cd "$dir" && grep -q rspec_junit_formatter Gemfile); then
+              echo "add rspec_junit_formatter to the Gemfile in $dir to hunt Ruby flakes"
+              echo "no rspec_junit_formatter in the Gemfile" > "$results/status.txt"
+              echo "::endgroup::"
+              continue
+            fi
+            rc=0
+            (
+              cd "$dir" || exit 1
+              # The project's own bundle, per project: the root-level
+              # cache could not see a nested project's Gemfile.
+              bundle install --quiet
+              for i in $(seq 1 "$ITERATIONS"); do
+                bundle exec rspec --format RspecJunitFormatter \
+                  --out "$results/run-$i.xml" || true
+                [ -s "$results/run-$i.xml" ] || \
+                  echo "::warning::RSpec iteration $i in $dir produced no report"
+              done
+            ) || rc=$?
+            if [ "$rc" -ne 0 ]; then
+              echo "::error file=$dir::the Ruby hunt could not run in $dir (exit $rc)"
+              rc_total=1
+            fi
+            echo "::endgroup::"
+          done < "$RUNNER_TEMP/flaky-dirs.txt"
+          exit $rc_total
+
+      - name: Hunt PHP flakes (PHPUnit) - every discovered project
+        if: always() && steps.discover.outputs.php == '1'
+        run: |
+          rc_total=0
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            [ -f "$dir/composer.json" ] || continue
+            if [ "$dir" = "." ]; then slug=root; else slug=$(printf '%s' "$dir" | tr '/ ' '--'); fi
+            results="$GITHUB_WORKSPACE/flaky-results/$slug/php"
+            mkdir -p "$results"
+            echo "::group::php hunt in $dir"
+            rc=0
+            (
+              cd "$dir" || exit 1
+              composer install --no-interaction --no-progress
+              for i in $(seq 1 "$ITERATIONS"); do
+                vendor/bin/phpunit --log-junit "$results/run-$i.xml" || true
+                [ -s "$results/run-$i.xml" ] || \
+                  echo "::warning::PHPUnit iteration $i in $dir produced no report"
+              done
+            ) || rc=$?
+            if [ "$rc" -ne 0 ]; then
+              echo "::error file=$dir::the PHP hunt could not run in $dir (exit $rc)"
+              rc_total=1
+            fi
+            echo "::endgroup::"
+          done < "$RUNNER_TEMP/flaky-dirs.txt"
+          exit $rc_total
+
+      # --- classify: every suite named, skips visible, one merged verdict ---
+      - name: Classify every hunted suite
+        if: always()
         run: |
           set -o pipefail
-          args="--results-dir flaky-results --iterations $ITERATIONS"
+          args="--results-root flaky-results --iterations $ITERATIONS"
           if [ -f .flaky-baseline.json ]; then
             args="$args --baseline .flaky-baseline.json --fail-on-flaky"
           else
@@ -339,7 +542,7 @@ jobs:
           fi
           # args accumulates CLI flags by design; word splitting is the point.
           # shellcheck disable=SC2086
-          python3 _ci/scripts/flaky_detect.py $args | tee flaky-summary.md
+          python3 _ci/scripts/flaky_aggregate.py $args
       - name: Verdict for the quarantine loop
         if: always()
         id: verdict
@@ -355,16 +558,12 @@ jobs:
           echo "enforcement=$enforcement" >> "$GITHUB_OUTPUT"
       - name: Build the quarantine proposal
         # always(): a failed hunt is exactly when a proposal is wanted.
-        # The manifest gate mirrors the hunt step - a runner-less repo has
-        # no verdict and gets no proposal. The candidate is written to
-        # RUNNER_TEMP, outside the worktree: it must never leak into the
-        # PR branch through this job's checkout.
-        if: >-
-          always() &&
-          hashFiles('pyproject.toml', 'pytest.ini', 'setup.cfg', 'package.json',
-                    'go.mod', 'Cargo.toml', 'pom.xml', 'build.gradle',
-                    'build.gradle.kts', '**/*.csproj', '**/*.fsproj', 'Gemfile',
-                    'composer.json') != ''
+        # The report gate mirrors the hunt's reach: no merged report
+        # means no suite was hunted, so there is no verdict and no
+        # proposal. The candidate is written to RUNNER_TEMP, outside the
+        # worktree: it must never leak into the PR branch through this
+        # job's checkout.
+        if: always() && hashFiles('flaky-report.json') != ''
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
@@ -403,7 +602,7 @@ jobs:
             echo "Quarantine semantics: a committed \`.flaky-baseline.json\` records"
             echo "known flakes; the hunt fails on a *new* flaky test and celebrates"
             echo "healed ones. Rewrite the floor with"
-            echo "\`python3 _ci/scripts/flaky_detect.py --results-dir flaky-results --write-baseline\`."
+            echo "\`python3 _ci/scripts/flaky_detect.py --results-dir <suite-dir> --write-baseline\`."
           } >> "$GITHUB_STEP_SUMMARY"
 
   # The write half of the loop. It runs none of the repository's test

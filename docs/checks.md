@@ -992,6 +992,25 @@ one JSON read and a diff - seconds, no additional tooling.
   should already be red; listed for completeness, never quarantined) or
   stable. A test absent from one iteration is reported as absent, not
   guessed.
+  **Per project since v2.11.2:** the hunt is discovery-driven - every
+  project `discover_projects.py` enumerates (plus the workspace root,
+  always) is hunted by every family whose manifest it claims, each in
+  its own `flaky-results/<project>/<suite>/` directory, and the
+  summary's status table names every suite: hunted (with test and flake
+  counts), **skipped** (with the reason - no runner config, missing
+  `rspec_junit_formatter`) or **failed-hunt** (loudly; a suite that
+  parses to zero tests fails the run, never a silent pass). One
+  project's failure never hides another's result: the per-project
+  loops fail at the end, the contract `mutation.yml` has carried since
+  v2.11.1. The Python hunt installs the project's dependencies and a
+  pinned pytest before iterating - pre-v2.11.2 it ran `python -m
+  pytest` against whatever the runner happened to have - and the
+  project's own pytest, if declared, wins. The Node hunt recognizes
+  vitest and jest through config files OR the package manifest's
+  dependencies, so projects relying on default runner configuration are
+  hunted too. The merged `flaky-report.json` unions the suites' flaky
+  sets under the worst status; the quarantine loop consumes it
+  unchanged.
 - **Formats consumed as-is:** JUnit XML (pytest `--junitxml`, PHPUnit
   `--log-junit`, surefire and Gradle XML, vitest `--reporter=junit`,
   jest-junit, RSpec's `rspec_junit_formatter`, ctest
