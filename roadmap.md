@@ -56,7 +56,15 @@ in this phase was verified as a real gap in the current source.
 | Flaky-hunt discovery | Project discovery across all supported stacks; per-project status in the summary | Shipped in v2.11.2: discovery drives all eight families, per-suite results dirs, and `flaky_aggregate.py` names every suite - hunted with counts, skipped with the reason, failed-hunt loudly |
 | Parser-coverage policy | Per-language required-coverage policy with documented exceptions (generated, third-party) | Unsupported languages are reported, never enforceable |
 | Required aggregate   | CodeQL and Master CI stay under the single `required-quality` check              | Done since v2.8; keep |
-| Stale documentation  | Coverage input description names every integrated stack                          | Description still says "Python/Go/Node" while Rust (cargo-llvm-cov) and JVM (JaCoCo) shipped in v2.6 |
+| Stale documentation  | Coverage input description names every integrated stack                          | Shipped in v2.11.3: both workflow descriptions name all five stacks and their reporters; the v2.6-era checks.md paragraph caught up (five stacks, four parser dialects) |
+
+The P0 phase ships complete: Stryker's pinned Node and mutation's
+per-project scan (v2.11.1), the flaky hunt's per-project discovery
+and per-suite status table (v2.11.2), the required aggregate kept
+since v2.8, and the stale descriptions here. The remaining P0 note -
+the scheduled (cron) mutation firing on a multi-tool consumer - is
+evidence to collect, not code to write. The next phase is P1: real
+code-quality measurements, LCOM4 first.
 
 Also recorded: mutation testing has no incremental PR mode (scheduled
 and dispatched only, by design today), and the scheduled (cron) path on
