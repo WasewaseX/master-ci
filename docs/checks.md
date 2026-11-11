@@ -441,6 +441,26 @@ Profile presets (quick / standard / strict / custom) only change the
   invisible too. Every declaration now appends to a JSON array the
   per-tool steps key on, and detection tests each candidate file with
   `-f`, never with a multi-argument `ls`.
+  **As of v2.11.1 the scan is per project.** The detect step enumerates
+  every project `discover_projects.py` finds across all families - plus
+  the workspace root, always, so root-level declarations keep working -
+  and each tool mutates every project that declares it, named in the
+  summary and in its own artifact: mutmut survivors land in
+  `mutation-survivors/<project>.txt`, Stryker reports in
+  `stryker-reports/<project>/`, cargo-mutants evidence in
+  `cargo-mutants-out/<project>/`. Two honesty contracts came with it:
+  every tool's steps run under `always()` (before v2.11.1 a mutmut
+  survivor failure aborted the job and silently muted the tools after
+  it - the v2.11 independence contract was only true while everything
+  passed), and each per-project loop fails at the end, so one project's
+  survivors never hide another project's run; survivors' evidence is
+  captured even when the run exits nonzero (the old flow aborted before
+  `mutmut results` could run - the evidence was lost on exactly the
+  failure the workflow exists to report). The Stryker path installs a
+  pinned Node 22 and activates pnpm/corepack before any
+  package-manager command - the runner-provided defaults it previously
+  trusted were never validated, and a pnpm project could not install
+  at all.
   **Adoption (v2.9):** `mutation.yml` is a reusable workflow as well as
   a scheduled one. The consumer owns the schedule trigger - a called
   workflow cannot carry one - by wrapping one job that calls

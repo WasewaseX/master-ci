@@ -6,23 +6,46 @@
 # are too slow for every push, so this is the scheduled counterpart to
 # the PR-time coverage gate.
 #
-# Opt-in by declaration: the job runs EVERY declared tool, independently.
-# mutmut when pyproject.toml declares [tool.mutmut] (or setup.cfg
-# [mutmut]), Stryker when any valid Stryker config filename is committed
-# (stryker.conf.*, stryker.config.*, .stryker.conf.*, .stryker.config.* -
-# json/js/mjs/cjs), cargo-mutants when .cargo-mutants.toml is committed,
-# and gremlins when .gremlins.yaml (or gremlins.yaml) is committed. The
-# declarations are not mutually exclusive: the first-match chain this
-# file shipped before v2.11 meant a ten-stack repo declaring [tool.mutmut]
-# could never mutate its Go or Rust code, and three of the four
-# ecosystems had no hosted evidence anywhere. A repo without any of
-# those configs skips - and a tool that exits nonzero on surviving
-# mutants fails the run, which is the weekly signal to review the tests.
-# New installs are pinned through configs/tool-versions.yml, the same
-# trust class as every other analyzer in the template, and the project's
-# own dependencies are installed first: a fresh runner without them
-# would measure mutants against a bare environment, which reports false
-# survivors (or false kills).
+# Opt-in by declaration, per project: since v2.11.1 the detection step
+# scans every project discover_projects.py enumerates across all
+# families (plus the workspace root, always, so root-level declarations
+# keep working) instead of reading the workspace root only. A monorepo
+# whose services declare their own mutation configs mutates every one
+# of them, and the summary names the projects each tool ran in - an
+# omitted project can no longer hide behind a green aggregate (the P0
+# acceptance test). The job runs EVERY declared tool, independently:
+# mutmut when a project's pyproject.toml declares [tool.mutmut] (or
+# setup.cfg [mutmut]), Stryker when any valid Stryker config filename is
+# committed in a project (stryker.conf.*, stryker.config.*, their
+# dot-prefixed twins - json/js/mjs/cjs), cargo-mutants when
+# .cargo-mutants.toml is committed, and gremlins when .gremlins.yaml (or
+# gremlins.yaml) is committed. The declarations are not mutually
+# exclusive, and the per-tool steps run under always(): a tool that
+# found survivors (nonzero exit) never mutes the tools after it - the
+# same independence the v2.11 declaration fix gave the detect chain,
+# now carried through the whole job. A repo without any of those
+# configs skips - and a tool that exits nonzero on surviving mutants
+# fails the run, which is the weekly signal to review the tests.
+# Per-project fail-at-end semantics: one project's survivors or install
+# failure are reported as its own ::error and never stop another
+# project from mutating.
+#
+# Since v2.11.1 the Stryker path installs a pinned Node before any
+# package-manager command: the workflow previously relied on
+# runner-provided Node, pnpm and yarn it never validated, and a pnpm
+# project could not install at all without pnpm on PATH.
+#
+# Survivors are the deliverable: mutmut's `results` output and
+# cargo-mutants' mutants.out are captured even when the run exits
+# nonzero (the pre-v2.11.1 flow aborted before evidence collection on
+# exactly the failure path that matters) and uploaded as per-project
+# files under mutation-survivors/, stryker-reports/ and
+# cargo-mutants-out/. New installs are pinned through
+# configs/tool-versions.yml, the same trust class as every other
+# analyzer in the template, and the project's own dependencies are
+# installed first: a fresh runner without them would measure mutants
+# against a bare environment, which reports false survivors (or false
+# kills).
 #
 # Since v2.9 this workflow is also a reusable workflow: a consumer calls
 # it from its own scheduled (or dispatched) wrapper, because a called
@@ -111,6 +134,8 @@ jobs:
         # fetch the version lookups would read the caller's tree, which
         # for a foreign consumer has no scripts/tool_versions.py at all
         # - the cargo-mutants and gremlins paths could never run there.
+        # Discovery needs it too: the detect step enumerates projects
+        # with _ci/scripts/discover_projects.py.
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ steps.repo.outputs.template_repo }}
@@ -118,158 +143,306 @@ jobs:
           path: _ci
           fetch-depth: 1
           persist-credentials: false
-      - name: Detect mutation configs
+      - name: Detect mutation configs (every discovered project)
         id: detect
         run: |
           # Opt-in by declaration, never by guessing: mutating code in a
           # repo that never asked for it would burn an hour of CI on noise.
+          # Since v2.11.1 the scan is per project: discovery enumerates
+          # every independent project across all families, and the
+          # workspace root is appended unconditionally so root-level
+          # declarations keep working even in a repo whose manifests all
+          # live deeper. sort -u dedupes a directory holding two family
+          # manifests - one directory is one scan. Discovery failing
+          # (a declared workspace that cannot be honored) fails closed.
+          { python3 _ci/scripts/discover_projects.py --family all --list
+            echo '.'
+          } | sort -u > "$RUNNER_TEMP/mutation-dirs.txt"
           # Every filename Stryker resolves is accepted - stryker.conf.*,
           # stryker.config.* and their dot-prefixed twins, json/js/mjs/cjs.
           # Since v2.11 the four declarations are independent `if`s, not a
           # first-match chain: every declared tool runs. The if blocks
           # below ARE the canonical order: "mutmut", "stryker", "cargo-mutants", "gremlins".
-          # The emitted JSON array is deterministic and drives the
-          # per-tool steps that follow.
+          # The emitted JSON arrays are deterministic and drive the per-tool
+          # steps that follow: `tools` is the union the setup steps key on,
+          # the per-tool *_projects arrays drive each mutate loop.
+          json_array() {
+            local out='[' first=1 item
+            for item in "$@"; do
+              if [ "$first" = 1 ]; then first=0; else out="$out,"; fi
+              out="$out\"$item\""
+            done
+            printf '%s' "$out]"
+          }
+          mutmut_dirs=()
+          stryker_dirs=()
+          cargo_dirs=()
+          gremlins_dirs=()
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            echo "Scanning $dir for mutation declarations"
+            if grep -q '^\[tool\.mutmut\]' "$dir/pyproject.toml" 2>/dev/null \
+              || grep -q '^\[mutmut\]' "$dir/setup.cfg" 2>/dev/null; then
+              mutmut_dirs+=("$dir")
+            fi
+            # ls exits nonzero when ANY of its arguments is missing, so the
+            # v2.6 `if ls stryker.conf.{json,...} ...` construct lied whenever
+            # the repo committed exactly one config file (the common case) -
+            # the same trap hid a .gremlins.yaml-only declaration. Found by
+            # simulating this block against fixture trees; the -f loops
+            # below test each candidate honestly.
+            stryker_found=0
+            for f in stryker.conf.{json,js,mjs,cjs} stryker.config.{json,js,mjs,cjs} \
+              .stryker.conf.{json,js,mjs,cjs} .stryker.config.{json,js,mjs,cjs}; do
+              if [ -f "$dir/$f" ]; then stryker_found=1; break; fi
+            done
+            if [ "$stryker_found" = "1" ]; then
+              stryker_dirs+=("$dir")
+            fi
+            if [ -f "$dir/.cargo-mutants.toml" ]; then
+              cargo_dirs+=("$dir")
+            fi
+            gremlins_found=0
+            for f in .gremlins.yaml gremlins.yaml; do
+              if [ -f "$dir/$f" ]; then gremlins_found=1; break; fi
+            done
+            if [ "$gremlins_found" = "1" ]; then
+              gremlins_dirs+=("$dir")
+            fi
+          done < "$RUNNER_TEMP/mutation-dirs.txt"
           declared=()
-          if grep -q '^\[tool\.mutmut\]' pyproject.toml 2>/dev/null \
-            || grep -q '^\[mutmut\]' setup.cfg 2>/dev/null; then
-            declared+=("mutmut")
-          fi
-          # ls exits nonzero when ANY of its arguments is missing, so the
-          # v2.6 `if ls stryker.conf.{json,...} ...` construct lied whenever
-          # the repo committed exactly one config file (the common case) -
-          # the same trap hid a .gremlins.yaml-only declaration. Found by
-          # simulating this block against fixture trees; the -f loops
-          # below test each candidate honestly.
-          stryker_found=0
-          for f in stryker.conf.{json,js,mjs,cjs} stryker.config.{json,js,mjs,cjs} \
-            .stryker.conf.{json,js,mjs,cjs} .stryker.config.{json,js,mjs,cjs}; do
-            if [ -f "$f" ]; then stryker_found=1; break; fi
-          done
-          if [ "$stryker_found" = "1" ]; then
-            declared+=("stryker")
-          fi
-          if [ -f .cargo-mutants.toml ]; then
-            declared+=("cargo-mutants")
-          fi
-          gremlins_found=0
-          for f in .gremlins.yaml gremlins.yaml; do
-            if [ -f "$f" ]; then gremlins_found=1; break; fi
-          done
-          if [ "$gremlins_found" = "1" ]; then
-            declared+=("gremlins")
-          fi
+          if [ "${#mutmut_dirs[@]}" -gt 0 ]; then declared+=("mutmut"); fi
+          if [ "${#stryker_dirs[@]}" -gt 0 ]; then declared+=("stryker"); fi
+          if [ "${#cargo_dirs[@]}" -gt 0 ]; then declared+=("cargo-mutants"); fi
+          if [ "${#gremlins_dirs[@]}" -gt 0 ]; then declared+=("gremlins"); fi
           # pure-bash JSON emission: no jq/python dependency in detection,
           # and an empty array is exactly the documented opt-out ("[]")
-          tools='['
-          first=1
-          for tool in "${declared[@]}"; do
-            if [ "$first" = "1" ]; then first=0; else tools="$tools,"; fi
-            tools="$tools\"$tool\""
-          done
-          tools="$tools]"
-          echo "tools=$tools" >> "$GITHUB_OUTPUT"
+          tools=$(json_array "${declared[@]}")
+          mutmut_projects=$(json_array "${mutmut_dirs[@]}")
+          stryker_projects=$(json_array "${stryker_dirs[@]}")
+          cargo_projects=$(json_array "${cargo_dirs[@]}")
+          gremlins_projects=$(json_array "${gremlins_dirs[@]}")
+          {
+            echo "tools=$tools"
+            echo "mutmut_projects=$mutmut_projects"
+            echo "stryker_projects=$stryker_projects"
+            echo "cargo_projects=$cargo_projects"
+            echo "gremlins_projects=$gremlins_projects"
+          } >> "$GITHUB_OUTPUT"
           echo "Declared mutation tools: $tools"
+          echo "mutmut projects: $mutmut_projects"
+          echo "Stryker projects: $stryker_projects"
+          echo "cargo-mutants projects: $cargo_projects"
+          echo "gremlins projects: $gremlins_projects"
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        if: contains(fromJSON(steps.detect.outputs.tools || '[]'), 'mutmut')
+        if: always() && contains(fromJSON(steps.detect.outputs.tools || '[]'), 'mutmut')
         with:
           python-version: '3.13'
+      # Stryker installs and runs through npm/npx; a pinned Node (same
+      # default major as the Node stack job) replaces the
+      # runner-provided default the workflow never validated.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: always() && contains(fromJSON(steps.detect.outputs.tools || '[]'), 'stryker')
+        with:
+          node-version: '22'
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable (branch pin; no version tags published) # zizmor: ignore[ref-version-mismatch]
-        if: contains(fromJSON(steps.detect.outputs.tools || '[]'), 'cargo-mutants')
+        if: always() && contains(fromJSON(steps.detect.outputs.tools || '[]'), 'cargo-mutants')
         with:
           toolchain: stable
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        if: contains(fromJSON(steps.detect.outputs.tools || '[]'), 'gremlins')
+        if: always() && contains(fromJSON(steps.detect.outputs.tools || '[]'), 'gremlins')
         with:
           go-version: 'stable'
-      - name: Install project dependencies (mutmut)
-        if: contains(fromJSON(steps.detect.outputs.tools || '[]'), 'mutmut')
-        run: |
-          # mutmut drives the project's own pytest; a fresh runner without
-          # the project's packages would measure mutants against a bare
-          # environment. Install first, mirroring the python job's
-          # install contract - a packaging failure must fail loudly here
-          # too, never leave the run measuring an environment that
-          # happens to pass.
-          if [ -f pyproject.toml ] && grep -q '^\[project\]' pyproject.toml; then
-            pip install -e . || pip install .
-          elif [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-          else
-            echo "No installable python project - tests run against the bare environment"
-          fi
-      - name: Mutate (mutmut)
-        if: contains(fromJSON(steps.detect.outputs.tools || '[]'), 'mutmut')
+      - name: Mutate (mutmut) - every declared project
+        # always(): the v2.11 independence contract carried through the
+        # whole job - a mutmut failure must never mute Stryker,
+        # cargo-mutants or gremlins. Fail-at-end inside the loop: one
+        # project's survivors never hide another project's run.
+        if: always() && contains(fromJSON(steps.detect.outputs.tools || '[]'), 'mutmut')
+        env:
+          PROJECTS_JSON: ${{ steps.detect.outputs.mutmut_projects }}
         run: |
           # the pin emits name==version and is meant to word-split:
           # shellcheck disable=SC2046
           python -m pip install --quiet $(python3 _ci/scripts/tool_versions.py pip mutmut)
-          mutmut run
-          # Survivors are the deliverable: hand reviewers the list, then
-          # the nonzero exit from `mutmut run` has already failed the job.
-          mutmut results | tee mutmut-results.txt
-      - name: Install project dependencies (Stryker)
-        if: contains(fromJSON(steps.detect.outputs.tools || '[]'), 'stryker')
+          printf '%s' "$PROJECTS_JSON" \
+            | python3 -c 'import json, sys; [print(p) for p in json.load(sys.stdin)]' \
+            > "$RUNNER_TEMP/mutmut-dirs.txt"
+          rc_total=0
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            if [ "$dir" = "." ]; then name=root; else name=${dir//'/'/-}; fi
+            echo "::group::mutmut in $dir"
+            # mutmut drives the project's own pytest, so the project's
+            # dependencies are installed first, mirroring the python
+            # job's install contract - a packaging failure must fail
+            # loudly, never leave the run measuring an environment that
+            # happens to pass. rc captures install or run failure.
+            rc=0
+            (
+              cd "$dir" || exit 1
+              if [ -f pyproject.toml ] && grep -q '^\[project\]' pyproject.toml; then
+                pip install -e . || pip install .
+              elif [ -f requirements.txt ]; then
+                pip install -r requirements.txt
+              else
+                echo "No installable python project in $dir - tests run against the bare environment"
+              fi
+              mutmut run
+            ) || rc=$?
+            # Survivors are the deliverable: collect the evidence even
+            # when the run fails - the pre-v2.11.1 flow aborted at the
+            # nonzero exit and the results never reached the artifact.
+            mkdir -p mutation-survivors
+            { (cd "$dir" && mutmut results) || true; } \
+              > "mutation-survivors/$name.txt" 2>&1
+            if [ "$rc" -ne 0 ]; then
+              echo "::error file=$dir::mutmut reported surviving mutants or a failed install/run in $dir (exit $rc) - evidence in mutation-survivors/$name.txt"
+              rc_total=1
+            fi
+            echo "::endgroup::"
+          done < "$RUNNER_TEMP/mutmut-dirs.txt"
+          exit $rc_total
+      - name: Mutate (Stryker) - every declared project
+        if: always() && contains(fromJSON(steps.detect.outputs.tools || '[]'), 'stryker')
+        env:
+          PROJECTS_JSON: ${{ steps.detect.outputs.stryker_projects }}
         run: |
-          # Stryker's test-runner plugin comes from the project's own
-          # dependencies; a fresh runner without node_modules cannot run
-          # the configured test runner at all. Lockfile is a contract,
-          # same as the node jobs.
-          if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile
-          elif [ -f yarn.lock ]; then yarn install --immutable
-          elif [ -f package-lock.json ]; then npm ci
-          elif [ -f package.json ]; then npm install
-          else echo "No package manifest - Stryker runs from the pinned npx install alone"
-          fi
-      - name: Mutate (Stryker)
-        if: contains(fromJSON(steps.detect.outputs.tools || '[]'), 'stryker')
-        run: npx --yes "$(python3 _ci/scripts/tool_versions.py npm @stryker-mutator/core)" run
-      - name: Mutate (cargo-mutants)
-        if: contains(fromJSON(steps.detect.outputs.tools || '[]'), 'cargo-mutants')
+          stryker_pkg="$(python3 _ci/scripts/tool_versions.py npm @stryker-mutator/core)"
+          printf '%s' "$PROJECTS_JSON" \
+            | python3 -c 'import json, sys; [print(p) for p in json.load(sys.stdin)]' \
+            > "$RUNNER_TEMP/stryker-dirs.txt"
+          rc_total=0
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            if [ "$dir" = "." ]; then name=root; else name=${dir//'/'/-}; fi
+            echo "::group::Stryker in $dir"
+            rc=0
+            (
+              cd "$dir" || exit 1
+              # Stryker's test-runner plugin comes from the project's
+              # own dependencies; a fresh runner without node_modules
+              # cannot run the configured test runner at all. Lockfile
+              # is a contract, same as the node jobs - and the package
+              # manager is activated before it runs (v2.11.1: pnpm and
+              # yarn were runner-provided defaults the workflow never
+              # validated).
+              if [ -f pnpm-lock.yaml ]; then
+                npm install --global pnpm
+                pnpm install --frozen-lockfile
+              elif [ -f yarn.lock ]; then
+                corepack enable
+                yarn install --immutable
+              elif [ -f package-lock.json ]; then
+                npm ci
+              elif [ -f package.json ]; then
+                npm install
+              else
+                echo "No package manifest in $dir - Stryker runs from the pinned npx install alone"
+              fi
+              npx --yes "$stryker_pkg" run
+            ) || rc=$?
+            if [ -d "$dir/reports" ]; then
+              mkdir -p stryker-reports
+              mv "$dir/reports" "stryker-reports/$name"
+            fi
+            if [ "$rc" -ne 0 ]; then
+              echo "::error file=$dir::Stryker reported survivors or a failed install/run in $dir (exit $rc)"
+              rc_total=1
+            fi
+            echo "::endgroup::"
+          done < "$RUNNER_TEMP/stryker-dirs.txt"
+          exit $rc_total
+      - name: Mutate (cargo-mutants) - every declared project
+        if: always() && contains(fromJSON(steps.detect.outputs.tools || '[]'), 'cargo-mutants')
+        env:
+          PROJECTS_JSON: ${{ steps.detect.outputs.cargo_projects }}
         run: |
           cargo install --locked --quiet cargo-mutants \
             --version "$(python3 _ci/scripts/tool_versions.py cargo cargo-mutants)"
-          cargo mutants
-          # Exit codes verified against the tool's contract: 0 = every
-          # viable mutant caught, 2 = survivors found. Survivors fail
-          # the job; mutants.out carries the per-mutant evidence.
-          find mutants.out -name '*.json' -type f | head -50 || true
-      - name: Mutate (gremlins)
-        if: contains(fromJSON(steps.detect.outputs.tools || '[]'), 'gremlins')
+          printf '%s' "$PROJECTS_JSON" \
+            | python3 -c 'import json, sys; [print(p) for p in json.load(sys.stdin)]' \
+            > "$RUNNER_TEMP/cargo-dirs.txt"
+          rc_total=0
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            if [ "$dir" = "." ]; then name=root; else name=${dir//'/'/-}; fi
+            echo "::group::cargo-mutants in $dir"
+            rc=0
+            (cd "$dir" && cargo mutants) || rc=$?
+            if [ -d "$dir/mutants.out" ]; then
+              mkdir -p cargo-mutants-out
+              mv "$dir/mutants.out" "cargo-mutants-out/$name"
+              # per-mutant evidence, both in the log and the artifact
+              find "cargo-mutants-out/$name" -name '*.json' -type f | head -50 || true
+            fi
+            # Exit codes verified against the tool's contract: 0 = every
+            # viable mutant caught, 2 = survivors found. Survivors fail
+            # the job; mutants.out carries the per-mutant evidence.
+            if [ "$rc" -ne 0 ]; then
+              echo "::error file=$dir::cargo-mutants exit $rc in $dir - surviving mutants found (evidence in cargo-mutants-out/$name)"
+              rc_total=1
+            fi
+            echo "::endgroup::"
+          done < "$RUNNER_TEMP/cargo-dirs.txt"
+          exit $rc_total
+      - name: Mutate (gremlins) - every declared project
+        if: always() && contains(fromJSON(steps.detect.outputs.tools || '[]'), 'gremlins')
+        env:
+          PROJECTS_JSON: ${{ steps.detect.outputs.gremlins_projects }}
         run: |
           go install "github.com/go-gremlins/gremlins/cmd/gremlins@$(python3 _ci/scripts/tool_versions.py go gremlins)"
-          # The .gremlins.yaml that opted this repo in is also the gate:
-          # unleash exits 10 / 11 when the configured unleash.threshold
-          # efficacy / mutant-coverage floors are breached (verified
-          # against gremlins v0.6.0; unset thresholds never trip). The
-          # config file is the gate - without thresholds the run reports
-          # efficacy but never fails.
-          gremlins unleash
+          printf '%s' "$PROJECTS_JSON" \
+            | python3 -c 'import json, sys; [print(p) for p in json.load(sys.stdin)]' \
+            > "$RUNNER_TEMP/gremlins-dirs.txt"
+          rc_total=0
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            echo "::group::gremlins in $dir"
+            rc=0
+            (cd "$dir" && gremlins unleash) || rc=$?
+            # The .gremlins.yaml that opted this repo in is also the
+            # gate: unleash exits 10 / 11 when the configured
+            # unleash.threshold efficacy / mutant-coverage floors are
+            # breached (verified against gremlins v0.6.0; unset
+            # thresholds never trip). The config file is the gate -
+            # without thresholds the run reports efficacy but never fails.
+            if [ "$rc" -ne 0 ]; then
+              echo "::error file=$dir::gremlins exit $rc in $dir - the efficacy or mutant-coverage floor was breached: the tests kill too few of the mutants they run"
+              rc_total=1
+            fi
+            echo "::endgroup::"
+          done < "$RUNNER_TEMP/gremlins-dirs.txt"
+          exit $rc_total
       - name: Upload survivor report
-        if: always() && contains(fromJSON(steps.detect.outputs.tools || '[]'), 'mutmut') && hashFiles('mutmut-results.txt') != ''
+        if: always() && contains(fromJSON(steps.detect.outputs.tools || '[]'), 'mutmut') && hashFiles('mutation-survivors/**') != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: mutation-survivors
-          path: mutmut-results.txt
+          path: mutation-survivors/
           if-no-files-found: ignore
       - name: Upload Stryker reports
-        if: always() && contains(fromJSON(steps.detect.outputs.tools || '[]'), 'stryker') && hashFiles('reports/**') != ''
+        if: always() && contains(fromJSON(steps.detect.outputs.tools || '[]'), 'stryker') && hashFiles('stryker-reports/**') != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: mutation-stryker-reports
-          path: reports/
+          path: stryker-reports/
           if-no-files-found: ignore
       - name: Upload cargo-mutants evidence
-        if: always() && contains(fromJSON(steps.detect.outputs.tools || '[]'), 'cargo-mutants') && hashFiles('mutants.out/**') != ''
+        if: always() && contains(fromJSON(steps.detect.outputs.tools || '[]'), 'cargo-mutants') && hashFiles('cargo-mutants-out/**') != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: mutation-cargo-mutants-out
-          path: mutants.out/
+          path: cargo-mutants-out/
           if-no-files-found: ignore
       - name: Summary
         if: always()
         env:
           TOOLS: ${{ steps.detect.outputs.tools }}
+          MUTMUT_PROJECTS: ${{ steps.detect.outputs.mutmut_projects }}
+          STRYKER_PROJECTS: ${{ steps.detect.outputs.stryker_projects }}
+          CARGO_PROJECTS: ${{ steps.detect.outputs.cargo_projects }}
+          GREMLINS_PROJECTS: ${{ steps.detect.outputs.gremlins_projects }}
         run: |
           {
             echo "## Mutation testing"
@@ -280,24 +453,28 @@ jobs:
               echo "stryker.config.*, json/js/mjs/cjs), a .cargo-mutants.toml or"
               echo "a .gremlins.yaml. Nothing ran; this is not a pass or a fail."
             else
+              proj_list() {
+                printf '%s' "$1" | python3 -c \
+                  'import json, sys; print(", ".join(json.load(sys.stdin)))'
+              }
               for tool in $(python3 -c 'import json, sys; print(" ".join(json.loads(sys.argv[1])))' "$TOOLS"); do
                 case "$tool" in
                   mutmut)
-                    echo "- **mutmut** ran; surviving mutants (if any) are listed above and in"
-                    echo "  the mutation-survivors artifact. Each survivor is an assertion"
-                    echo "  gap: a defect that shape would ship unnoticed." ;;
+                    echo "- **mutmut** ran in $(proj_list "$MUTMUT_PROJECTS"); surviving mutants (if"
+                    echo "  any) are in the mutation-survivors artifact, one file per project. Each"
+                    echo "  survivor is an assertion gap: a defect that shape would ship unnoticed." ;;
                   stryker)
-                    echo "- **Stryker** ran; the HTML report is in the mutation-stryker-reports"
-                    echo "  artifact. A low mutation score means the tests execute code but"
-                    echo "  do not verify behavior." ;;
+                    echo "- **Stryker** ran in $(proj_list "$STRYKER_PROJECTS"); the HTML reports are in the"
+                    echo "  mutation-stryker-reports artifact, one directory per project. A low mutation"
+                    echo "  score means the tests execute code but do not verify behavior." ;;
                   cargo-mutants)
-                    echo "- **cargo-mutants** ran; the per-mutant evidence is in the"
-                    echo "  mutation-cargo-mutants-out artifact. Every surviving mutant is"
-                    echo "  a code change no test noticed (exit 2 = survivors found)." ;;
+                    echo "- **cargo-mutants** ran in $(proj_list "$CARGO_PROJECTS"); the per-mutant evidence"
+                    echo "  is in the mutation-cargo-mutants-out artifact, one directory per project."
+                    echo "  Every surviving mutant is a code change no test noticed (exit 2 = survivors found)." ;;
                   gremlins)
-                    echo "- **gremlins** ran with the thresholds declared in .gremlins.yaml;"
-                    echo "  exit 10 / 11 means the efficacy or mutant-coverage floor was"
-                    echo "  breached - the tests kill too few of the mutants they run." ;;
+                    echo "- **gremlins** ran in $(proj_list "$GREMLINS_PROJECTS") with the thresholds declared in each"
+                    echo "  project's .gremlins.yaml; exit 10 / 11 means the efficacy or mutant-coverage"
+                    echo "  floor was breached - the tests kill too few of the mutants they run." ;;
                 esac
               done
             fi

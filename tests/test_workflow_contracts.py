@@ -31,7 +31,9 @@ project documents, so a regression cannot land silently:
 from __future__ import annotations
 
 import json
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -1505,12 +1507,25 @@ def test_mutation_workflow_knows_four_ecosystems(master_ci_text: str):
     # the summary must advertise the widening, not keep the old lie
     assert "Python, Node, Go and Rust" in master_ci_text
     # v2.11: every declared tool runs, independently - the old first-match
-    # chain let a [tool.mutmut] declaration mute the other three forever
-    assert 'echo "tools=$tools" >> "$GITHUB_OUTPUT"' in text
+    # chain let a [tool.mutmut] declaration mute the other three forever.
+    # v2.11.1: the detect step emits the union plus one per-tool project
+    # array, and the block is closed straight into GITHUB_OUTPUT.
+    detect = text.split("- name: Detect mutation configs", 1)[1].split("- uses:", 1)[0]
+    assert 'echo "tools=$tools"' in detect
+    assert '>> "$GITHUB_OUTPUT"' in detect
     for tool in ("mutmut", "stryker", "cargo-mutants", "gremlins"):
         assert f'declared+=("{tool}")' in text
         cond = f"contains(fromJSON(steps.detect.outputs.tools || '[]'), '{tool}')"
         assert cond in text, f"the {tool} steps must key on the declared tools array"
+        projects_out = {
+            "mutmut": "mutmut_projects",
+            "stryker": "stryker_projects",
+            "cargo-mutants": "cargo_projects",
+            "gremlins": "gremlins_projects",
+        }[tool]
+        assert f'echo "{projects_out}=$' in detect, (
+            f"{tool} must emit its per-project array for the mutate loop"
+        )
 
 
 def test_mutation_declaration_chain_has_no_first_match():
@@ -1539,6 +1554,264 @@ def test_gremlins_gate_needs_declared_thresholds():
     must say the .gremlins.yaml is the gate."""
     text = (WF_DIR / "mutation.yml").read_text(encoding="utf-8")
     assert "threshold" in text, "the gate contract must be documented in place"
+
+
+# ---------------------------------------------------------------------------
+# v2.11.1: mutation is per project - the P0 audit's discovery gap. The
+# detect block scans every discovered project (plus the workspace root,
+# always), every tool's steps run under always() so one failure never
+# mutes another tool, and the per-project loops fail at the end so one
+# project's survivors never hide another project's run. The shipped
+# bash is simulated against fixture trees, not re-implemented in the
+# test - the same discipline that found the v2.11 ls-detection lie.
+# ---------------------------------------------------------------------------
+
+
+def _extract_workflow_step(workflow: str, name: str) -> str:
+    """The `run:` block of one step, dedented to column zero."""
+    text = workflow[workflow.index(f"- name: {name}") :]
+    ends = [
+        i for i in (text.find("\n      - name:", 1), text.find("\n      - uses:", 1)) if i != -1
+    ]
+    if ends:
+        text = text[: min(ends)]
+    block = text.split("run: |", 1)[1]
+    lines = block.splitlines()
+    base = len(lines[0]) - len(lines[0].lstrip())
+    return "\n".join(line[base:] if line.strip() else "" for line in lines) + "\n"
+
+
+def _run_bash_block(tmp_path: Path, block: str, env: dict) -> subprocess.CompletedProcess:
+    """Execute an extracted workflow block under the runner's own flags."""
+    script = tmp_path / "block.sh"
+    script.write_text("set -euo pipefail\n" + block, encoding="utf-8")
+    run_env = dict(os.environ)
+    run_env.update(env)
+    return subprocess.run(  # noqa: S603 - fixed argv, no shell
+        ["bash", str(script)],
+        cwd=tmp_path,
+        env=run_env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+
+MUTATION_TEXT = (WF_DIR / "mutation.yml").read_text(encoding="utf-8")
+
+
+@pytest.fixture()
+def mutation_sandbox(tmp_path: Path) -> Path:
+    """A caller-shaped checkout: _ci/scripts is the template's real scripts."""
+    ci = tmp_path / "_ci"
+    ci.mkdir()
+    (ci / "scripts").symlink_to(ROOT / "scripts")
+    (tmp_path / "runner-temp").mkdir()
+    return tmp_path
+
+
+def _detect_outputs(tmp_path: Path, env: dict) -> dict:
+    out_file = tmp_path / "gh-output.txt"
+    env = dict(env)
+    env["GITHUB_OUTPUT"] = str(out_file)
+    proc = _run_bash_block(
+        tmp_path, _extract_workflow_step(MUTATION_TEXT, "Detect mutation configs"), env
+    )
+    assert proc.returncode == 0, f"detect block failed: {proc.stderr}\n{proc.stdout}"
+    outputs = {}
+    for line in out_file.read_text(encoding="utf-8").splitlines():
+        if "=" in line:
+            key, _, value = line.partition("=")
+            outputs[key] = value
+    return outputs
+
+
+def _write_tree(root: Path, files: dict) -> None:
+    for rel, content in files.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+
+def test_mutation_scan_is_per_project():
+    """P0 discovery gap: the detect block read the workspace root only,
+    so a monorepo whose projects declare their own mutation configs
+    mutated nothing - the audit's acceptance test (an explicit result
+    for every project) was structurally impossible. The scan is now
+    discovery-driven across all families, with the root appended so
+    root-level declarations keep working, and discovery failures stay
+    fail-closed (a declared workspace that cannot be honored never
+    degrades to root-only)."""
+    detect = _extract_workflow_step(MUTATION_TEXT, "Detect mutation configs")
+    assert "discover_projects.py --family all --list" in detect
+    assert "echo '.'" in detect, "the workspace root must stay in the scan set"
+    assert "sort -u" in detect, "two families on one dir is one scan"
+    for output in (
+        "mutmut_projects",
+        "stryker_projects",
+        "cargo_projects",
+        "gremlins_projects",
+    ):
+        assert f'echo "{output}=$' in detect
+    # no || true on the discovery call: WorkspaceError must fail the job
+    assert "--list || true" not in detect and "--list\n" in detect
+
+
+def test_mutation_detect_simulated_against_fixture_trees(mutation_sandbox):
+    """The detect block is executed - not paraphrased - against the
+    trees its own predicates claim to handle: the canary shape (root
+    declarations), a one-project-per-ecosystem monorepo, a
+    declarationless repo, and the dot-prefixed Stryker twins."""
+    env = {"RUNNER_TEMP": str(mutation_sandbox / "runner-temp"), "HOME": str(mutation_sandbox)}
+
+    # canary shape: everything at the root, nothing nested
+    _write_tree(
+        mutation_sandbox,
+        {
+            "pyproject.toml": "[tool.mutmut]\n",
+            ".cargo-mutants.toml": "# decl\n",
+            ".gremlins.yaml": "unleash:\n",
+            "Cargo.toml": "[workspace]\n",
+            "go.mod": "module x\n",
+        },
+    )
+    out = _detect_outputs(mutation_sandbox, env)
+    assert out["tools"] == '["mutmut","cargo-mutants","gremlins"]'
+    assert out["mutmut_projects"] == '["."]'
+    assert out["cargo_projects"] == '["."]'
+    assert out["gremlins_projects"] == '["."]'
+    assert out["stryker_projects"] == "[]"
+
+    # fresh sandbox: one project per ecosystem, nothing at the root
+    nested = mutation_sandbox.parent / "nested-sandbox"
+    nested.mkdir()
+    (nested / "_ci").mkdir()
+    (nested / "_ci" / "scripts").symlink_to(ROOT / "scripts")
+    (nested / "runner-temp").mkdir()
+    _write_tree(
+        nested,
+        {
+            "packages/api/pyproject.toml": "[tool.mutmut]\n",
+            "packages/web/package.json": "{}\n",
+            "packages/web/stryker.conf.json": "{}\n",
+            "rust-core/Cargo.toml": "[package]\n",
+            "rust-core/.cargo-mutants.toml": "# decl\n",
+            "go-svc/go.mod": "module svc\n",
+            "go-svc/gremlins.yaml": "unleash:\n",
+            "README.md": "# root declares nothing\n",
+        },
+    )
+    out = _detect_outputs(nested, {"RUNNER_TEMP": str(nested / "runner-temp"), "HOME": str(nested)})
+    assert out["tools"] == '["mutmut","stryker","cargo-mutants","gremlins"]'
+    assert out["mutmut_projects"] == '["packages/api"]'
+    assert out["stryker_projects"] == '["packages/web"]'
+    assert out["cargo_projects"] == '["rust-core"]'
+    assert out["gremlins_projects"] == '["go-svc"]'
+
+    # declarationless repo: the documented opt-out, still exactly "[]"
+    bare = mutation_sandbox.parent / "bare-sandbox"
+    bare.mkdir()
+    (bare / "_ci").mkdir()
+    (bare / "_ci" / "scripts").symlink_to(ROOT / "scripts")
+    (bare / "runner-temp").mkdir()
+    _write_tree(bare, {"pyproject.toml": "[project]\nname='x'\n", "app.py": "print(1)\n"})
+    out = _detect_outputs(bare, {"RUNNER_TEMP": str(bare / "runner-temp"), "HOME": str(bare)})
+    assert out["tools"] == "[]"
+
+
+def test_mutation_steps_run_under_always_and_fail_at_end():
+    """Independence, carried through the whole job: before v2.11.1 a
+    mutmut survivor failure aborted the job and silently muted Stryker,
+    cargo-mutants and gremlins - the v2.11 'every declared tool runs'
+    contract was only true while everything passed. Every tool step now
+    runs under always(), and each per-project loop fails at the end so
+    one project's survivors never hide another project's run."""
+    for tool in ("mutmut", "stryker", "cargo-mutants", "gremlins"):
+        cond = f"always() && contains(fromJSON(steps.detect.outputs.tools || '[]'), '{tool}')"
+        assert cond in MUTATION_TEXT, f"the {tool} steps must be immune to earlier failures"
+    for marker in ("rc_total=1", "exit $rc_total"):
+        assert MUTATION_TEXT.count(marker) >= 4, (
+            "every per-project loop must accumulate its own failure and exit at the end"
+        )
+    for tool in ("mutmut", "Stryker", "cargo-mutants", "gremlins"):
+        step = _extract_workflow_step(MUTATION_TEXT, f"Mutate ({tool})")
+        assert "::error file=$dir::" in step, (
+            f"{tool} must blame the failing project, not the aggregate"
+        )
+    # evidence relocation: the artifact dirs are per-tool, per-project
+    assert "mutation-survivors/" in MUTATION_TEXT
+    assert "stryker-reports/" in MUTATION_TEXT
+    assert "cargo-mutants-out/" in MUTATION_TEXT
+    assert "hashFiles('mutation-survivors/**')" in MUTATION_TEXT
+    assert "hashFiles('stryker-reports/**')" in MUTATION_TEXT
+    assert "hashFiles('cargo-mutants-out/**')" in MUTATION_TEXT
+
+
+def test_mutmut_survivors_are_collected_on_the_failure_path(mutation_sandbox):
+    """The pre-v2.11.1 flow's sharpest edge: `mutmut run` exits nonzero
+    on survivors, bash -e aborted the step, and `mutmut results` never
+    ran - the evidence was lost on exactly the failure the workflow
+    exists to report. The simulated loop (stubbed tool, honest bash)
+    proves survivors' evidence lands per project and a failing project
+    neither mutes the next one nor steals its blame."""
+    _write_tree(
+        mutation_sandbox,
+        {
+            "pyproject.toml": "[tool.mutmut]\n",
+            "packages/api/pyproject.toml": "[tool.mutmut]\n",
+        },
+    )
+    stubs = mutation_sandbox / "stubs"
+    stubs.mkdir()
+    (stubs / "python").write_text(
+        '#!/bin/bash\nif [ "$1" = "-m" ] && [ "$2" = "pip" ]; then exit 0; fi\nexit 0\n'
+    )
+    (stubs / "mutmut").write_text(
+        '#!/bin/bash\ncase "$PWD" in */packages/api) exit 0;; *) exit 1;; esac\n'
+    )
+    for stub in (stubs / "python", stubs / "mutmut"):
+        stub.chmod(0o755)
+    proc = _run_bash_block(
+        mutation_sandbox,
+        _extract_workflow_step(MUTATION_TEXT, "Mutate (mutmut)"),
+        env={
+            "PATH": f"{stubs}:{os.environ['PATH']}",
+            "GITHUB_WORKSPACE": str(mutation_sandbox),
+            "RUNNER_TEMP": str(mutation_sandbox / "runner-temp"),
+            "PROJECTS_JSON": '[".", "packages/api"]',
+            "HOME": str(mutation_sandbox),
+        },
+    )
+    assert proc.returncode == 1, "root survivors must fail the step"
+    survivors = mutation_sandbox / "mutation-survivors"
+    assert (survivors / "root.txt").exists(), "failure-path evidence must be captured"
+    assert (survivors / "packages-api.txt").exists(), (
+        "the nested project must still run and report after the root failure"
+    )
+    log = proc.stdout + proc.stderr
+    assert "::error file=.::" in log, "the failing project gets the blame"
+    assert "::error file=packages/api" not in log, "the clean project is not blamed"
+    assert log.index("mutmut in packages/api") > log.index("::error file=."), (
+        "the nested project ran after the root failure"
+    )
+
+
+def test_stryker_runs_on_a_pinned_node():
+    """P0: the Stryker path relied on runner-provided Node, pnpm and
+    yarn it never validated - a pnpm project could not even install
+    without pnpm on PATH. The workflow now pins Node 22 (the Node
+    stack's default major) and activates the package manager before the
+    lockfile contract runs."""
+    text = MUTATION_TEXT
+    assert "actions/setup-node@" in text, "Stryker needs an explicit Node setup"
+    setup_line = next(line for line in text.splitlines() if "actions/setup-node@" in line)
+    sha = setup_line.split("@", 1)[1].split()[0]
+    assert re.fullmatch(r"[0-9a-f]{40}", sha), "setup-node must be SHA-pinned"
+    stryker_step = _extract_workflow_step(MUTATION_TEXT, "Mutate (Stryker)")
+    assert "npm install --global pnpm" in stryker_step
+    assert "corepack enable" in stryker_step
+    assert "pnpm install --frozen-lockfile" in stryker_step
+    assert "yarn install --immutable" in stryker_step
 
 
 def test_ci_success_records_the_quality_trend(master_ci_text: str):
