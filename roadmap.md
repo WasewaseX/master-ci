@@ -50,8 +50,8 @@ in this phase was verified as a real gap in the current source.
 
 | Task                 | Required result                                                                 | Verified state today |
 | -------------------- | ------------------------------------------------------------------------------- | -------------------- |
-| Stryker Node setup   | `mutation.yml` installs a pinned Node and activates the package manager before pnpm/yarn/npm run | No `setup-node` step; Stryker relies on runner-provided defaults |
-| Mutation discovery   | Every discovered project mutates; the detect block stops reading root-level declarations only | Detect reads workspace root, not `discover_projects.py` output |
+| Stryker Node setup   | `mutation.yml` installs a pinned Node and activates the package manager before pnpm/yarn/npm run | Shipped in v2.11.1: setup-node pins Node 22, pnpm/corepack activation before the lockfile contract |
+| Mutation discovery   | Every discovered project mutates; the detect block stops reading root-level declarations only | Shipped in v2.11.1: per-project scan across all families (root always included), fail-at-end loops, evidence captured on the failure path, every tool step under `always()` |
 | Flaky-hunt deps      | The Python hunt installs the project's dependencies and pytest explicitly       | `python -m pytest` runs against whatever the runner happens to have |
 | Flaky-hunt discovery | Project discovery across all supported stacks; per-project status in the summary | Root-only; a skipped suite is not distinguishable from a completed hunt |
 | Parser-coverage policy | Per-language required-coverage policy with documented exceptions (generated, third-party) | Unsupported languages are reported, never enforceable |
@@ -61,9 +61,11 @@ in this phase was verified as a real gap in the current source.
 Also recorded: mutation testing has no incremental PR mode (scheduled
 and dispatched only, by design today), and the scheduled (cron) path on
 a multi-tool consumer is still awaiting its first hosted firing - the
-v2.11 three-ecosystem proof exists as a `workflow_dispatch` run
-(ci-canary run 42983988435, mutmut + cargo-mutants + gremlins in one
-call, Stryker correctly skipped as undeclared).
+three-ecosystem proof exists as `workflow_dispatch` runs (ci-canary
+42983988435 under v2.11 and 43011661235 under v2.11.1's per-project
+rewrite: mutmut + cargo-mutants + gremlins in one call, three dirs
+scanned, Stryker correctly skipped as undeclared, per-project evidence
+under `cargo-mutants-out/root/`).
 
 Acceptance test (from the audit, adopted): a synthetic monorepo with
 independent projects in several languages must show an explicit result
