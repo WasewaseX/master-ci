@@ -1064,6 +1064,13 @@ appends independently to a JSON array and every declared tool's steps
 run against it, each candidate file tested with `-f`; the ten-stack
 canary mutates its Python, Rust and Go stacks in one weekly call.
 
+The forward plan - the measurement-engine phases accepted from the
+external v2.11.0 competitor audit (2026-11-11), verified claim-by-claim
+against the codebase with the evidence recorded - lives in
+[roadmap.md](roadmap.md): P0 workflow correctness, the P1 metric layer
+(LCOM4, densities, debt, coupling), semantic bloat analysis, the P2
+gates-and-history work, and the public precision/recall benchmark.
+
 ## License
 
 MIT
