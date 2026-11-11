@@ -176,6 +176,60 @@ def suite_dirs(results_root: Path) -> list[Path]:
     return dirs
 
 
+def _safe_classify(directory: Path, args: argparse.Namespace) -> tuple[Suite, dict | None]:
+    """Classify one suite; an aggregate that crashes on one suite owns
+    the verdict, so every exception becomes a failed-hunt row."""
+    try:
+        return classify_suite(directory, args)
+    except Exception as exc:  # noqa: BLE001 - the aggregate owns the verdict
+        return (
+            Suite(
+                directory.parent.name,
+                directory.name,
+                "failed-hunt",
+                0,
+                0,
+                0,
+                f"{type(exc).__name__}: {exc}",
+            ),
+            None,
+        )
+
+
+def _build_document(suites: list[Suite], results_root: Path, iterations: int) -> str:
+    """The step-summary markdown: the status table, then every hunted
+    suite's own flake table."""
+    full_summary = ["\n".join(render_table(suites, iterations))]
+    for suite in suites:
+        per_suite = results_root / suite.project / suite.suite / "summary.md"
+        if per_suite.is_file():
+            full_summary.append(f"\n### {suite.project} ({suite.suite})\n")
+            full_summary.append(per_suite.read_text(encoding="utf-8").rstrip("\n"))
+    return "\n".join(full_summary).rstrip("\n") + "\n"
+
+
+def _verdict(suites: list[Suite], args: argparse.Namespace) -> int:
+    """The aggregate's exit ladder: a failed suite always fails, new
+    flakes fail in enforcement mode."""
+    failed = [s for s in suites if s.status == "failed-hunt"]
+    if failed:
+        print(
+            f"flake hunt: {len(failed)} suite(s) could not be classified - "
+            "a hunt that cannot be executed loudly is never a silent pass",
+            file=sys.stderr,
+        )
+        return 1
+    new_flakes = [s for s in suites if s.status == "new-flakes"]
+    if new_flakes and args.fail_on_flaky:
+        print(
+            f"flake hunt: {sum(s.new for s in new_flakes)} new flaky test(s) - "
+            f"fix or quarantine them in {args.baseline or '.flaky-baseline.json'}",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
 def main(argv: list[str] | None = None, /) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--results-root", required=True, help="flaky-results root")
@@ -193,19 +247,7 @@ def main(argv: list[str] | None = None, /) -> int:
     suites: list[Suite] = []
     reports: list[dict] = []
     for directory in suite_dirs(results_root):
-        try:
-            suite, report = classify_suite(directory, args)
-        except Exception as exc:  # noqa: BLE001 - the aggregate owns the verdict
-            suite = Suite(
-                directory.parent.name,
-                directory.name,
-                "failed-hunt",
-                0,
-                0,
-                0,
-                f"{type(exc).__name__}: {exc}",
-            )
-            report = None
+        suite, report = _safe_classify(directory, args)
         suites.append(suite)
         if report is not None:
             reports.append(report)
@@ -215,13 +257,7 @@ def main(argv: list[str] | None = None, /) -> int:
             "this is not a pass or a fail"
         )
         return 0
-    full_summary = ["\n".join(render_table(suites, args.iterations))]
-    for suite in suites:
-        per_suite = results_root / suite.project / suite.suite / "summary.md"
-        if per_suite.is_file():
-            full_summary.append(f"\n### {suite.project} ({suite.suite})\n")
-            full_summary.append(per_suite.read_text(encoding="utf-8").rstrip("\n"))
-    document = "\n".join(full_summary).rstrip("\n") + "\n"
+    document = _build_document(suites, results_root, args.iterations)
     Path(args.summary).write_text(document, encoding="utf-8")
     print(document, end="")
     if reports:
@@ -229,23 +265,7 @@ def main(argv: list[str] | None = None, /) -> int:
             json.dumps(merge_report(reports, args.iterations), indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
-    failed = [s for s in suites if s.status == "failed-hunt"]
-    new_flakes = [s for s in suites if s.status == "new-flakes"]
-    if failed:
-        print(
-            f"flake hunt: {len(failed)} suite(s) could not be classified - "
-            "a hunt that cannot be executed loudly is never a silent pass",
-            file=sys.stderr,
-        )
-        return 1
-    if new_flakes and args.fail_on_flaky:
-        print(
-            f"flake hunt: {sum(s.new for s in new_flakes)} new flaky test(s) - "
-            f"fix or quarantine them in {args.baseline or '.flaky-baseline.json'}",
-            file=sys.stderr,
-        )
-        return 1
-    return 0
+    return _verdict(suites, args)
 
 
 if __name__ == "__main__":
