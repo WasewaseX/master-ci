@@ -83,7 +83,7 @@ which keeps its baseline reproducible across template releases:
 ```yaml
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v2.9.1
+      template_ref: v2.10.0
 ```
 
 ### Required check
@@ -103,7 +103,7 @@ alone cannot fail on a red CodeQL analysis (audit finding F). Two honest
 shapes:
 
 - **One required check (recommended):** call
-  `WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.9.1`
+  `WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.10.0`
   instead of `master-ci.yml` and require **`required-quality-check / gate`**.
   The first segment is the job id the caller gives the call, so the
   example below names its job `required-quality-check`; a caller naming
@@ -116,7 +116,7 @@ shapes:
   ```yaml
   jobs:
     required-quality-check:
-      uses: WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.9.1
+      uses: WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.10.0
       permissions:
         contents: read
         security-events: write
@@ -507,10 +507,22 @@ how to disable, added time) live in [docs/checks.md](docs/checks.md).
 A flaky test makes every green run a coin flip: the suite passed on the
 retry nobody recorded. Coverage says which lines ran and mutation says
 whether assertions can fail; only repetition says whether the verdicts
-are stable. Copy `flaky.yml` into your repository and the hunt runs your
-own test suite 2-5 times (`iterations` input, Monday mornings by
-default) and reports every test whose verdict changed between
-iterations:
+are stable. Since v2.10 the hunt is a one-line adoption, like CodeQL and
+mutation testing before it: call `flaky.yml` from your own scheduled (or
+dispatched) wrapper,
+
+```yaml
+jobs:
+  hunt:
+    uses: WasewaseX/master-ci/.github/workflows/flaky.yml@v2.10.0
+    with:
+      template_repo: WasewaseX/master-ci
+      template_ref: v2.10.0
+```
+
+and it runs your own test suite 2-5 times (`iterations` input, Monday
+mornings by default) and reports every test whose verdict changed
+between iterations:
 
 - **One job, your runners** - pytest junitxml, vitest/jest junit, `go
   test -json`, `cargo test` output, surefire/Gradle XML, .NET TRX, RSpec
@@ -768,7 +780,7 @@ carries a `SKILL.md`, so assistants with a skills directory can load it
 with one command:
 
 ```bash
-git clone --depth 1 --branch v2.9.1 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+git clone --depth 1 --branch v2.10.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
 ```
 
 MCP clients configure the same install like this:
@@ -1004,7 +1016,8 @@ heuristics.
 
 And since v2.9: the **callable proof** - mutation testing joins the
 reusable surface. `mutation.yml` no longer has to be copied whole the
-way `flaky.yml` still requires; it now takes `workflow_call` with
+way consumers once copied every scheduled workflow; it now takes
+`workflow_call` with
 the codeql.yml helper contract (explicit `template_repo`, `template_ref`
 defaulting to the moving `v2` tag), so one pinned `uses:` line from the
 caller's own scheduled wrapper is the whole adoption - and the caller
@@ -1017,6 +1030,15 @@ workflow files for the call, and the row flips to *armed via own
 workflow* only when the call is really committed. Every workflow file
 is scanned, not just the first hit: a mutation call in a file sorted
 after the aggregate's must still be seen.
+
+And since v2.10: the **reusable hunt** - `flaky.yml` completes the
+trilogy. The flake hunt and its quarantine loop are callable with the
+same helper contract, the same pinned-one-line adoption, and the same
+verified reporting: the Flake hunt row in both tables greps the
+caller's workflows for the call instead of declaring a scheduled file,
+so a row cannot claim repetition the repository never wired. With that,
+every opt-in surface in the template - CodeQL, mutation testing, the
+flake hunt - is one pinned `uses:` line; nothing is copied whole.
 
 ## License
 

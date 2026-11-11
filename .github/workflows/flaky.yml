@@ -33,6 +33,19 @@
 # baseline exists, and the run targets the default branch (a dispatch on
 # a feature branch hunts, but never quarantines). The write-holding job
 # runs none of the repo's test code - the hunt stays read-only.
+#
+# Since v2.10 this workflow is also a reusable workflow: a consumer calls
+# it from its own scheduled (or dispatched) wrapper, because a called
+# workflow cannot carry a schedule trigger:
+#   uses: WasewaseX/master-ci/.github/workflows/flaky.yml@v2.10.0
+# The helper defaults follow the codeql.yml and mutation.yml contract -
+# template_repo is explicit so a cross-repo call never fetches helpers
+# from the caller (GITHUB_WORKFLOW_REF names the caller's workflow
+# there), and template_ref defaults to the moving v2 tag; pin an exact
+# vX.Y.Z to freeze behavior. The quarantine loop keeps its caller-side
+# boundaries: the PR opens against the caller's default branch only
+# when the caller's checkout holds the committed baseline, and the
+# write-holding job still runs none of the caller's test code.
 # =============================================================================
 
 name: Flaky Test Hunt
@@ -40,6 +53,25 @@ name: Flaky Test Hunt
 on:
   schedule:
     - cron: '0 4 * * 1'
+  workflow_call:
+    inputs:
+      iterations:
+        description: Test-suite repetitions (2-5)
+        required: false
+        type: string
+        default: '3'
+      template_repo:
+        description: Repo holding master-ci helpers (override for forks)
+        required: false
+        type: string
+        default: WasewaseX/master-ci
+      template_ref:
+        description: >-
+          Ref of template_repo to fetch helpers from. The v2 tag moves
+          with every release; pin an exact vX.Y.Z tag to freeze behavior.
+        required: false
+        type: string
+        default: v2
   workflow_dispatch:
     inputs:
       iterations:

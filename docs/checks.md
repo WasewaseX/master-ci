@@ -790,10 +790,12 @@ Profile presets (quick / standard / strict / custom) only change the
   off state of the coverage floor, new-code ceilings, quality ratchet,
   mutation testing and the flake hunt, each with its one-line enable
   hint - an opt-in layer is reported, never silently absent. The
-  **Semantic analysis (CodeQL)** row (v2.7) and the **Mutation
-  testing** row (v2.9) are the verified ones: both jobs check out the
+  **Semantic analysis (CodeQL)** row (v2.7), the **Mutation testing**
+  row (v2.9) and the **Flake hunt** row (v2.10) are the verified ones:
+  all three jobs check out the
   calling repository and grep its own workflow files for the
-  `codeql.yml`, `required-quality.yml` or `mutation.yml` call, so a row
+  `codeql.yml`, `required-quality.yml`, `mutation.yml` or `flaky.yml`
+  call, so a row
   shows *armed via own workflow* only when the call is really
   committed. The grep scans every workflow file, not just the first
   hit - a call in a file sorted after the aggregate's must still be
@@ -931,14 +933,21 @@ one JSON read and a diff - seconds, no additional tooling.
 
 ## `flake-hunt` - the test suite, repeated until the verdicts are trustworthy (v2.3)
 
-- **Runs in:** `flaky.yml` (copy into the consumer repository), weekly
+- **Runs in:** `flaky.yml` (reusable since v2.10), weekly
   on Mondays plus manual dispatch with an `iterations` input (2-5,
   default 3). It is a standalone scheduled workflow, like
   `mutation.yml` - it never gates PRs and is never part of
-  `ci-success`. Unlike `mutation.yml` (reusable since v2.9), the hunt
-  is not callable: a consumer adopts it by copying the workflow and
-  pinning the helper default, because the quarantine loop needs the
-  write-holding job to live where the caller's token can open PRs.
+  `ci-success`. A consumer adopts it the way `mutation.yml` and
+  `codeql.yml` are adopted: one pinned `uses:` line from the caller's
+  own scheduled wrapper (`template_repo` explicit,
+  `template_ref` defaulting to the moving `v2` tag), because a called
+  workflow cannot carry a schedule trigger. The caller keeps owning
+  the schedule and the write scopes: the quarantine loop opens its PR
+  with the caller's token, so the calling job grants
+  `contents: write` and `pull-requests: write` only when the caller
+  wants the loop armed - a wrapper that stays read-only adopts the
+  hunt as a report-only measurement, and a committed baseline is what
+  turns enforcement on.
 - **What it does:** runs the repository's own test suite N times in one
   job, reads every `run-<i>` result file the iterations produced, and
   classifies each test: **flaky** (both a pass and a fail across

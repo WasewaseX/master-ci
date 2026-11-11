@@ -2647,16 +2647,16 @@ jobs:
               print(f"| Quality ratchet | opted-in when `{ratchet_file}` is committed |")
           else:
               print(f"| Quality ratchet | off - commit `{ratchet_file}` or set `ratchet: true` |")
-          print("| Flake hunt | scheduled workflow (`flaky.yml`) - arms when `.flaky-baseline.json` is committed |")
           # Verified, not declared: the caller's own workflow files are
-          # grepped for the codeql.yml, required-quality.yml or
-          # mutation.yml call, so a row cannot claim an analysis that is
+          # grepped for the codeql.yml, required-quality.yml, mutation.yml
+          # or flaky.yml call, so a row cannot claim an analysis that is
           # not wired. Every file is scanned - a call in a file sorted
           # after the aggregate's must still be seen.
           workflows_dir = Path(".github/workflows")
           codeql_wf = ""
           aggregate_wf = ""
           mutation_wf = ""
+          flaky_wf = ""
           if workflows_dir.is_dir():
               for wf in sorted(workflows_dir.glob("*.y*ml")):
                   try:
@@ -2669,6 +2669,12 @@ jobs:
                       aggregate_wf = wf.name
                   if not mutation_wf and "workflows/mutation.yml@" in text:
                       mutation_wf = wf.name
+                  if not flaky_wf and "workflows/flaky.yml@" in text:
+                      flaky_wf = wf.name
+          if flaky_wf:
+              print(f"| Flake hunt | armed via own workflow - `{flaky_wf}` calls `flaky.yml` |")
+          else:
+              print("| Flake hunt | off - add a scheduled caller of `flaky.yml` (arms when `.flaky-baseline.json` is committed) |")
           if aggregate_wf:
               print(f"| Semantic analysis (CodeQL) | armed via required-quality aggregate - `{aggregate_wf}` calls `required-quality.yml` (master + CodeQL, one required check) |")
           elif codeql_wf:
@@ -2855,20 +2861,18 @@ jobs:
                               else f"off - commit `{ratchet_file}` or set `ratchet: true`"
                           ),
                       ),
-                      (
-                          "Flake hunt",
-                          "scheduled workflow (`flaky.yml`) - arms when `.flaky-baseline.json` is committed",
-                      ),
                   ]
                   # Verified, not declared: the caller's own workflow files
-                  # are grepped for the codeql.yml, required-quality.yml or
-                  # mutation.yml call, so a row cannot claim an analysis
-                  # that is not wired. Every file is scanned - a call in a
-                  # file sorted after the aggregate's must still be seen.
+                  # are grepped for the codeql.yml, required-quality.yml,
+                  # mutation.yml or flaky.yml call, so a row cannot claim
+                  # an analysis that is not wired. Every file is scanned -
+                  # a call in a file sorted after the aggregate's must
+                  # still be seen.
                   workflows_dir = Path(".github/workflows")
                   codeql_wf = ""
                   aggregate_wf = ""
                   mutation_wf = ""
+                  flaky_wf = ""
                   if workflows_dir.is_dir():
                       for wf in sorted(workflows_dir.glob("*.y*ml")):
                           try:
@@ -2881,6 +2885,23 @@ jobs:
                               aggregate_wf = wf.name
                           if not mutation_wf and "workflows/mutation.yml@" in text:
                               mutation_wf = wf.name
+                          if not flaky_wf and "workflows/flaky.yml@" in text:
+                              flaky_wf = wf.name
+                  if flaky_wf:
+                      assurance.append(
+                          (
+                              "Flake hunt",
+                              f"armed via own workflow - `{flaky_wf}` calls `flaky.yml`",
+                          )
+                      )
+                  else:
+                      assurance.append(
+                          (
+                              "Flake hunt",
+                              "off - add a scheduled caller of `flaky.yml` "
+                              "(arms when `.flaky-baseline.json` is committed)",
+                          )
+                      )
                   if aggregate_wf:
                       assurance.append(
                           (

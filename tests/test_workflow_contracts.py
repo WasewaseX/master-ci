@@ -1766,3 +1766,59 @@ def test_python_stack_cannot_see_the_helper_checkout(master_ci_text: str):
     assert "--exclude '(^|/)_ci/'" in master_ci_text, (
         "the mypy scan must exclude the helper checkout the way its own file probe does"
     )
+
+
+# ---------------------------------------------------------------------------
+# v2.10: the reusable hunt - flaky.yml joins the callable surface and the
+# Flake hunt row is verified, not declared
+# ---------------------------------------------------------------------------
+
+
+def test_flaky_workflow_is_callable():
+    """The last copy-whole surface becomes one pinned uses: line.
+    flaky.yml joins codeql.yml and mutation.yml as a reusable workflow:
+    the caller owns the schedule trigger (a called workflow cannot carry
+    one) and the quarantine loop it drives, while the helper defaults
+    follow the codeql contract - template_repo explicit, because
+    GITHUB_WORKFLOW_REF names the caller's workflow on a cross-repo call
+    and auto-detection would fetch helpers from the wrong repo. The
+    self-run triggers keep their own inputs: the weekly schedule passes
+    none, so the resolve step's auto-detection still serves the
+    template's own runs."""
+    data = load(WF_DIR / "flaky.yml")
+    on = _on(data)
+    assert set(on) >= {"schedule", "workflow_call", "workflow_dispatch"}
+    assert on["schedule"] == [{"cron": "0 4 * * 1"}]
+    call = on["workflow_call"]["inputs"]
+    assert call["iterations"]["default"] == "3"
+    assert call["template_repo"]["default"] == "WasewaseX/master-ci"
+    assert call["template_ref"]["default"] == "v2"
+    dispatch = on["workflow_dispatch"]["inputs"]
+    assert dispatch["iterations"]["default"] == "3"
+    assert dispatch["template_repo"]["default"] == ""
+    assert dispatch["template_ref"]["default"] == "main"
+    assert data["permissions"] == {"contents": "read"}
+    text = (WF_DIR / "flaky.yml").read_text(encoding="utf-8")
+    # both jobs serve every trigger through the same env passthrough the
+    # self-run uses - the call boundary adds no second plumbing path
+    assert text.count("TEMPLATE_REPO_INPUT: ${{ inputs.template_repo }}") == 2
+    assert text.count("TEMPLATE_REF: ${{ inputs.template_ref }}") == 2
+    # the quarantine loop survives the call boundary unchanged
+    assert "create-pull-request" in text
+
+
+def test_assurance_verifies_flaky_wiring(master_ci_text: str):
+    """The Flake hunt row is verified, not declared: dashboard and
+    ci-success grep the caller's workflow files for the flaky.yml call
+    before claiming the layer is armed - two states, both tables. The
+    declared row that named a scheduled workflow unconditionally is
+    gone: a caller without the committed call must read 'off', not a
+    promise about a file that is not wired."""
+    text = master_ci_text
+    assert text.count("armed via own workflow - `{flaky_wf}` calls `flaky.yml`") == 2
+    assert text.count("off - add a scheduled caller of `flaky.yml`") == 2
+    assert text.count('"workflows/flaky.yml@" in text') == 2
+    assert text.count('flaky_wf = ""') == 2
+    # the declared row that claimed a scheduled workflow unconditionally
+    # is gone from both tables
+    assert "scheduled workflow (`flaky.yml`)" not in text
