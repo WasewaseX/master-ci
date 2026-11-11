@@ -1492,7 +1492,9 @@ def subprocess_run_tool_versions(argv: list[str]) -> str:
 def test_mutation_workflow_knows_four_ecosystems(master_ci_text: str):
     """Opt-in by declaration: mutmut/stryker keep their signals and
     cargo-mutants (.cargo-mutants.toml) and gremlins (.gremlins.yaml)
-    join - both installs pinned through the pins file."""
+    join - both installs pinned through the pins file. Since v2.11 the
+    declarations are independent: every declared tool runs, not just
+    the first one the old chain matched."""
     text = (WF_DIR / "mutation.yml").read_text(encoding="utf-8")
     assert ".cargo-mutants.toml" in text
     assert ".gremlins.yaml" in text
@@ -1502,6 +1504,33 @@ def test_mutation_workflow_knows_four_ecosystems(master_ci_text: str):
     assert "cargo mutants" in text
     # the summary must advertise the widening, not keep the old lie
     assert "Python, Node, Go and Rust" in master_ci_text
+    # v2.11: every declared tool runs, independently - the old first-match
+    # chain let a [tool.mutmut] declaration mute the other three forever
+    assert 'echo "tools=$tools" >> "$GITHUB_OUTPUT"' in text
+    for tool in ("mutmut", "stryker", "cargo-mutants", "gremlins"):
+        assert f'declared+=("{tool}")' in text
+        cond = f"contains(fromJSON(steps.detect.outputs.tools || '[]'), '{tool}')"
+        assert cond in text, f"the {tool} steps must key on the declared tools array"
+
+
+def test_mutation_declaration_chain_has_no_first_match():
+    """The v2.10 hosted mutation exercise exposed the structural gap the
+    detect chain carried since v2.6: the four declarations were an
+    if/elif first-match chain, so the canary's [tool.mutmut] muted
+    gremlins, cargo-mutants and Stryker forever - three of the four
+    ecosystems had no hosted evidence anywhere, and no ten-stack repo
+    could ever mutate more than its first-declared stack. The chain is
+    dead: each declaration appends independently and the canonical
+    ecosystem order filters what runs."""
+    text = (WF_DIR / "mutation.yml").read_text(encoding="utf-8")
+    detect = text.split("- name: Detect mutation configs", 1)[1].split("- uses:", 1)[0]
+    assert "declared=()" in detect
+    assert "elif" not in detect, "a first-match chain would mute every later declaration"
+    for tool in ("mutmut", "stryker", "cargo-mutants", "gremlins"):
+        assert f'declared+=("{tool}")' in detect
+    assert '"mutmut", "stryker", "cargo-mutants", "gremlins"' in detect, (
+        "canonical ecosystem order, filtered by declaration"
+    )
 
 
 def test_gremlins_gate_needs_declared_thresholds():
@@ -1731,7 +1760,9 @@ def test_mutation_workflow_is_callable():
     # the same env passthrough the self-run uses
     assert text.count("TEMPLATE_REPO_INPUT: ${{ inputs.template_repo }}") == 1
     assert text.count("TEMPLATE_REF: ${{ inputs.template_ref }}") == 1
-    assert "tool=none" in text, "opt-in stays a declaration in the caller's checkout"
+    assert "reads the caller's checkout" in text, (
+        "opt-in stays a declaration in the caller's checkout"
+    )
 
 
 def test_assurance_verifies_mutation_wiring(master_ci_text: str):

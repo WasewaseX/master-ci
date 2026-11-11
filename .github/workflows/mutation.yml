@@ -6,19 +6,23 @@
 # are too slow for every push, so this is the scheduled counterpart to
 # the PR-time coverage gate.
 #
-# Opt-in by declaration: the job runs mutmut when pyproject.toml declares
-# [tool.mutmut] (or setup.cfg [mutmut]), Stryker when any valid Stryker
-# config filename is committed (stryker.conf.*, stryker.config.*,
-# .stryker.conf.*, .stryker.config.* - json/js/mjs/cjs), cargo-mutants
-# when .cargo-mutants.toml is committed, and gremlins when
-# .gremlins.yaml is committed. A repo
-# without any of those configs skips - and a tool that exits nonzero on
-# surviving mutants fails the run, which is the weekly signal to review
-# the tests. New installs are pinned through configs/tool-versions.yml,
-# the same trust class as every other analyzer in the template, and the
-# project's own dependencies are installed first: a fresh runner
-# without them would measure mutants against a bare environment, which
-# reports false survivors (or false kills).
+# Opt-in by declaration: the job runs EVERY declared tool, independently.
+# mutmut when pyproject.toml declares [tool.mutmut] (or setup.cfg
+# [mutmut]), Stryker when any valid Stryker config filename is committed
+# (stryker.conf.*, stryker.config.*, .stryker.conf.*, .stryker.config.* -
+# json/js/mjs/cjs), cargo-mutants when .cargo-mutants.toml is committed,
+# and gremlins when .gremlins.yaml (or gremlins.yaml) is committed. The
+# declarations are not mutually exclusive: the first-match chain this
+# file shipped before v2.11 meant a ten-stack repo declaring [tool.mutmut]
+# could never mutate its Go or Rust code, and three of the four
+# ecosystems had no hosted evidence anywhere. A repo without any of
+# those configs skips - and a tool that exits nonzero on surviving
+# mutants fails the run, which is the weekly signal to review the tests.
+# New installs are pinned through configs/tool-versions.yml, the same
+# trust class as every other analyzer in the template, and the project's
+# own dependencies are installed first: a fresh runner without them
+# would measure mutants against a bare environment, which reports false
+# survivors (or false kills).
 #
 # Since v2.9 this workflow is also a reusable workflow: a consumer calls
 # it from its own scheduled (or dispatched) wrapper, because a called
@@ -114,40 +118,72 @@ jobs:
           path: _ci
           fetch-depth: 1
           persist-credentials: false
-      - name: Detect mutation config
+      - name: Detect mutation configs
         id: detect
         run: |
           # Opt-in by declaration, never by guessing: mutating code in a
           # repo that never asked for it would burn an hour of CI on noise.
           # Every filename Stryker resolves is accepted - stryker.conf.*,
           # stryker.config.* and their dot-prefixed twins, json/js/mjs/cjs.
-          tool=none
+          # Since v2.11 the four declarations are independent `if`s, not a
+          # first-match chain: every declared tool runs. The if blocks
+          # below ARE the canonical order: "mutmut", "stryker", "cargo-mutants", "gremlins".
+          # The emitted JSON array is deterministic and drives the
+          # per-tool steps that follow.
+          declared=()
           if grep -q '^\[tool\.mutmut\]' pyproject.toml 2>/dev/null \
             || grep -q '^\[mutmut\]' setup.cfg 2>/dev/null; then
-            tool=mutmut
-          elif ls stryker.conf.{json,js,mjs,cjs} stryker.config.{json,js,mjs,cjs} \
-            .stryker.conf.{json,js,mjs,cjs} .stryker.config.{json,js,mjs,cjs} >/dev/null 2>&1; then
-            tool=stryker
-          elif ls .cargo-mutants.toml >/dev/null 2>&1; then
-            tool=cargo-mutants
-          elif ls .gremlins.yaml gremlins.yaml >/dev/null 2>&1; then
-            tool=gremlins
+            declared+=("mutmut")
           fi
-          echo "tool=$tool" >> "$GITHUB_OUTPUT"
+          # ls exits nonzero when ANY of its arguments is missing, so the
+          # v2.6 `if ls stryker.conf.{json,...} ...` construct lied whenever
+          # the repo committed exactly one config file (the common case) -
+          # the same trap hid a .gremlins.yaml-only declaration. Found by
+          # simulating this block against fixture trees; the -f loops
+          # below test each candidate honestly.
+          stryker_found=0
+          for f in stryker.conf.{json,js,mjs,cjs} stryker.config.{json,js,mjs,cjs} \
+            .stryker.conf.{json,js,mjs,cjs} .stryker.config.{json,js,mjs,cjs}; do
+            if [ -f "$f" ]; then stryker_found=1; break; fi
+          done
+          if [ "$stryker_found" = "1" ]; then
+            declared+=("stryker")
+          fi
+          if [ -f .cargo-mutants.toml ]; then
+            declared+=("cargo-mutants")
+          fi
+          gremlins_found=0
+          for f in .gremlins.yaml gremlins.yaml; do
+            if [ -f "$f" ]; then gremlins_found=1; break; fi
+          done
+          if [ "$gremlins_found" = "1" ]; then
+            declared+=("gremlins")
+          fi
+          # pure-bash JSON emission: no jq/python dependency in detection,
+          # and an empty array is exactly the documented opt-out ("[]")
+          tools='['
+          first=1
+          for tool in "${declared[@]}"; do
+            if [ "$first" = "1" ]; then first=0; else tools="$tools,"; fi
+            tools="$tools\"$tool\""
+          done
+          tools="$tools]"
+          echo "tools=$tools" >> "$GITHUB_OUTPUT"
+          echo "Declared mutation tools: $tools"
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        if: steps.detect.outputs.tool == 'mutmut'
+        if: contains(fromJSON(steps.detect.outputs.tools || '[]'), 'mutmut')
         with:
           python-version: '3.13'
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable (branch pin; no version tags published) # zizmor: ignore[ref-version-mismatch]
-        if: steps.detect.outputs.tool == 'cargo-mutants'
+        if: contains(fromJSON(steps.detect.outputs.tools || '[]'), 'cargo-mutants')
         with:
           toolchain: stable
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        if: steps.detect.outputs.tool == 'gremlins'
+        if: contains(fromJSON(steps.detect.outputs.tools || '[]'), 'gremlins')
         with:
           go-version: 'stable'
       - name: Install project dependencies (mutmut)
-        if: steps.detect.outputs.tool == 'mutmut'
+        if: contains(fromJSON(steps.detect.outputs.tools || '[]'), 'mutmut')
         run: |
           # mutmut drives the project's own pytest; a fresh runner without
           # the project's packages would measure mutants against a bare
@@ -163,7 +199,7 @@ jobs:
             echo "No installable python project - tests run against the bare environment"
           fi
       - name: Mutate (mutmut)
-        if: steps.detect.outputs.tool == 'mutmut'
+        if: contains(fromJSON(steps.detect.outputs.tools || '[]'), 'mutmut')
         run: |
           # the pin emits name==version and is meant to word-split:
           # shellcheck disable=SC2046
@@ -173,7 +209,7 @@ jobs:
           # the nonzero exit from `mutmut run` has already failed the job.
           mutmut results | tee mutmut-results.txt
       - name: Install project dependencies (Stryker)
-        if: steps.detect.outputs.tool == 'stryker'
+        if: contains(fromJSON(steps.detect.outputs.tools || '[]'), 'stryker')
         run: |
           # Stryker's test-runner plugin comes from the project's own
           # dependencies; a fresh runner without node_modules cannot run
@@ -186,10 +222,10 @@ jobs:
           else echo "No package manifest - Stryker runs from the pinned npx install alone"
           fi
       - name: Mutate (Stryker)
-        if: steps.detect.outputs.tool == 'stryker'
+        if: contains(fromJSON(steps.detect.outputs.tools || '[]'), 'stryker')
         run: npx --yes "$(python3 _ci/scripts/tool_versions.py npm @stryker-mutator/core)" run
       - name: Mutate (cargo-mutants)
-        if: steps.detect.outputs.tool == 'cargo-mutants'
+        if: contains(fromJSON(steps.detect.outputs.tools || '[]'), 'cargo-mutants')
         run: |
           cargo install --locked --quiet cargo-mutants \
             --version "$(python3 _ci/scripts/tool_versions.py cargo cargo-mutants)"
@@ -199,30 +235,32 @@ jobs:
           # the job; mutants.out carries the per-mutant evidence.
           find mutants.out -name '*.json' -type f | head -50 || true
       - name: Mutate (gremlins)
-        if: steps.detect.outputs.tool == 'gremlins'
+        if: contains(fromJSON(steps.detect.outputs.tools || '[]'), 'gremlins')
         run: |
           go install "github.com/go-gremlins/gremlins/cmd/gremlins@$(python3 _ci/scripts/tool_versions.py go gremlins)"
           # The .gremlins.yaml that opted this repo in is also the gate:
           # unleash exits 10 / 11 when the configured unleash.threshold
           # efficacy / mutant-coverage floors are breached (verified
-          # against gremlins v0.6.0; unset thresholds never trip).
+          # against gremlins v0.6.0; unset thresholds never trip). The
+          # config file is the gate - without thresholds the run reports
+          # efficacy but never fails.
           gremlins unleash
       - name: Upload survivor report
-        if: always() && steps.detect.outputs.tool == 'mutmut' && hashFiles('mutmut-results.txt') != ''
+        if: always() && contains(fromJSON(steps.detect.outputs.tools || '[]'), 'mutmut') && hashFiles('mutmut-results.txt') != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: mutation-survivors
           path: mutmut-results.txt
           if-no-files-found: ignore
       - name: Upload Stryker reports
-        if: always() && steps.detect.outputs.tool == 'stryker' && hashFiles('reports/**') != ''
+        if: always() && contains(fromJSON(steps.detect.outputs.tools || '[]'), 'stryker') && hashFiles('reports/**') != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: mutation-stryker-reports
           path: reports/
           if-no-files-found: ignore
       - name: Upload cargo-mutants evidence
-        if: always() && steps.detect.outputs.tool == 'cargo-mutants' && hashFiles('mutants.out/**') != ''
+        if: always() && contains(fromJSON(steps.detect.outputs.tools || '[]'), 'cargo-mutants') && hashFiles('mutants.out/**') != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: mutation-cargo-mutants-out
@@ -230,33 +268,37 @@ jobs:
           if-no-files-found: ignore
       - name: Summary
         if: always()
+        env:
+          TOOLS: ${{ steps.detect.outputs.tools }}
         run: |
           {
             echo "## Mutation testing"
             echo ""
-            case "$TOOL" in
-              none)
-                echo "No mutation config declared - opt in with [tool.mutmut] in"
-                echo "pyproject.toml, a Stryker config (stryker.conf.* or"
-                echo "stryker.config.*, json/js/mjs/cjs), a .cargo-mutants.toml or"
-                echo "a .gremlins.yaml. Nothing ran; this is not a pass or a fail." ;;
-              mutmut)
-                echo "mutmut ran; surviving mutants (if any) are listed above and in"
-                echo "the mutation-survivors artifact. Each survivor is an assertion"
-                echo "gap: a defect that shape would ship unnoticed." ;;
-              stryker)
-                echo "Stryker ran; the HTML report is in the mutation-stryker-reports"
-                echo "artifact. A low mutation score means the tests execute code but"
-                echo "do not verify behavior." ;;
-              cargo-mutants)
-                echo "cargo-mutants ran; the per-mutant evidence is in the"
-                echo "mutation-cargo-mutants-out artifact. Every surviving mutant is"
-                echo "a code change no test noticed (exit 2 = survivors found)." ;;
-              gremlins)
-                echo "gremlins ran with the thresholds declared in .gremlins.yaml;"
-                echo "exit 10 / 11 means the efficacy or mutant-coverage floor was"
-                echo "breached - the tests kill too few of the mutants they run." ;;
-            esac
+            if [ "$TOOLS" = "[]" ] || [ -z "$TOOLS" ]; then
+              echo "No mutation config declared - opt in with [tool.mutmut] in"
+              echo "pyproject.toml, a Stryker config (stryker.conf.* or"
+              echo "stryker.config.*, json/js/mjs/cjs), a .cargo-mutants.toml or"
+              echo "a .gremlins.yaml. Nothing ran; this is not a pass or a fail."
+            else
+              for tool in $(python3 -c 'import json, sys; print(" ".join(json.loads(sys.argv[1])))' "$TOOLS"); do
+                case "$tool" in
+                  mutmut)
+                    echo "- **mutmut** ran; surviving mutants (if any) are listed above and in"
+                    echo "  the mutation-survivors artifact. Each survivor is an assertion"
+                    echo "  gap: a defect that shape would ship unnoticed." ;;
+                  stryker)
+                    echo "- **Stryker** ran; the HTML report is in the mutation-stryker-reports"
+                    echo "  artifact. A low mutation score means the tests execute code but"
+                    echo "  do not verify behavior." ;;
+                  cargo-mutants)
+                    echo "- **cargo-mutants** ran; the per-mutant evidence is in the"
+                    echo "  mutation-cargo-mutants-out artifact. Every surviving mutant is"
+                    echo "  a code change no test noticed (exit 2 = survivors found)." ;;
+                  gremlins)
+                    echo "- **gremlins** ran with the thresholds declared in .gremlins.yaml;"
+                    echo "  exit 10 / 11 means the efficacy or mutant-coverage floor was"
+                    echo "  breached - the tests kill too few of the mutants they run." ;;
+                esac
+              done
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
-        env:
-          TOOL: ${{ steps.detect.outputs.tool }}

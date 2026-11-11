@@ -83,7 +83,7 @@ which keeps its baseline reproducible across template releases:
 ```yaml
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v2.10.1
+      template_ref: v2.11.0
 ```
 
 ### Required check
@@ -103,7 +103,7 @@ alone cannot fail on a red CodeQL analysis (audit finding F). Two honest
 shapes:
 
 - **One required check (recommended):** call
-  `WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.10.1`
+  `WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.11.0`
   instead of `master-ci.yml` and require **`required-quality-check / gate`**.
   The first segment is the job id the caller gives the call, so the
   example below names its job `required-quality-check`; a caller naming
@@ -116,7 +116,7 @@ shapes:
   ```yaml
   jobs:
     required-quality-check:
-      uses: WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.10.1
+      uses: WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.11.0
       permissions:
         contents: read
         security-events: write
@@ -514,10 +514,10 @@ dispatched) wrapper,
 ```yaml
 jobs:
   hunt:
-    uses: WasewaseX/master-ci/.github/workflows/flaky.yml@v2.10.1
+    uses: WasewaseX/master-ci/.github/workflows/flaky.yml@v2.11.0
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v2.10.1
+      template_ref: v2.11.0
     permissions:
       # The called quarantine job declares contents: write and
       # pull-requests: write; a reusable call that grants less than its
@@ -790,7 +790,7 @@ carries a `SKILL.md`, so assistants with a skills directory can load it
 with one command:
 
 ```bash
-git clone --depth 1 --branch v2.10.1 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+git clone --depth 1 --branch v2.11.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
 ```
 
 MCP clients configure the same install like this:
@@ -1049,6 +1049,20 @@ caller's workflows for the call instead of declaring a scheduled file,
 so a row cannot claim repetition the repository never wired. With that,
 every opt-in surface in the template - CodeQL, mutation testing, the
 flake hunt - is one pinned `uses:` line; nothing is copied whole.
+
+And since v2.11: the **unmuted nets** - the mutation hunt's four
+ecosystems stop being a first-match chain. The v2.6 detect step was
+`if/elif`: the canary's `[tool.mutmut]` muted Stryker, cargo-mutants
+and gremlins forever, and no multi-stack repo could mutate more than
+its first-declared ecosystem. The chain hid two detection bugs besides:
+`ls` exits nonzero when any candidate filename is missing, so a repo
+committing exactly one Stryker config - the common case - was never
+detected, and a `.gremlins.yaml`-only declaration was invisible too.
+Found by simulating the detect block against fixture trees while
+preparing the canary's second-ecosystem exercise. Now every declaration
+appends independently to a JSON array and every declared tool's steps
+run against it, each candidate file tested with `-f`; the ten-stack
+canary mutates its Python, Rust and Go stacks in one weekly call.
 
 ## License
 

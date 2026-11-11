@@ -410,10 +410,12 @@ Profile presets (quick / standard / strict / custom) only change the
   rather than being guessed); Go module-prefixed paths match diff
   paths by suffix; a changed file absent from the report counts as
   0% new-code coverage. Companion on the schedule side:
-  `.github/workflows/mutation.yml` runs mutmut (Python, when
-  `[tool.mutmut]` is declared) or Stryker (Node, when any valid Stryker
+  `.github/workflows/mutation.yml` runs every declared tool weekly -
+  mutmut (Python, when
+  `[tool.mutmut]` is declared), Stryker (Node, when any valid Stryker
   config filename is committed - `stryker.conf.*`, `stryker.config.*`,
-  `.stryker.conf.*`, `.stryker.config.*`, json/js/mjs/cjs) weekly -
+  `.stryker.conf.*`, `.stryker.config.*`, json/js/mjs/cjs),
+  cargo-mutants (Rust) and gremlins (Go) -
   coverage says which lines ran, mutation says whether the assertions
   would notice. The mutation job installs the project's own
   dependencies first (mutmut drives the project's pytest; Stryker's
@@ -427,6 +429,18 @@ Profile presets (quick / standard / strict / custom) only change the
   breached; without declared thresholds gremlins never trips, so the
   config file is the gate). Every install is pinned in
   `configs/tool-versions.yml`.
+  **As of v2.11 the declarations are independent - a repo declaring
+  several mutates every declared stack, in the canonical order mutmut,
+  Stryker, cargo-mutants, gremlins.** The v2.6 detect step was a
+  first-match `if/elif`: the canary's `[tool.mutmut]` muted Stryker,
+  cargo-mutants and gremlins forever, and no multi-stack repo could
+  mutate more than its first-declared ecosystem. The chain also hid two
+  detection bugs: `ls` exits nonzero when any candidate filename is
+  missing, so a repo committing exactly one Stryker config - the common
+  case - was never detected, and a `.gremlins.yaml`-only declaration was
+  invisible too. Every declaration now appends to a JSON array the
+  per-tool steps key on, and detection tests each candidate file with
+  `-f`, never with a multi-argument `ls`.
   **Adoption (v2.9):** `mutation.yml` is a reusable workflow as well as
   a scheduled one. The consumer owns the schedule trigger - a called
   workflow cannot carry one - by wrapping one job that calls
