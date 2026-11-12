@@ -15,7 +15,7 @@ scanner = [
     "pyyaml>=6.0",
     "lizard>=1.17",
     "tree-sitter>=0.21",
-    "tree-sitter-language-pack>=0.6",
+    "tree-sitter-language-pack>=1.23.1",
 ]
 # the contract-test suite (tests/) runs under stock pytest.
 test = ["pytest>=8.0"]
