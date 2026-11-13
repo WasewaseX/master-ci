@@ -18,7 +18,7 @@ scanner = [
     "tree-sitter-language-pack>=0.6",
 ]
 # the contract-test suite (tests/) runs under stock pytest.
-test = ["pytest>=8.0"]
+test = ["pytest>=9.2.0"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
