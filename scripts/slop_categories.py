@@ -98,6 +98,10 @@ CHECK_CATEGORIES: dict[str, str] = {
     # v2.12: class cohesion (LCOM4). A disconnected method graph is design
     # debt the reviewer judges - the split is a design decision.
     "low-cohesion": "maintainability",
+    # v2.13: the project densities. A ratio is a trend the ratchet holds,
+    # not a defect to fix mechanically - maintainability, advisory.
+    "complexity-density": "maintainability",
+    "duplication-density": "maintainability",
     # Security: injection surfaces and credential handling.
     "eval-usage": "security",
     "placeholder-credential": "security",

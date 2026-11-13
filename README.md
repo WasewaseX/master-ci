@@ -83,7 +83,7 @@ which keeps its baseline reproducible across template releases:
 ```yaml
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v2.12.0
+      template_ref: v2.13.0
 ```
 
 ### Required check
@@ -103,7 +103,7 @@ alone cannot fail on a red CodeQL analysis (audit finding F). Two honest
 shapes:
 
 - **One required check (recommended):** call
-  `WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.12.0`
+  `WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.13.0`
   instead of `master-ci.yml` and require **`required-quality-check / gate`**.
   The first segment is the job id the caller gives the call, so the
   example below names its job `required-quality-check`; a caller naming
@@ -116,7 +116,7 @@ shapes:
   ```yaml
   jobs:
     required-quality-check:
-      uses: WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.12.0
+      uses: WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.13.0
       permissions:
         contents: read
         security-events: write
@@ -514,10 +514,10 @@ dispatched) wrapper,
 ```yaml
 jobs:
   hunt:
-    uses: WasewaseX/master-ci/.github/workflows/flaky.yml@v2.12.0
+    uses: WasewaseX/master-ci/.github/workflows/flaky.yml@v2.13.0
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v2.12.0
+      template_ref: v2.13.0
     permissions:
       # The called quarantine job declares contents: write and
       # pull-requests: write; a reusable call that grants less than its
@@ -790,7 +790,7 @@ carries a `SKILL.md`, so assistants with a skills directory can load it
 with one command:
 
 ```bash
-git clone --depth 1 --branch v2.12.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+git clone --depth 1 --branch v2.13.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
 ```
 
 MCP clients configure the same install like this:
@@ -1076,13 +1076,23 @@ the disconnected groups named as evidence - advisory, maintainability
 dimension, a measurement a reviewer judges rather than a gate that
 fails the build.
 
+And since v2.13: the **project densities** - complexity density
+(cyclomatic per 1000 executable lines, budget 300, calibrated against
+this codebase's own 247/1000) and duplication density (duplicated
+executable lines as a percent of the corpus, budget 5.0%, self at
+2.3%), one shared lexer-measured corpus with generated trees and test
+paths excluded, a 250-line minimum corpus so snippets get no verdict,
+and each over-budget finding carrying the numbers, the per-language
+breakdown and the top offenders as evidence - advisory,
+maintainability, the trend numbers a ratchet can hold.
+
 The forward plan - the measurement-engine phases accepted from the
 external v2.11.0 competitor audit (2026-11-11), verified claim-by-claim
 against the codebase with the evidence recorded - lives in
 [roadmap.md](roadmap.md): P0 workflow correctness (complete), the P1
-metric layer - LCOM4 shipped in v2.12, the densities, debt and coupling
-measurements next - semantic bloat analysis, the P2 gates-and-history
-work, and the public precision/recall benchmark.
+metric layer - LCOM4 shipped in v2.12 and the densities in v2.13, debt
+and coupling measurements next - semantic bloat analysis, the P2
+gates-and-history work, and the public precision/recall benchmark.
 
 ## License
 

@@ -42,6 +42,11 @@ from slop_dead import (  # noqa: F401
     check_orphan_modules,
     check_unused_declarations,
 )
+from slop_density import (  # noqa: F401
+    COMPLEXITY_DENSITY_BUDGET,
+    DUP_DENSITY_BUDGET,
+    check_density_metrics,
+)
 from slop_deps import check_unused_dependencies  # noqa: F401
 from slop_duplicates import (  # noqa: F401
     MIN_SOURCES_FOR_INVENTORY,
@@ -314,6 +319,7 @@ def _repo_level_findings(
     findings.extend(check_orphan_modules(root, files, globs))
     findings.extend(check_import_cycles(root, files, globs))
     findings.extend(check_class_cohesion(root, files, globs))
+    findings.extend(check_density_metrics(root, files, globs))
     findings.extend(check_architecture_rules(root, files, globs))
     findings.extend(check_unknown_directives(root, files, globs))
     if provenance:

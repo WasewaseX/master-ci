@@ -121,3 +121,39 @@ def parse_functions(filename: str, text: str) -> list[FunctionFact] | None:
         )
         for fn in file_info.function_list
     ]
+
+
+@dataclass(frozen=True)
+class FileFacts:
+    """Whole-file facts the density metrics divide by.
+
+    The same lexer facts as FunctionFact, aggregated to the file: the
+    executable-line denominator and the total-complexity numerator of
+    the project densities, so the ratio and the function budgets can
+    never disagree about what "complexity" means.
+    """
+
+    nloc: int  # executable lines: lexer-counted, comments and blanks out
+    ccn: int  # total cyclomatic complexity over every parsed function
+    functions: int
+
+
+def parse_file_facts(filename: str, text: str) -> FileFacts | None:
+    """Whole-file facts for the density metrics.
+
+    Same contract as parse_functions: None when no parse is possible
+    (analyzer missing, extension outside LIZARD_EXTS, source the lexer
+    rejects); a FileFacts - even with zero functions - means the file
+    parsed and its lines count toward the denominator.
+    """
+    if not _LIZARD_OK or Path(filename).suffix not in LIZARD_EXTS:
+        return None
+    try:
+        file_info = lizard.analyze_file.analyze_source_code(filename, text)
+    except Exception:  # noqa: BLE001 - any lexer failure just means "no parse"
+        return None
+    return FileFacts(
+        nloc=file_info.nloc,
+        ccn=sum(fn.cyclomatic_complexity for fn in file_info.function_list),
+        functions=len(file_info.function_list),
+    )

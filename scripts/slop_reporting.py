@@ -39,6 +39,9 @@ TIERED_CHECKS: dict[str, float] = {
     "chained-dict-get": TIER_MAINTAINABILITY,
     # v2.12: class cohesion - design debt the reviewer judges.
     "low-cohesion": TIER_MAINTAINABILITY,
+    # v2.13: the project densities - project-scale design debt.
+    "complexity-density": TIER_MAINTAINABILITY,
+    "duplication-density": TIER_MAINTAINABILITY,
     "phantom-import": TIER_MECHANICAL,
     "duplicate-import": TIER_MECHANICAL,
     "debug-print": TIER_MECHANICAL,

@@ -581,6 +581,28 @@ Profile presets (quick / standard / strict / custom) only change the
   is skipped, because cohesion over stateless functions is undefined.
   What remains is advisory: the split is a design decision, and the
   groups are the evidence a reviewer judges.
+- **v2.13 - the project densities (`complexity-density`,
+  `duplication-density`, advisory):** the metric layer's second slice,
+  SonarQube/Qlty-style ratios over one shared corpus: source files with
+  a lexer in `slop_lizard`, outside test paths, ignore globs and
+  generated trees (`*_pb2.py`, `*_pb2.go`, `*_gen.go`, `*.g.go`,
+  `*_generated.py`, `*.generated.*` - machine-written files inflate
+  both ratios without being maintainable debt). Complexity density is
+  total cyclomatic complexity per 1000 executable lines - the same
+  lizard-measured number the function budget judges, so the ratio and
+  the gate can never disagree - budget 300, calibrated at v2.13
+  against this codebase's own 247/1000 over ~11k non-test lines.
+  Duplication density is duplicated executable lines (stripped,
+  non-comment, 40+ characters, seen twice or more) as a percent of the
+  same corpus - budget 5.0%, self at 2.3% - the trend number a ratchet
+  holds where `boilerplate-duplication` only catches egregious lines.
+  Under 250 executable lines the corpus is a snippet, not a project,
+  and both ratios stay silent: four one-line functions over ten
+  executable lines measure 400/1000 on perfectly healthy code, so a
+  project-scale verdict waits for a project-scale corpus. One advisory
+  finding per metric per scan, only over budget, anchored at the worst
+  contributor, with the numbers, the per-language breakdown and the
+  top offenders as evidence.
 - **Disable:** `profile: quick` keeps the whole job advisory; with
   `profile: custom` set `fail_on_ai_slop: false` explicitly. Provenance
   and test inventory can be turned off with `--no-provenance`; the

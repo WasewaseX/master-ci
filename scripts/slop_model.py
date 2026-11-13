@@ -168,6 +168,13 @@ REMEDIES = {
         "Split the class along the disconnected groups; each group of "
         "methods sharing one state cluster is a class of its own"
     ),
+    "complexity-density": (
+        "Flatten the decision ladders in the heaviest contributors; a "
+        "project density over budget means complexity is concentrating"
+    ),
+    "duplication-density": (
+        "Extract the repeated lines into shared helpers; the density is the trend the ratchet holds"
+    ),
     "java-broad-throws": (
         "Throw the specific exception type; a broad Exception hides every "
         "failure mode behind one signature"
@@ -344,6 +351,11 @@ ADVISORY_ONLY_CHECKS = frozenset(
         # groups as evidence - the split is a design decision, not a
         # mechanical defect, so it advises like the other budgets.
         "low-cohesion",
+        # v2.13 roadmap P1 item 2: the project densities. A ratio judges
+        # the codebase as a whole, not one defect - evidence for a
+        # refactor conversation, advisory like the other budgets.
+        "complexity-density",
+        "duplication-density",
     }
 )
 
