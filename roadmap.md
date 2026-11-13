@@ -63,8 +63,9 @@ per-project scan (v2.11.1), the flaky hunt's per-project discovery
 and per-suite status table (v2.11.2), the required aggregate kept
 since v2.8, and the stale descriptions here. The remaining P0 note -
 the scheduled (cron) mutation firing on a multi-tool consumer - is
-evidence to collect, not code to write. The next phase is P1: real
-code-quality measurements, LCOM4 first.
+evidence to collect, not code to write. P1 has begun: LCOM4, the
+phase's first metric and the audit's largest single gap, shipped in
+v2.12.0; the densities and the debt metrics follow.
 
 Also recorded: mutation testing has no incremental PR mode (scheduled
 and dispatched only, by design today), and the scheduled (cron) path on
@@ -92,7 +93,7 @@ densities, then debt.
 | Reliability rating   | Dedicated dimension: defective control flow, unsafe error handling, null/optional mistakes, resource leaks, state errors, unhandled failure paths | No reliability grade separate from maintainability |
 | Remediation effort   | Rule-based repair-time estimate per finding, calibrated against reviewed fixes | Findings carry no cost |
 | Debt ratio           | Estimated remediation cost / estimated development cost, overall and new-code | No debt indicator; explicitly a documented-estimate indicator, not an objective financial value |
-| LCOM4                | Connected method groups through shared state           | No class-cohesion measurement            |
+| LCOM4                | Connected method groups through shared state           | Shipped in v2.12.0: `low-cohesion` in `slop_lcom4.py` - Python AST-backed, JS/TS scanner-backed, the classic exclusions (constructors, dunders, statics, test files) documented with their false-positive reasons; advisory, maintainability dimension, groups rendered as evidence |
 | Coupling             | Fan-in, fan-out, afferent/efferent, instability, cross-layer edges | Import cycles exist; no coupling model   |
 | Complexity density   | Total complexity / executable lines x 1000, per project and language | Thresholds judge functions, never projects |
 | Duplication density  | Duplicated executable lines / eligible lines            | jscpd catches copies, not density trends |

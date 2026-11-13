@@ -547,6 +547,40 @@ Profile presets (quick / standard / strict / custom) only change the
   `collections.abc` are different modules, and importing both is not a
   duplicate. Both new checks are advisory, capped at 8 per scan, and
   disabled when the scan root is a single file.
+- **v2.12 - class cohesion (`low-cohesion`, advisory):** the P1 metric
+  layer opens with the audit's largest single gap - no
+  class-cohesion measurement. `slop_lcom4.py` computes LCOM4 (Hitz &
+  Montazeri): the connected components of one class's method graph,
+  joining two methods when they touch the same instance attribute or
+  one calls the other. One component is one responsibility; the
+  finding names the disconnected groups as evidence - `class Account:
+  LCOM4 2 (budget 1): disconnected method groups [deposit, withdraw],
+  [send, queue]` - maintainability dimension, capped at 12 per scan,
+  located at the class header. The graph is native where class
+  structure is sound today, one ecosystem at a time (the trade the
+  import-cycle graph makes): Python through the AST - exact attribute
+  loads and stores on `self`, calls through `self`, and reads of
+  `@property` names, a read of a property joining the graph as a call
+  to its getter; JS/TS through the string-aware block scanner - class
+  bodies by brace depth, methods by header shape (written-out
+  signatures and arrow-field methods), state through `this.attr` /
+  `this.#attr`, calls through `this.attr(...)`. Go methods are
+  package-scoped across files, so per-file class views would be
+  fiction; JVM, PHP, C#, Ruby and C++ wait for their native class
+  models (Roslyn, javac metadata, PHPStan, the Ruby parser) - out of
+  scope by design until then, like the other repo-level oracles. The
+  classic exclusions each carry a false-positive reason:
+  constructors and dunder protocol methods touch every field by
+  construction and would glue unrelated groups into fake cohesion;
+  `@staticmethod`/`@classmethod` and JS `static` members hold no
+  instance state; test files are exempt (a TestCase's methods are
+  independent assertions, not a responsibility split). The verdict is
+  deliberately conservative: a component none of whose members touch
+  instance state is dropped before counting - stateless helpers are
+  dispatch, not a second responsibility - and an all-stateless class
+  is skipped, because cohesion over stateless functions is undefined.
+  What remains is advisory: the split is a design decision, and the
+  groups are the evidence a reviewer judges.
 - **Disable:** `profile: quick` keeps the whole job advisory; with
   `profile: custom` set `fail_on_ai_slop: false` explicitly. Provenance
   and test inventory can be turned off with `--no-provenance`; the

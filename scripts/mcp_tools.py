@@ -15,7 +15,7 @@ from typing import Any
 
 SCRIPTS = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPTS.parent
-SERVER_VERSION = "2.11.3"
+SERVER_VERSION = "2.12.0"
 DEFAULT_REPO_SLUG = "WasewaseX/master-ci"
 DEFAULT_GH_API = "https://api.github.com"
 UPDATE_TIMEOUT_SECONDS = 10.0

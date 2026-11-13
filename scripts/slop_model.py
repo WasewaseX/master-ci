@@ -164,6 +164,10 @@ REMEDIES = {
         "Break the loop at the lowest-level module; move the shared "
         "symbols down so both sides depend on a leaf instead of each other"
     ),
+    "low-cohesion": (
+        "Split the class along the disconnected groups; each group of "
+        "methods sharing one state cluster is a class of its own"
+    ),
     "java-broad-throws": (
         "Throw the specific exception type; a broad Exception hides every "
         "failure mode behind one signature"
@@ -335,6 +339,11 @@ ADVISORY_ONLY_CHECKS = frozenset(
         # fails the build below the floor; the per-file findings stay
         # advisory so the dimension table carries the detail.
         "low-new-coverage",
+        # v2.12 roadmap P1 item 1: class cohesion, measured. LCOM4 over
+        # connected method groups is an advisory measurement with the
+        # groups as evidence - the split is a design decision, not a
+        # mechanical defect, so it advises like the other budgets.
+        "low-cohesion",
     }
 )
 

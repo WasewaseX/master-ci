@@ -74,6 +74,7 @@ from slop_imports import (  # noqa: F401
     collect_js_dependencies,
     collect_py_dependencies,
 )
+from slop_lcom4 import MAX_LCOM4_FINDINGS, check_class_cohesion  # noqa: F401
 from slop_model import (  # noqa: F401
     ADVISORY_ONLY_CHECKS,
     BLOCKING_CHECKS,
@@ -312,6 +313,7 @@ def _repo_level_findings(
     findings.extend(check_unused_dependencies(root, files, globs))
     findings.extend(check_orphan_modules(root, files, globs))
     findings.extend(check_import_cycles(root, files, globs))
+    findings.extend(check_class_cohesion(root, files, globs))
     findings.extend(check_architecture_rules(root, files, globs))
     findings.extend(check_unknown_directives(root, files, globs))
     if provenance:

@@ -83,7 +83,7 @@ which keeps its baseline reproducible across template releases:
 ```yaml
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v2.11.3
+      template_ref: v2.12.0
 ```
 
 ### Required check
@@ -103,7 +103,7 @@ alone cannot fail on a red CodeQL analysis (audit finding F). Two honest
 shapes:
 
 - **One required check (recommended):** call
-  `WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.11.3`
+  `WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.12.0`
   instead of `master-ci.yml` and require **`required-quality-check / gate`**.
   The first segment is the job id the caller gives the call, so the
   example below names its job `required-quality-check`; a caller naming
@@ -116,7 +116,7 @@ shapes:
   ```yaml
   jobs:
     required-quality-check:
-      uses: WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.11.3
+      uses: WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.12.0
       permissions:
         contents: read
         security-events: write
@@ -514,10 +514,10 @@ dispatched) wrapper,
 ```yaml
 jobs:
   hunt:
-    uses: WasewaseX/master-ci/.github/workflows/flaky.yml@v2.11.3
+    uses: WasewaseX/master-ci/.github/workflows/flaky.yml@v2.12.0
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v2.11.3
+      template_ref: v2.12.0
     permissions:
       # The called quarantine job declares contents: write and
       # pull-requests: write; a reusable call that grants less than its
@@ -790,7 +790,7 @@ carries a `SKILL.md`, so assistants with a skills directory can load it
 with one command:
 
 ```bash
-git clone --depth 1 --branch v2.11.3 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+git clone --depth 1 --branch v2.12.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
 ```
 
 MCP clients configure the same install like this:
@@ -1064,12 +1064,25 @@ appends independently to a JSON array and every declared tool's steps
 run against it, each candidate file tested with `-f`; the ten-stack
 canary mutates its Python, Rust and Go stacks in one weekly call.
 
+And since v2.12: the **cohesion measurement** - the P1 metric layer
+from the audit opens with its largest single gap. `slop_lcom4.py`
+computes LCOM4, the connected method groups of one class through
+shared state and self-calls: Python through the AST, JS/TS through the
+string-aware scanner, with constructors, dunder protocol methods,
+statics and test classes excluded and the reason written down, and
+stateless helper clusters dropped before counting. A class carrying
+two unrelated responsibilities now reports `LCOM4 2 (budget 1)` with
+the disconnected groups named as evidence - advisory, maintainability
+dimension, a measurement a reviewer judges rather than a gate that
+fails the build.
+
 The forward plan - the measurement-engine phases accepted from the
 external v2.11.0 competitor audit (2026-11-11), verified claim-by-claim
 against the codebase with the evidence recorded - lives in
-[roadmap.md](roadmap.md): P0 workflow correctness, the P1 metric layer
-(LCOM4, densities, debt, coupling), semantic bloat analysis, the P2
-gates-and-history work, and the public precision/recall benchmark.
+[roadmap.md](roadmap.md): P0 workflow correctness (complete), the P1
+metric layer - LCOM4 shipped in v2.12, the densities, debt and coupling
+measurements next - semantic bloat analysis, the P2 gates-and-history
+work, and the public precision/recall benchmark.
 
 ## License
 

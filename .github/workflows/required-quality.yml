@@ -281,7 +281,7 @@ jobs:
     # cannot go stale silently. Forks must edit these two uses: lines;
     # the template_repo/template_ref inputs below still steer every
     # helper fetch the child workflows make.
-    uses: WasewaseX/master-ci/.github/workflows/master-ci.yml@v2.11.3
+    uses: WasewaseX/master-ci/.github/workflows/master-ci.yml@v2.12.0
     permissions:
       contents: read
       security-events: write
@@ -329,7 +329,7 @@ jobs:
       concurrency_key: ${{ inputs.concurrency_key }}
 
   codeql:
-    uses: WasewaseX/master-ci/.github/workflows/codeql.yml@v2.11.3
+    uses: WasewaseX/master-ci/.github/workflows/codeql.yml@v2.12.0
     permissions:
       contents: read
       security-events: write

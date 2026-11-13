@@ -95,6 +95,9 @@ CHECK_CATEGORIES: dict[str, str] = {
     # v2.0: the module dependency graph. An undeclared cycle is design
     # debt, not a declared-law violation - maintainability, not architecture.
     "import-cycle": "maintainability",
+    # v2.12: class cohesion (LCOM4). A disconnected method graph is design
+    # debt the reviewer judges - the split is a design decision.
+    "low-cohesion": "maintainability",
     # Security: injection surfaces and credential handling.
     "eval-usage": "security",
     "placeholder-credential": "security",
