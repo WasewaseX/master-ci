@@ -603,6 +603,29 @@ Profile presets (quick / standard / strict / custom) only change the
   finding per metric per scan, only over budget, anchored at the worst
   contributor, with the numbers, the per-language breakdown and the
   top offenders as evidence.
+- **v2.14 - remediation debt (`debt-ratio`, advisory) and module
+  coupling (`high-coupling`, `unstable-hub`, advisory):** the metric
+  layer's third and fourth slices. Debt prices every finding the scan
+  emitted by the class the registry already gave it - design work
+  (cycles, cohesion, the densities) 120 minutes, structural budgets
+  30, blocking defects 20, advisory judgment calls 10 - and reports
+  the SQALE ratio: remediation minutes over reconstruction cost, 3
+  minutes per executable line of the densities' measured corpus,
+  budget 5.0%, self at 0.14% (50 priced minutes over ~11.9k lines).
+  One finding per scan, only over budget, anchored at the most
+  expensive finding, with the totals, the dev cost and the worst
+  check as evidence; the engine's own finding never prices itself.
+  Coupling reuses the cycles module graph for its texture: fan-out
+  (distinct in-repo imports), fan-in (distinct in-repo importers) and
+  Martin instability, I = fan-out / (fan-in + fan-out), over
+  production nodes only - tests and generated names leave the graph,
+  edges from test nodes are dropped before the tallies, and under 8
+  production nodes both checks stay silent. Fan-out budget 30 (self
+  22); an unstable hub needs fan-in 25 or more with instability above
+  0.66 (self: `slop_model.py` at fan-in 25 and I 0.04, a pure
+  provider - the healthy hub shape the instability leg protects).
+  Both advisory, maintainability, one finding each, over budget only,
+  with the ranked offenders as evidence.
 - **Disable:** `profile: quick` keeps the whole job advisory; with
   `profile: custom` set `fail_on_ai_slop: false` explicitly. Provenance
   and test inventory can be turned off with `--no-provenance`; the

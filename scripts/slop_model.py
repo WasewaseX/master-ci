@@ -175,6 +175,9 @@ REMEDIES = {
     "duplication-density": (
         "Extract the repeated lines into shared helpers; the density is the trend the ratchet holds"
     ),
+    "debt-ratio": "Pay down the worst check first; it is the pile the next release inherits",
+    "high-coupling": "Split the importer by responsibility; each import is a change set it owns",
+    "unstable-hub": "Freeze the hub's interface or push its churn down; dependents share it",
     "java-broad-throws": (
         "Throw the specific exception type; a broad Exception hides every "
         "failure mode behind one signature"
@@ -356,6 +359,11 @@ ADVISORY_ONLY_CHECKS = frozenset(
         # refactor conversation, advisory like the other budgets.
         "complexity-density",
         "duplication-density",
+        # v2.14: remediation debt and module coupling - priced and
+        # textured design evidence, advisory like the other budgets.
+        "debt-ratio",
+        "high-coupling",
+        "unstable-hub",
     }
 )
 

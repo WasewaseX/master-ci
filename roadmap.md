@@ -66,7 +66,8 @@ the scheduled (cron) mutation firing on a multi-tool consumer - is
 evidence to collect, not code to write. P1 has begun: LCOM4, the
 phase's first metric and the audit's largest single gap, shipped in
 v2.12.0, and the densities - complexity density and duplication
-density - in v2.13.0; the debt metrics follow.
+density - in v2.13.0; remediation debt with the debt ratio and module
+coupling shipped together in v2.14.0.
 
 Also recorded: mutation testing has no incremental PR mode (scheduled
 and dispatched only, by design today), and the scheduled (cron) path on
@@ -87,15 +88,15 @@ project hides behind a green aggregate.
 The metric layer. Priorities inside the phase: LCOM4 first (the
 largest single gap - a class with five unrelated methods is worse than
 one with twenty related ones, and no current rule sees it), then the
-densities, then debt.
+densities, then debt with coupling.
 
 | Metric               | Definition                                             | Target gap it closes                     |
 | -------------------- | ------------------------------------------------------ | ---------------------------------------- |
 | Reliability rating   | Dedicated dimension: defective control flow, unsafe error handling, null/optional mistakes, resource leaks, state errors, unhandled failure paths | No reliability grade separate from maintainability |
-| Remediation effort   | Rule-based repair-time estimate per finding, calibrated against reviewed fixes | Findings carry no cost |
-| Debt ratio           | Estimated remediation cost / estimated development cost, overall and new-code | No debt indicator; explicitly a documented-estimate indicator, not an objective financial value |
+| Remediation effort   | Rule-based repair-time estimate per finding, calibrated against reviewed fixes | Shipped in v2.14.0: pricing inside `slop_debt.py` - every finding priced by the class the engine's registry already gave it (design work 120 min: cycles, cohesion, the densities; structural budgets 30; blocking defects 20; advisory judgment calls 10) - no second taxonomy to drift from the severity model |
+| Debt ratio           | Estimated remediation cost / estimated development cost, overall and new-code | Shipped in v2.14.0: `debt-ratio` in `slop_debt.py` - remediation minutes over the SQALE reconstruction cost (3 min per lexer-counted executable line of the densities' corpus), budget 5.0% against self at 0.14% (50 priced minutes over ~35.6k dev minutes); advisory, maintainability, one finding per scan, anchored at the most expensive finding, the engine's own finding never prices itself |
 | LCOM4                | Connected method groups through shared state           | Shipped in v2.12.0: `low-cohesion` in `slop_lcom4.py` - Python AST-backed, JS/TS scanner-backed, the classic exclusions (constructors, dunders, statics, test files) documented with their false-positive reasons; advisory, maintainability dimension, groups rendered as evidence |
-| Coupling             | Fan-in, fan-out, afferent/efferent, instability, cross-layer edges | Import cycles exist; no coupling model   |
+| Coupling             | Fan-in, fan-out, afferent/efferent, instability, cross-layer edges | Shipped in v2.14.0: `high-coupling` and `unstable-hub` in `slop_coupling.py` - fan-out, fan-in and Martin instability over the graph from `slop_cycles.build_graph`, production nodes only (tests and generated names leave, test-origin edges dropped before the tallies); fan-out budget 30 against self 22, unstable hub at fan-in 25+ with instability above 0.66 against self 25 at I 0.04, a pure provider; advisory, maintainability |
 | Complexity density   | Total complexity / executable lines x 1000, per project and language | Shipped in v2.13.0: `complexity-density` in `slop_density.py` - total cyclomatic complexity per 1000 lexer-counted executable lines, budget 300 calibrated against this codebase's own 247/1000; one shared corpus (lexer-backed sources, no tests, no generated trees, 250-line minimum so snippets get no verdict); advisory, maintainability, per-language breakdown and worst contributors as evidence |
 | Duplication density  | Duplicated executable lines / eligible lines            | Shipped in v2.13.0: `duplication-density` beside it - duplicated executable lines (stripped, non-comment, 40+ chars, seen twice or more) as a percent of the same corpus, budget 5.0% against self at 2.3%; the trend number a ratchet holds, anchored at the most repeated line |
 | Hotspot risk         | Churn x complexity x defect history x dependents        | No churn-aware prioritization            |

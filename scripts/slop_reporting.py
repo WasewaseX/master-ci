@@ -42,6 +42,10 @@ TIERED_CHECKS: dict[str, float] = {
     # v2.13: the project densities - project-scale design debt.
     "complexity-density": TIER_MAINTAINABILITY,
     "duplication-density": TIER_MAINTAINABILITY,
+    # v2.14: remediation debt and module coupling - design conversations.
+    "debt-ratio": TIER_MAINTAINABILITY,
+    "high-coupling": TIER_MAINTAINABILITY,
+    "unstable-hub": TIER_MAINTAINABILITY,
     "phantom-import": TIER_MECHANICAL,
     "duplicate-import": TIER_MECHANICAL,
     "debug-print": TIER_MECHANICAL,

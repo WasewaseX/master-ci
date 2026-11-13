@@ -232,11 +232,13 @@ def _duplication_finding(facts: DensityFacts) -> Finding:
     )
 
 
-def check_density_metrics(root: Path, files: list[Path], globs: list[str]) -> list[Finding]:
-    """The two project densities: advisory, one finding each, over budget only."""
-    facts = measure(root, files, globs)
-    if facts is None:
-        return []
+def density_findings(facts: DensityFacts) -> list[Finding]:
+    """The two density findings for a measured corpus, over budget only.
+
+    Takes the measured facts rather than a root: the pipeline computes
+    the corpus once and shares it with the debt ratio, so every ratio
+    in the report divides by the same denominator.
+    """
     findings: list[Finding] = []
     if 1000 * facts.complexity / facts.exec_lines > COMPLEXITY_DENSITY_BUDGET:
         findings.append(_complexity_finding(facts))

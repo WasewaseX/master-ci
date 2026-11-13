@@ -37,15 +37,32 @@ from slop_comments import (  # noqa: F401
     phrase_findings,
     scan_comment_vocabulary,
 )
+from slop_coupling import (  # noqa: F401
+    COUPLING_FAN_OUT_BUDGET,
+    HUB_FAN_IN_MIN,
+    UNSTABLE_HUB_MAX_INSTABILITY,
+    check_coupling_metrics,
+)
 from slop_cycles import check_import_cycles  # noqa: F401
 from slop_dead import (  # noqa: F401
     check_orphan_modules,
     check_unused_declarations,
 )
+from slop_debt import (  # noqa: F401
+    BLOCKING_MINUTES,
+    DEBT_RATIO_BUDGET,
+    DEFAULT_MINUTES,
+    DESIGN_CHECKS,
+    DESIGN_MINUTES,
+    DEV_MIN_PER_LINE,
+    STRUCTURAL_MINUTES,
+    check_debt_metrics,
+)
 from slop_density import (  # noqa: F401
     COMPLEXITY_DENSITY_BUDGET,
     DUP_DENSITY_BUDGET,
-    check_density_metrics,
+    density_findings,
+    measure,
 )
 from slop_deps import check_unused_dependencies  # noqa: F401
 from slop_duplicates import (  # noqa: F401
@@ -319,11 +336,17 @@ def _repo_level_findings(
     findings.extend(check_orphan_modules(root, files, globs))
     findings.extend(check_import_cycles(root, files, globs))
     findings.extend(check_class_cohesion(root, files, globs))
-    findings.extend(check_density_metrics(root, files, globs))
+    findings.extend(check_coupling_metrics(root, files, globs))
+    facts = measure(root, files, globs)
+    if facts is not None:
+        findings.extend(density_findings(facts))
     findings.extend(check_architecture_rules(root, files, globs))
     findings.extend(check_unknown_directives(root, files, globs))
     if provenance:
         findings.extend(inventory_findings(root, files, globs))
+    if facts is not None:
+        # Last, so the ratio prices every other detector's findings.
+        findings.extend(check_debt_metrics(facts, findings))
     return findings
 
 

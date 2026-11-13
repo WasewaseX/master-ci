@@ -102,6 +102,12 @@ CHECK_CATEGORIES: dict[str, str] = {
     # not a defect to fix mechanically - maintainability, advisory.
     "complexity-density": "maintainability",
     "duplication-density": "maintainability",
+    # v2.14: remediation debt (the priced scan) and module coupling
+    # (fan-out, instability). Ratios and texture, not defects -
+    # design conversations, maintainability, advisory.
+    "debt-ratio": "maintainability",
+    "high-coupling": "maintainability",
+    "unstable-hub": "maintainability",
     # Security: injection surfaces and credential handling.
     "eval-usage": "security",
     "placeholder-credential": "security",
