@@ -211,6 +211,21 @@ on:
         required: false
         type: number
         default: 15
+      new_code_max_duplication:
+        description: Duplication-density ceiling on added lines, percent (100 = off)
+        required: false
+        type: number
+        default: 5
+      new_code_max_debt:
+        description: Debt-ratio ceiling on added lines, percent (100 = off)
+        required: false
+        type: number
+        default: 5
+      new_code_design_ceiling:
+        description: Ceiling for design findings (low-cohesion, high-coupling, unstable-hub) on added lines (-1 = off)
+        required: false
+        type: number
+        default: 0
       ratchet:
         description: >-
           auto | true | false - the quality ratchet: a committed baseline
@@ -281,7 +296,7 @@ jobs:
     # cannot go stale silently. Forks must edit these two uses: lines;
     # the template_repo/template_ref inputs below still steer every
     # helper fetch the child workflows make.
-    uses: WasewaseX/master-ci/.github/workflows/master-ci.yml@v2.13.0
+    uses: WasewaseX/master-ci/.github/workflows/master-ci.yml@v2.15.0
     permissions:
       contents: read
       security-events: write
@@ -321,6 +336,9 @@ jobs:
       new_code_max_slop: ${{ inputs.new_code_max_slop }}
       new_code_max_cognitive: ${{ inputs.new_code_max_cognitive }}
       new_code_max_cyclomatic: ${{ inputs.new_code_max_cyclomatic }}
+      new_code_max_duplication: ${{ inputs.new_code_max_duplication }}
+      new_code_max_debt: ${{ inputs.new_code_max_debt }}
+      new_code_design_ceiling: ${{ inputs.new_code_design_ceiling }}
       ratchet: ${{ inputs.ratchet }}
       ratchet_file: ${{ inputs.ratchet_file }}
       scorecard_publish: ${{ inputs.scorecard_publish }}
@@ -329,7 +347,7 @@ jobs:
       concurrency_key: ${{ inputs.concurrency_key }}
 
   codeql:
-    uses: WasewaseX/master-ci/.github/workflows/codeql.yml@v2.13.0
+    uses: WasewaseX/master-ci/.github/workflows/codeql.yml@v2.15.0
     permissions:
       contents: read
       security-events: write

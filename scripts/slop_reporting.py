@@ -46,6 +46,13 @@ TIERED_CHECKS: dict[str, float] = {
     "debt-ratio": TIER_MAINTAINABILITY,
     "high-coupling": TIER_MAINTAINABILITY,
     "unstable-hub": TIER_MAINTAINABILITY,
+    # v2.15: the reliability grade, the hotspot ranking and the
+    # abstraction texture - design-conversation pressure, advisory.
+    "reliability-rating": TIER_MAINTAINABILITY,
+    "shared-mutable-state": TIER_MAINTAINABILITY,
+    "hotspot-risk": TIER_MAINTAINABILITY,
+    "forwarding-chain": TIER_MAINTAINABILITY,
+    "no-behavior-class": TIER_MAINTAINABILITY,
     "phantom-import": TIER_MECHANICAL,
     "duplicate-import": TIER_MECHANICAL,
     "debug-print": TIER_MECHANICAL,

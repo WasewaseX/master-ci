@@ -8,6 +8,7 @@ credible, so every check id is explicitly categorized:
 
 - architecture       the repo's declared import law (opt-in config)
 - code-health        defects a reviewer fixes before merge
+- reliability        failure paths: error handling, leaks, shared state (v2.15)
 - maintainability    design debt, hygiene, suppression habits
 - security           injection surfaces and credential handling
 - test-assurance     tests that can fail, and coverage of the repo
@@ -24,6 +25,7 @@ from __future__ import annotations
 CATEGORY_ORDER = (
     "architecture",
     "code-health",
+    "reliability",
     "maintainability",
     "security",
     "test-assurance",
@@ -34,6 +36,7 @@ CATEGORY_ORDER = (
 CATEGORY_LABELS = {
     "architecture": "Architecture",
     "code-health": "Code health",
+    "reliability": "Reliability",
     "maintainability": "Maintainability",
     "security": "Security",
     "test-assurance": "Test assurance",
@@ -47,21 +50,30 @@ CHECK_CATEGORIES: dict[str, str] = {
     "arch-forbidden-import": "architecture",
     "arch-layer-violation": "architecture",
     "arch-missing-pattern": "architecture",
+    # Reliability (v2.15): the failure-path dimension, no longer blended
+    # into code health - error handling, resource leaks, shared state.
+    # Membership mirrors slop_reliability.RELIABILITY_CHECKS exactly, so
+    # the dimension table and the rating can never disagree.
+    "bare-except": "reliability",
+    "swallowed-exception": "reliability",
+    "empty-catch": "reliability",
+    "empty-rescue": "reliability",
+    "go-ignored-error": "reliability",
+    "java-broad-throws": "reliability",
+    "redundant-try-catch": "reliability",
+    "silent-recovery": "reliability",
+    "unwrap-density": "reliability",
+    "mutable-default": "reliability",
+    "unclosed-resource": "reliability",
+    "shared-mutable-state": "reliability",
+    "reliability-rating": "reliability",
     # Code health: defects a reviewer fixes before merge, whatever wrote them.
-    "bare-except": "code-health",
-    "swallowed-exception": "code-health",
-    "empty-catch": "code-health",
-    "empty-rescue": "code-health",
-    "go-ignored-error": "code-health",
     "go-error-assigned-blank": "code-health",
     "print-stacktrace-only": "code-health",
     "debugger-left": "code-health",
     "debug-print": "code-health",
     "unreachable-code": "code-health",
     "constant-condition": "code-health",
-    "redundant-try-catch": "code-health",
-    "silent-recovery": "code-health",
-    "java-broad-throws": "code-health",
     "boilerplate-duplication": "code-health",
     "duplicate-import": "code-health",
     "phantom-import": "code-health",
@@ -71,7 +83,6 @@ CHECK_CATEGORIES: dict[str, str] = {
     "god-function": "code-health",
     "deep-nesting": "code-health",
     "chained-dict-get": "code-health",
-    "unwrap-density": "code-health",
     "todo-density": "code-health",
     "unused-declaration": "code-health",
     "orphan-module": "code-health",
@@ -79,7 +90,6 @@ CHECK_CATEGORIES: dict[str, str] = {
     "bloat-param-count": "maintainability",
     "high-cyclomatic": "maintainability",
     "high-cognitive": "maintainability",
-    "mutable-default": "maintainability",
     "star-import": "maintainability",
     "range-len-loop": "maintainability",
     "isinstance-ladder": "maintainability",
@@ -108,6 +118,13 @@ CHECK_CATEGORIES: dict[str, str] = {
     "debt-ratio": "maintainability",
     "high-coupling": "maintainability",
     "unstable-hub": "maintainability",
+    # v2.15: the hotspot ranking (churn x complexity x defects x
+    # dependents) and the abstraction texture (forwarding chains,
+    # no-behavior classes) - prioritization and design texture, not
+    # defects. Maintainability, advisory.
+    "hotspot-risk": "maintainability",
+    "forwarding-chain": "maintainability",
+    "no-behavior-class": "maintainability",
     # Security: injection surfaces and credential handling.
     "eval-usage": "security",
     "placeholder-credential": "security",

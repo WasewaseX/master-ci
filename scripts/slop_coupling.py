@@ -185,11 +185,19 @@ def _hub_finding(facts: CouplingFacts, hubs: list[tuple[str, int, float]]) -> Fi
     )
 
 
-def check_coupling_metrics(root: Path, files: list[Path], globs: list[str]) -> list[Finding]:
-    """The two coupling verdicts: advisory, one finding each, over budget only."""
+def check_coupling_metrics(
+    root: Path, files: list[Path], globs: list[str], facts: CouplingFacts | None = None
+) -> list[Finding]:
+    """The two coupling verdicts: advisory, one finding each, over budget only.
+
+    `facts` is the pipeline's one measured graph, computed once and
+    shared with the hotspot ranking; when it is not handed over the
+    graph is built here, so direct callers keep the old signature.
+    """
     if not root.is_dir():
         return []
-    facts = measure_coupling(root, files, globs)
+    if facts is None:
+        facts = measure_coupling(root, files, globs)
     if facts is None:
         return []
     over = [item for item in facts.worst_fan_out if item[1] > COUPLING_FAN_OUT_BUDGET]

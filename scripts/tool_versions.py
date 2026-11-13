@@ -7,7 +7,7 @@ Usage:
     python3 tool_versions.py npm biome depcheck
         -> biome@2.6.6 depcheck@1.4.7
     python3 tool_versions.py go golangci-lint
-        -> v2.13.0  (bare refs: `go install pkg@$(...)`)
+        -> v2.14.0  (bare refs: `go install pkg@$(...)`)
     python3 tool_versions.py cargo cargo-deny
         -> 0.20.2   (bare refs: `cargo install --version $(...)`)
     python3 tool_versions.py maven jacoco

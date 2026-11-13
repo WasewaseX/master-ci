@@ -83,7 +83,7 @@ which keeps its baseline reproducible across template releases:
 ```yaml
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v2.13.0
+      template_ref: v2.15.0
 ```
 
 ### Required check
@@ -103,7 +103,7 @@ alone cannot fail on a red CodeQL analysis (audit finding F). Two honest
 shapes:
 
 - **One required check (recommended):** call
-  `WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.13.0`
+  `WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.15.0`
   instead of `master-ci.yml` and require **`required-quality-check / gate`**.
   The first segment is the job id the caller gives the call, so the
   example below names its job `required-quality-check`; a caller naming
@@ -116,7 +116,7 @@ shapes:
   ```yaml
   jobs:
     required-quality-check:
-      uses: WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.13.0
+      uses: WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.15.0
       permissions:
         contents: read
         security-events: write
@@ -514,10 +514,10 @@ dispatched) wrapper,
 ```yaml
 jobs:
   hunt:
-    uses: WasewaseX/master-ci/.github/workflows/flaky.yml@v2.13.0
+    uses: WasewaseX/master-ci/.github/workflows/flaky.yml@v2.15.0
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v2.13.0
+      template_ref: v2.15.0
     permissions:
       # The called quarantine job declares contents: write and
       # pull-requests: write; a reusable call that grants less than its
@@ -790,7 +790,7 @@ carries a `SKILL.md`, so assistants with a skills directory can load it
 with one command:
 
 ```bash
-git clone --depth 1 --branch v2.13.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+git clone --depth 1 --branch v2.15.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
 ```
 
 MCP clients configure the same install like this:
@@ -1086,13 +1086,32 @@ and each over-budget finding carrying the numbers, the per-language
 breakdown and the top offenders as evidence - advisory,
 maintainability, the trend numbers a ratchet can hold.
 
+And since v2.15: the **P1 metric layer completes**. **Reliability**
+got its own dimension and rating - `unclosed-resource` (an `open()`
+result held outside any with-block and never closed, blocking) and
+`shared-mutable-state` (a class attribute born a container literal
+every instance shares, advisory with `ClassVar` as the declared
+intentional exit), graded A-E on SonarQube's bands over the debt
+engine's pricing: self grades A at 0% of dev cost. **Hotspot risk**
+ranks the corpus by churn x complexity x defect history x dependents,
+one formula over git history, the densities' complexity and the
+coupling graph's fan-in (budget 1200 against self 352, advisory).
+**Abstraction overhead** upgrades the thin-wrapper rule to a
+same-target forwarding ladder of 4+ rungs and to no-behavior classes
+whose every method forwards to one injected object. And the **new-code
+gates** (the P2 row) bring duplication density, debt ratio and the
+design findings onto the merge-base diff alongside cognitive and
+cyclomatic: every added line now meets the whole measured bar.
+
 The forward plan - the measurement-engine phases accepted from the
 external v2.11.0 competitor audit (2026-11-11), verified claim-by-claim
 against the codebase with the evidence recorded - lives in
 [roadmap.md](roadmap.md): P0 workflow correctness (complete), the P1
-metric layer - LCOM4 shipped in v2.12 and the densities in v2.13, debt
-and coupling measurements next - semantic bloat analysis, the P2
-gates-and-history work, and the public precision/recall benchmark.
+metric layer - LCOM4 in v2.12, the densities in v2.13, debt and
+coupling in v2.14, reliability, hotspots and abstraction overhead in
+v2.15: complete - semantic bloat analysis, the P2 gates-and-history
+work (the new-code gates row shipped in v2.15), and the public
+precision/recall benchmark.
 
 ## License
 

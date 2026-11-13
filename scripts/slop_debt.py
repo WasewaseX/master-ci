@@ -6,16 +6,16 @@ found and asks the SQALE question: how big is the fix-it pile next to
 the cost of writing the code in the first place?
 
 - remediation effort - estimated minutes to fix every finding the scan
-  emitted, priced by the class the engine's own registry already gave
-  the check. No second taxonomy: the same membership that decides
-  severity decides price. Design work (cycles, cohesion, the
-  densities) is a refactor conversation and prices highest; structural
-  budgets are a split-function edit; blocking defects are a focused
-  pre-merge fix; the advisory judgment calls are mechanical edits.
+    emitted, priced by the class the engine's own registry already gave
+    the check. No second taxonomy: the same membership that decides
+    severity decides price. Design work (cycles, cohesion, the
+    densities) is a refactor conversation and prices highest; structural
+    budgets are a split-function edit; blocking defects are a focused
+    pre-merge fix; the advisory judgment calls are mechanical edits.
 - debt ratio - remediation minutes over reconstruction cost, the SQALE
-  denominator: DEV_MIN_PER_LINE per executable line of the measured
-  corpus. A ratio is comparable across repos of different sizes where
-  a raw hour count is not.
+    denominator: DEV_MIN_PER_LINE per executable line of the measured
+    corpus. A ratio is comparable across repos of different sizes where
+    a raw hour count is not.
 
 The measured corpus is the densities' corpus - same lexer-backed
 sources, no tests, no generated trees, same 250-line floor - handed

@@ -12,6 +12,17 @@ today's bar:
 - ``--max-cognitive``: cognitive complexity of functions the change
     touches (a Sonar-style reader-effort measure).
 - ``--max-cyclomatic``: cyclomatic complexity of touched functions.
+- ``--max-new-duplication`` (v2.15): duplicated long lines as a percent
+    of the non-blank added lines - the duplication density's diff-window
+    sibling (the project metric divides by lexer-counted lines; the diff
+    gate counts non-blank lines, no lexer pass over changed text).
+- ``--max-new-debt`` (v2.15): findings on added lines priced by the debt
+    engine's registry minutes over the SQALE cost of the added lines -
+    the debt ratio, computed only over what the change brought in.
+- ``--max-design-findings`` (v2.15): low-cohesion, high-coupling and
+    unstable-hub verdicts anchored on added lines. Together with the two
+    above this is the roadmap's P2 new-code-gates row shipped: the four
+    metric families join cognitive/cyclomatic on the merge-base diff.
 
 A function counts as touched when the diff's added lines intersect its
 span, approximated as ``[start, max(start + nloc, next start))`` - an
@@ -44,6 +55,13 @@ from ai_slop_detector import scan
 from coverage_gate import git_changed_lines
 from slop_analysis_coverage import analysis_coverage, coverage_section
 from slop_cognitive import cognitive_facts, tree_sitter_available
+from slop_diff_ceilings import (  # noqa: F401 - DESIGN_GATE_CHECKS re-exported
+    DESIGN_GATE_CHECKS,
+    MetricCeilings,
+    debt_ceiling,
+    design_ceiling,
+    duplication_ceiling,
+)
 from slop_files import load_phrases, read_text_lax
 from slop_lizard import FunctionFact, lizard_available, parse_functions
 from slop_model import Finding
@@ -136,18 +154,53 @@ def run_gate(
     max_slop: int,
     max_cognitive: int,
     max_cyclomatic: int,
+    ceilings: MetricCeilings | None = None,
 ) -> tuple[int, list[str], list[Finding]]:
     """Evaluate the requested ceilings; raise NewCodeGateError on unevaluable.
 
     Returns (exit code, markdown sections, new-line findings for the
     annotation pass).
     """
-    requested = max_slop != 100 or max_cognitive > 0 or max_cyclomatic > 0
-    if not requested:
+    metric = ceilings if ceilings is not None else MetricCeilings()
+    if not _any_ceiling(max_slop, max_cognitive, max_cyclomatic, metric):
         return 0, [], []
-    # The v2.5 parser guarantee: a requested ceiling is a promise to
-    # measure, and a missing analyzer would turn the promise into a
-    # silent "0 functions touched" pass. Refuse before doing any work.
+    _parser_promise(max_cognitive, max_cyclomatic)
+    changed = _changed_window(root, diff_base)
+    sections: list[str] = []
+    if max_cognitive > 0 or max_cyclomatic > 0:
+        sections.append(_coverage_guard(root, changed, max_cognitive, max_cyclomatic))
+    # One scan feeds all three finding-based ceilings: the blocking
+    # score, the priced debt ratio and the design-findings count.
+    new_line_findings: list[Finding] = []
+    if max_slop != 100 or metric.wants_findings:
+        new_line_findings = findings_on_new_lines(root, scan(root, load_phrases()), changed)
+    exit_code, slop_sections, findings = _slop_ceiling(new_line_findings, max_slop)
+    dup_exit, dup_sections = duplication_ceiling(root, changed, metric.new_duplication)
+    debt_exit, debt_sections = debt_ceiling(new_line_findings, changed, metric.new_debt)
+    design_exit, design_sections = design_ceiling(new_line_findings, metric.design_findings)
+    complexity_exit, complexity_sections = _complexity_ceiling(
+        root, changed, max_cognitive, max_cyclomatic
+    )
+    sections += slop_sections + dup_sections + debt_sections
+    sections += design_sections + complexity_sections
+    exit_code = max(exit_code, dup_exit, debt_exit, design_exit, complexity_exit)
+    return exit_code, sections, findings
+
+
+def _any_ceiling(
+    max_slop: int, max_cognitive: int, max_cyclomatic: int, metric: MetricCeilings
+) -> bool:
+    """A gate runs when at least one requested ceiling is switched on."""
+    return max_slop != 100 or max_cognitive > 0 or max_cyclomatic > 0 or metric.requested
+
+
+def _parser_promise(max_cognitive: int, max_cyclomatic: int) -> None:
+    """Refuse before any work when a requested analyzer is missing.
+
+    The v2.5 parser guarantee: a requested ceiling is a promise to
+    measure, and a missing analyzer would turn the promise into a
+    silent "0 functions touched" pass.
+    """
     if max_cyclomatic > 0 and not lizard_available():
         raise NewCodeGateError(
             "a cyclomatic ceiling is requested but lizard is not importable - "
@@ -161,55 +214,53 @@ def run_gate(
             "(configs/tool-versions.yml); the gate refuses to pass on a "
             "metric it could not measure"
         )
+
+
+def _changed_window(root: Path, diff_base: str) -> dict[str, set[int]]:
+    """The added lines by file; fail closed (exit 2) on any git failure."""
     if not diff_base:
         raise NewCodeGateError("new-code gate requested but --diff-base is empty")
     try:
-        changed = git_changed_lines(root, diff_base)
+        return git_changed_lines(root, diff_base)
     except Exception as exc:  # noqa: BLE001 - the gate maps any git failure to exit 2
         raise NewCodeGateError(f"cannot diff against {diff_base!r}: {exc}") from exc
-    sections: list[str] = []
-    if max_cognitive > 0 or max_cyclomatic > 0:
-        # Analysis coverage (v2.8): a file the requested parser cannot
-        # read is fatal here - downstream it would degrade into "no
-        # functions touched", the silent pass v2.5 exists to prevent.
-        coverage = analysis_coverage(
-            root,
-            changed,
-            want_cognitive=max_cognitive > 0,
-            want_cyclomatic=max_cyclomatic > 0,
-        )
-        if coverage.parse_failed:
-            shown = ", ".join(coverage.parse_failed[:10])
-            more = (
-                f" (+{len(coverage.parse_failed) - 10} more)"
-                if len(coverage.parse_failed) > 10
-                else ""
-            )
-            raise NewCodeGateError(
-                "a requested ceiling's parser could not measure every changed "
-                f"file - parse failures: {shown}{more}; fix the syntax or "
-                "document an exclusion, the gate refuses to treat unanalyzed "
-                "code as clean"
-            )
-        sections.append(coverage_section(coverage))
-    exit_code, slop_sections, findings = _slop_ceiling(root, changed, max_slop)
-    complexity_exit, complexity_sections = _complexity_ceiling(
-        root, changed, max_cognitive, max_cyclomatic
+
+
+def _coverage_guard(
+    root: Path, changed: dict[str, set[int]], max_cognitive: int, max_cyclomatic: int
+) -> str:
+    """Analysis coverage (v2.8): unanalyzed must never read as clean.
+
+    A file the requested parser cannot read is fatal here - downstream
+    it would degrade into "no functions touched", the silent pass the
+    guarantee exists to prevent.
+    """
+    coverage = analysis_coverage(
+        root,
+        changed,
+        want_cognitive=max_cognitive > 0,
+        want_cyclomatic=max_cyclomatic > 0,
     )
-    sections += slop_sections + complexity_sections
-    exit_code = max(exit_code, complexity_exit)
-    return exit_code, sections, findings
+    if not coverage.parse_failed:
+        return coverage_section(coverage)
+    shown = ", ".join(coverage.parse_failed[:10])
+    more = f" (+{len(coverage.parse_failed) - 10} more)" if len(coverage.parse_failed) > 10 else ""
+    raise NewCodeGateError(
+        "a requested ceiling's parser could not measure every changed "
+        f"file - parse failures: {shown}{more}; fix the syntax or "
+        "document an exclusion, the gate refuses to treat unanalyzed "
+        "code as clean"
+    )
 
 
 def _slop_ceiling(
-    root: Path, changed: dict[str, set[int]], max_slop: int
+    new_line_findings: list[Finding], max_slop: int
 ) -> tuple[int, list[str], list[Finding]]:
     if max_slop == 100:
         return 0, [], []
-    findings = findings_on_new_lines(root, scan(root, load_phrases()), changed)
-    score = blocking_score(findings)
+    score = blocking_score(new_line_findings)
     exit_code = 1 if score > max_slop else 0
-    return exit_code, [_slop_section(findings, score, max_slop)], findings
+    return exit_code, [_slop_section(new_line_findings, score, max_slop)], new_line_findings
 
 
 def _complexity_ceiling(
@@ -291,6 +342,27 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--max-cyclomatic", type=int, default=0, help="Cyclomatic-complexity ceiling (0 = off)"
     )
+    parser.add_argument(
+        "--max-new-duplication",
+        type=float,
+        default=100.0,
+        help="Duplication-density ceiling on added lines, percent (100 = off)",
+    )
+    parser.add_argument(
+        "--max-new-debt",
+        type=float,
+        default=100.0,
+        help="Debt-ratio ceiling on added lines, percent (100 = off)",
+    )
+    parser.add_argument(
+        "--max-design-findings",
+        type=int,
+        default=-1,
+        help=(
+            "Ceiling for design findings on added lines: low-cohesion, "
+            "high-coupling, unstable-hub (-1 = off)"
+        ),
+    )
     args = parser.parse_args(argv)
     try:
         exit_code, sections, findings = run_gate(
@@ -299,6 +371,11 @@ def main(argv: list[str] | None = None) -> int:
             max_slop=args.max_slop_score,
             max_cognitive=args.max_cognitive,
             max_cyclomatic=args.max_cyclomatic,
+            ceilings=MetricCeilings(
+                new_duplication=args.max_new_duplication,
+                new_debt=args.max_new_debt,
+                design_findings=args.max_design_findings,
+            ),
         )
     except NewCodeGateError as exc:
         print(f"new-code gate rejected: {exc}", file=sys.stderr)

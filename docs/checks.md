@@ -626,6 +626,39 @@ Profile presets (quick / standard / strict / custom) only change the
   provider - the healthy hub shape the instability leg protects).
   Both advisory, maintainability, one finding each, over budget only,
   with the ranked offenders as evidence.
+- **v2.15 - the P1 metric layer's last three slices and the P2 gates
+  row. Reliability (`unclosed-resource`, `shared-mutable-state`,
+  `reliability-rating`):** a dedicated failure-path dimension, no
+  longer blended into code health. Two AST-backed defect checks fill
+  the roadmap's named gaps - an `open()` result held outside any
+  with-block and never closed (blocking, like the other reliability
+  defects), and a class attribute born a list/dict/set literal that
+  every instance shares (advisory; `ClassVar` is the declared
+  intentional exit). The rating prices the dimension's findings with
+  the debt engine's registry minutes over the same SQALE denominator
+  and grades SonarQube's bands - A to 3% of dev cost, B to 5%, C to
+  10%, D to 20%, E past that - one advisory finding, off the A band
+  only, anchored at the most expensive reliability finding. **Hotspot
+  (`hotspot-risk`):** churn x complexity x defect history x dependents
+  over the one measured corpus and graph - `risk = (churn + 3 x fixes)
+  x ccn x (1 + fan_in / 10)` from git history read in the scan root
+  (any git failure means no history, and the metric stays silent), the
+  densities' per-file complexity and the coupling graph's fan-in;
+  budget 1200 against self 352 at adoption, advisory, anchored at the
+  hottest file with the ranked list as evidence. **Abstraction
+  (`forwarding-chain`, `no-behavior-class`):** the thin-wrapper rule
+  upgraded to the pattern around it - a same-target delegation ladder
+  of 4 or more pass-through rungs within one module, and a class whose
+  every non-dunder method forwards to one injected object (Protocol,
+  ABC, dataclass, exception and enum shapes excluded with their
+  false-positive reasons). Both advisory, maintainability.
+  **New-code gates (v2.15, the P2 row):** duplication density, debt
+  ratio and the design findings (low-cohesion, high-coupling,
+  unstable-hub) join cognitive/cyclomatic on the merge-base diff -
+  `--max-new-duplication` (duplicated long lines over non-blank added
+  lines), `--max-new-debt` (findings on added lines priced over the
+  SQALE cost of the added lines) and `--max-design-findings`, wired
+  through the `new_code_*` inputs with defaults 5% / 5% / 0.
 - **Disable:** `profile: quick` keeps the whole job advisory; with
   `profile: custom` set `fail_on_ai_slop: false` explicitly. Provenance
   and test inventory can be turned off with `--no-provenance`; the

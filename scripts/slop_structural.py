@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import ClassVar
 
 from slop_patterns import _strip_strings
 
@@ -64,8 +65,14 @@ class _CommentBlanker:
     """
 
     # string state -> (terminator, ends-at-line-end); backtick strings
-    # (JS template literals, Go raw strings) span lines
-    _TERMS = {"squote": ("'", True), "dquote": ('"', True), "backtick": ("`", False)}
+    # (JS template literals, Go raw strings) span lines. ClassVar is the
+    # declared-intentional exit the reliability dimension honors: every
+    # instance shares this read-only dispatch table by design.
+    _TERMS: ClassVar[dict[str, tuple[str, bool]]] = {
+        "squote": ("'", True),
+        "dquote": ('"', True),
+        "backtick": ("`", False),
+    }
 
     def __init__(self, text: str, family: str) -> None:
         self.text = text

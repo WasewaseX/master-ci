@@ -63,11 +63,19 @@ per-project scan (v2.11.1), the flaky hunt's per-project discovery
 and per-suite status table (v2.11.2), the required aggregate kept
 since v2.8, and the stale descriptions here. The remaining P0 note -
 the scheduled (cron) mutation firing on a multi-tool consumer - is
-evidence to collect, not code to write. P1 has begun: LCOM4, the
-phase's first metric and the audit's largest single gap, shipped in
-v2.12.0, and the densities - complexity density and duplication
-density - in v2.13.0; remediation debt with the debt ratio and module
-coupling shipped together in v2.14.0.
+evidence to collect, not code to write. The canary's cron mechanism
+is proven live: the CI workflow's schedule has fired seven times, all
+success (latest run 43431866970, 2026-11-13, under the v2.13.0
+pins) - scheduled triggers fire and run green on the consumer. The
+mutation workflow's own cron window is the last unbanked firing.
+P1 has begun: LCOM4, the phase's first metric and the audit's largest
+single gap, shipped in v2.12.0, and the densities - complexity density
+and duplication density - in v2.13.0; remediation debt with the debt
+ratio and module coupling shipped together in v2.14.0; and v2.15.0
+ships the phase's last three rows - the reliability rating, hotspot
+risk and abstraction overhead - completing the P1 metric layer, plus
+the P2 new-code gates row (duplication density, debt ratio, LCOM4 and
+coupling join the merge-base diff).
 
 Also recorded: mutation testing has no incremental PR mode (scheduled
 and dispatched only, by design today), and the scheduled (cron) path on
@@ -88,19 +96,20 @@ project hides behind a green aggregate.
 The metric layer. Priorities inside the phase: LCOM4 first (the
 largest single gap - a class with five unrelated methods is worse than
 one with twenty related ones, and no current rule sees it), then the
-densities, then debt with coupling.
+densities, then debt with coupling. The phase ships complete at
+v2.15.0: every row below is measured, tested and calibrated.
 
 | Metric               | Definition                                             | Target gap it closes                     |
 | -------------------- | ------------------------------------------------------ | ---------------------------------------- |
-| Reliability rating   | Dedicated dimension: defective control flow, unsafe error handling, null/optional mistakes, resource leaks, state errors, unhandled failure paths | No reliability grade separate from maintainability |
+| Reliability rating   | Dedicated dimension: defective control flow, unsafe error handling, null/optional mistakes, resource leaks, state errors, unhandled failure paths | Shipped in v2.15.0: `reliability-rating` in `slop_reliability.py` - a dedicated failure-path dimension (error handling, leaks, shared state leave code health) plus two AST-backed defect checks filling the named gaps: `unclosed-resource` (an `open()` result held outside any with-block and never closed; blocking) and `shared-mutable-state` (a class attribute born a container literal every instance shares; advisory, `ClassVar` the declared exit). The rating prices the dimension's findings with the debt engine's registry minutes over the same SQALE denominator and grades SonarQube's bands (A to 3% of dev cost, B 5, C 10, D 20, E past); self grades A at 0% - one advisory finding, off the A band only |
 | Remediation effort   | Rule-based repair-time estimate per finding, calibrated against reviewed fixes | Shipped in v2.14.0: pricing inside `slop_debt.py` - every finding priced by the class the engine's registry already gave it (design work 120 min: cycles, cohesion, the densities; structural budgets 30; blocking defects 20; advisory judgment calls 10) - no second taxonomy to drift from the severity model |
 | Debt ratio           | Estimated remediation cost / estimated development cost, overall and new-code | Shipped in v2.14.0: `debt-ratio` in `slop_debt.py` - remediation minutes over the SQALE reconstruction cost (3 min per lexer-counted executable line of the densities' corpus), budget 5.0% against self at 0.14% (50 priced minutes over ~35.6k dev minutes); advisory, maintainability, one finding per scan, anchored at the most expensive finding, the engine's own finding never prices itself |
 | LCOM4                | Connected method groups through shared state           | Shipped in v2.12.0: `low-cohesion` in `slop_lcom4.py` - Python AST-backed, JS/TS scanner-backed, the classic exclusions (constructors, dunders, statics, test files) documented with their false-positive reasons; advisory, maintainability dimension, groups rendered as evidence |
 | Coupling             | Fan-in, fan-out, afferent/efferent, instability, cross-layer edges | Shipped in v2.14.0: `high-coupling` and `unstable-hub` in `slop_coupling.py` - fan-out, fan-in and Martin instability over the graph from `slop_cycles.build_graph`, production nodes only (tests and generated names leave, test-origin edges dropped before the tallies); fan-out budget 30 against self 22, unstable hub at fan-in 25+ with instability above 0.66 against self 25 at I 0.04, a pure provider; advisory, maintainability |
 | Complexity density   | Total complexity / executable lines x 1000, per project and language | Shipped in v2.13.0: `complexity-density` in `slop_density.py` - total cyclomatic complexity per 1000 lexer-counted executable lines, budget 300 calibrated against this codebase's own 247/1000; one shared corpus (lexer-backed sources, no tests, no generated trees, 250-line minimum so snippets get no verdict); advisory, maintainability, per-language breakdown and worst contributors as evidence |
 | Duplication density  | Duplicated executable lines / eligible lines            | Shipped in v2.13.0: `duplication-density` beside it - duplicated executable lines (stripped, non-comment, 40+ chars, seen twice or more) as a percent of the same corpus, budget 5.0% against self at 2.3%; the trend number a ratchet holds, anchored at the most repeated line |
-| Hotspot risk         | Churn x complexity x defect history x dependents        | No churn-aware prioritization            |
-| Abstraction overhead | Forwarding-only methods, no-behavior classes, one-use interfaces, redundant adapter and DI chains | Thin-wrapper rule sees one function, never a 20-layer graph |
+| Hotspot risk         | Churn x complexity x defect history x dependents        | Shipped in v2.15.0: `hotspot-risk` in `slop_hotspot.py` - `risk = (churn + 3 x fixes) x ccn x (1 + fan_in / 10)` over the one measured corpus and graph: git history read in the scan root (any git failure means no history and silence, never a guessed count; the show-prefix strips so keys match the densities' rel paths), the densities' per-file complexity, the coupling graph's fan-in. Budget 1200 against self 352 at adoption (3.4x headroom - churn drifts per commit); advisory, anchored at the hottest file with the ranked list as evidence |
+| Abstraction overhead | Forwarding-only methods, no-behavior classes, one-use interfaces, redundant adapter and DI chains | Shipped in v2.15.0 (first slice): `forwarding-chain` and `no-behavior-class` in `slop_abstraction.py` - the thin-wrapper rule upgraded to the pattern around it: a same-target delegation ladder of 4+ pass-through rungs within one module, and a class whose every non-dunder method forwards to one injected object; Protocol/ABC, dataclass, exception and enum shapes excluded with their false-positive reasons. Cross-module chains stay for the semantic phase's graph; both advisory, maintainability |
 
 Constraints adopted with the metrics:
 
@@ -144,7 +153,7 @@ stay advisory.
 | --------------------- | ------------------------------------------------------------------------------- | -------------------- |
 | Finding fingerprints  | The quality ratchet reports new / resolved / unchanged / reintroduced from stable identities (rule id, project, file, symbol, normalized fingerprint, severity, rule version) | The ratchet freezes per-check counts; removing one old finding while adding a new one leaves the count unchanged and invisible. A fingerprint suppression baseline already exists for advisory findings - this upgrades the ratchet, it does not start from zero |
 | Per-project baselines | Monorepo projects cannot hide a regression behind another project's improvement  | Baseline is per check id, not per project |
-| New-code gates        | Duplication density, debt ratio, LCOM4 and coupling join cognitive/cyclomatic on the merge-base diff | New-code gate covers blocking findings, cognitive and cyclomatic only |
+| New-code gates        | Duplication density, debt ratio, LCOM4 and coupling join cognitive/cyclomatic on the merge-base diff | Shipped in v2.15.0: `--max-new-duplication` (duplicated long lines over non-blank added lines), `--max-new-debt` (findings on added lines priced by the debt engine's minutes over the SQALE cost of the added lines) and `--max-design-findings` (low-cohesion, high-coupling, unstable-hub verdicts anchored on added lines) in `new_code_gate.py`, wired through the `new_code_*` inputs of both reusable workflows with defaults 5% / 5% / 0; the scan runs once and feeds all three finding-based ceilings |
 | Durable history       | Metric snapshots in a versioned store (dedicated branch), not just CI outcomes   | `quality_history.py` records ts/run_id/ref/sha/verdict/coverage_min/failed_jobs in an `actions/cache` JSONL; caches unused for seven days are evicted - it is a trend of CI outcomes, not of code quality |
 | Analyzer profiles     | Qodana-style per-language rules, severities, scopes, thresholds, baseline-aware gates | Thresholds are global constants |
 | Refactoring proposals | Reviewable PRs with evidence - the quarantine-PR pattern generalized to quality debt | Quarantine is the only PR-emitting loop today |

@@ -368,3 +368,109 @@ def test_coverage_section_renders_rows() -> None:
     assert "| Excluded (non-source) | 1 | - |" in text
     assert "| Unsupported language | 1 | `c.ex` |" in text
     assert "| Parse failure | 1 | `d.py (lizard)` |" in text
+
+
+# ---------------------------------------------------------------------------
+# v2.15: duplication density, debt ratio and design findings join the diff
+# ---------------------------------------------------------------------------
+
+# The same long line twice in one added file: the densities' numerator,
+# over the diff window. alpha/bravo/charlie keep the fixtures domain-y.
+DUPLICATED_BODY = (
+    "def load(payload):\n"
+    "    merged = {key: normalize(value) for key, value in payload.items() if value}\n"
+    "    merged = {key: normalize(value) for key, value in payload.items() if value}\n"
+    "    return merged\n"
+)
+
+
+def test_duplication_ceiling_breaches_on_repeated_added_lines(repo: Path) -> None:
+    (repo / "twin.py").write_text(DUPLICATED_BODY, encoding="utf-8")
+    _commit(repo, "add the loader twice")
+    exit_code, sections, _ = ng.run_gate(
+        repo,
+        diff_base=_base(repo),
+        max_slop=100,
+        max_cognitive=0,
+        max_cyclomatic=0,
+        ceilings=ng.MetricCeilings(new_duplication=0),
+    )
+    assert exit_code == 1
+    assert any("duplication density" in section for section in sections)
+
+
+def test_duplication_ceiling_holds_on_unique_lines(repo: Path) -> None:
+    (repo / "unique.py").write_text(
+        "def load_one(payload):\n    return payload[0]\n", encoding="utf-8"
+    )
+    _commit(repo, "unique lines only")
+    exit_code, _, _ = ng.run_gate(
+        repo,
+        diff_base=_base(repo),
+        max_slop=100,
+        max_cognitive=0,
+        max_cyclomatic=0,
+        ceilings=ng.MetricCeilings(new_duplication=0),
+    )
+    assert exit_code == 0
+
+
+def test_debt_ceiling_breaches_on_priced_new_defects(repo: Path) -> None:
+    (repo / "bad.py").write_text(
+        "def handle(req):\n    try:\n        return req\n    except Exception:\n        pass\n",
+        encoding="utf-8",
+    )
+    _commit(repo, "add a swallowed exception")
+    exit_code, sections, _ = ng.run_gate(
+        repo,
+        diff_base=_base(repo),
+        max_slop=100,
+        max_cognitive=0,
+        max_cyclomatic=0,
+        ceilings=ng.MetricCeilings(new_debt=1),
+    )
+    assert exit_code == 1
+    assert any("debt ratio" in section for section in sections)
+
+
+def test_new_metric_ceilings_are_off_by_default(repo: Path) -> None:
+    (repo / "clean.py").write_text("def one():\n    return 1\n", encoding="utf-8")
+    _commit(repo, "clean change")
+    exit_code, sections, _ = ng.run_gate(
+        repo, diff_base=_base(repo), max_slop=0, max_cognitive=0, max_cyclomatic=0
+    )
+    assert exit_code == 0
+    assert not any("duplication density" in section for section in sections)
+    assert not any("debt ratio" in section for section in sections)
+    assert not any("design finding" in section for section in sections)
+
+
+def test_design_finding_ceiling_breaches(monkeypatch, repo: Path) -> None:
+    (repo / "hub.py").write_text("def one():\n    return 1\n", encoding="utf-8")
+    _commit(repo, "add hub")
+    design = Finding(path="hub.py", line=1, check="low-cohesion", message="m", weight=2)
+    monkeypatch.setattr(ng, "scan", lambda *args, **kwargs: [design])
+    exit_code, sections, _ = ng.run_gate(
+        repo,
+        diff_base=_base(repo),
+        max_slop=100,
+        max_cognitive=0,
+        max_cyclomatic=0,
+        ceilings=ng.MetricCeilings(design_findings=0),
+    )
+    assert exit_code == 1
+    assert any("design finding" in section for section in sections)
+
+
+def test_design_finding_ceiling_holds_when_absent(repo: Path) -> None:
+    (repo / "clean.py").write_text("def one():\n    return 1\n", encoding="utf-8")
+    _commit(repo, "clean change")
+    exit_code, _, _ = ng.run_gate(
+        repo,
+        diff_base=_base(repo),
+        max_slop=100,
+        max_cognitive=0,
+        max_cyclomatic=0,
+        ceilings=ng.MetricCeilings(design_findings=0),
+    )
+    assert exit_code == 0

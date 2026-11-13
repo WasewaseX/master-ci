@@ -18,6 +18,7 @@ _HERE = str(Path(__file__).resolve().parent)
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
+from slop_abstraction import check_abstraction  # noqa: F401
 from slop_arch import ArchConfigError, check_architecture_rules  # noqa: F401
 from slop_bloat import (  # noqa: F401
     check_bloat,
@@ -42,6 +43,7 @@ from slop_coupling import (  # noqa: F401
     HUB_FAN_IN_MIN,
     UNSTABLE_HUB_MAX_INSTABILITY,
     check_coupling_metrics,
+    measure_coupling,
 )
 from slop_cycles import check_import_cycles  # noqa: F401
 from slop_dead import (  # noqa: F401
@@ -89,6 +91,11 @@ from slop_files import (  # noqa: F401
     load_ignore_rules,
     load_phrases,
 )
+from slop_hotspot import (  # noqa: F401
+    HOTSPOT_RISK_BUDGET,
+    check_hotspot_metrics,
+    churn_map,
+)
 from slop_imports import (  # noqa: F401
     DepContext,
     check_phantom_imports,
@@ -125,6 +132,13 @@ from slop_py_checks import (  # noqa: F401
     check_elided_code,
     check_placeholder_impl,
     check_py_ast,
+)
+from slop_reliability import (  # noqa: F401
+    RELIABILITY_CHECKS,
+    check_reliability_rating,
+    check_shared_mutable_state,
+    check_unclosed_resource,
+    reliability_grade,
 )
 from slop_reporting import (  # noqa: F401
     advisory_score,
@@ -171,6 +185,12 @@ def scan_code_file(
     findings.extend(check_elided_code(path, text))
     findings.extend(check_placeholder_impl(path, text))
     findings.extend(check_py_ast(path, text, family))
+    findings.extend(check_abstraction(path, text, family))
+    if family == "py":
+        # Reliability's per-file defect checks are AST-backed Python;
+        # other families lean on the family scanners' own oracles.
+        findings.extend(check_unclosed_resource(path, text))
+        findings.extend(check_shared_mutable_state(path, text))
     findings.extend(check_bloat(path, text, family, rel, comments))
     findings.extend(check_cognitive(path, text, ext))
     findings.extend(check_exceptions_js_family(path, text, family))
@@ -336,16 +356,23 @@ def _repo_level_findings(
     findings.extend(check_orphan_modules(root, files, globs))
     findings.extend(check_import_cycles(root, files, globs))
     findings.extend(check_class_cohesion(root, files, globs))
-    findings.extend(check_coupling_metrics(root, files, globs))
     facts = measure(root, files, globs)
+    coupling = measure_coupling(root, files, globs)
+    findings.extend(check_coupling_metrics(root, files, globs, facts=coupling))
     if facts is not None:
+        # The hotspot shares the one measured corpus and graph: churn
+        # reads git once, complexity and dependents arrive pre-computed.
+        churn, defects = churn_map(root)
+        findings.extend(check_hotspot_metrics(facts, coupling, churn, defects))
         findings.extend(density_findings(facts))
     findings.extend(check_architecture_rules(root, files, globs))
     findings.extend(check_unknown_directives(root, files, globs))
     if provenance:
         findings.extend(inventory_findings(root, files, globs))
     if facts is not None:
-        # Last, so the ratio prices every other detector's findings.
+        # Reliability grades first; debt prices last, so the ratio
+        # prices every other detector's findings, the rating's included.
+        findings.extend(check_reliability_rating(facts, findings))
         findings.extend(check_debt_metrics(facts, findings))
     return findings
 

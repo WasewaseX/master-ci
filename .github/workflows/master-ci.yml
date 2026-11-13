@@ -211,6 +211,31 @@ on:
         required: false
         type: number
         default: 15
+      new_code_max_duplication:
+        description: >-
+          Duplication-density ceiling on the added lines, percent (100 =
+          off): duplicated long lines over non-blank added lines, the
+          duplication density's diff-window sibling.
+        required: false
+        type: number
+        default: 5
+      new_code_max_debt:
+        description: >-
+          Debt-ratio ceiling on the added lines, percent (100 = off):
+          findings on added lines priced by the debt engine's registry
+          minutes over the SQALE cost of the added lines.
+        required: false
+        type: number
+        default: 5
+      new_code_design_ceiling:
+        description: >-
+          Ceiling for design findings on the added lines (low-cohesion,
+          high-coupling, unstable-hub; -1 = off). Zero tolerance by
+          default: a design verdict the change itself introduces fails
+          the gate.
+        required: false
+        type: number
+        default: 0
       ratchet:
         description: >-
           auto | true | false - the quality ratchet: a committed baseline
@@ -288,6 +313,9 @@ jobs:
       new_code_max_slop: ${{ inputs.new_code_max_slop }}
       new_code_max_cognitive: ${{ inputs.new_code_max_cognitive }}
       new_code_max_cyclomatic: ${{ inputs.new_code_max_cyclomatic }}
+      new_code_max_duplication: ${{ inputs.new_code_max_duplication }}
+      new_code_max_debt: ${{ inputs.new_code_max_debt }}
+      new_code_design_ceiling: ${{ inputs.new_code_design_ceiling }}
       ratchet: ${{ inputs.ratchet }}
       ratchet_file: ${{ inputs.ratchet_file }}
     steps:
@@ -1068,6 +1096,9 @@ jobs:
       MAX_SLOP: ${{ needs.meta.outputs.new_code_max_slop }}
       MAX_COGNITIVE: ${{ needs.meta.outputs.new_code_max_cognitive }}
       MAX_CYCLOMATIC: ${{ needs.meta.outputs.new_code_max_cyclomatic }}
+      MAX_DUPLICATION: ${{ needs.meta.outputs.new_code_max_duplication }}
+      MAX_DEBT: ${{ needs.meta.outputs.new_code_max_debt }}
+      MAX_DESIGN: ${{ needs.meta.outputs.new_code_design_ceiling }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Fetch master-ci helpers
@@ -1093,16 +1124,21 @@ jobs:
         run: bash _ci/scripts/fetch_diff_base.sh "$DIFF_BASE"
       - name: Evaluate new-code dimension ceilings
         # Legacy files keep their history; every added line meets
-        # today's bar - blocking-score 0, cognitive 15, cyclomatic 15
-        # by default (tunable via the new_code_* inputs). Exit 1 = a
-        # ceiling is breached by the change, exit 2 = the gate cannot
-        # be evaluated (no diff base, git failure). Both fail the run.
+        # today's bar - blocking-score 0, cognitive 15, cyclomatic 15,
+        # duplication 5%, debt ratio 5% and zero design findings by
+        # default (tunable via the new_code_* inputs; v2.15 brought the
+        # four metric families onto the diff). Exit 1 = a ceiling is
+        # breached by the change, exit 2 = the gate cannot be evaluated
+        # (no diff base, git failure). Both fail the run.
         run: |
           python3 _ci/scripts/new_code_gate.py . \
             --diff-base "$DIFF_BASE" \
             --max-slop-score "$MAX_SLOP" \
             --max-cognitive "$MAX_COGNITIVE" \
-            --max-cyclomatic "$MAX_CYCLOMATIC" | tee new-code-report.md
+            --max-cyclomatic "$MAX_CYCLOMATIC" \
+            --max-new-duplication "$MAX_DUPLICATION" \
+            --max-new-debt "$MAX_DEBT" \
+            --max-design-findings "$MAX_DESIGN" | tee new-code-report.md
           rc=${PIPESTATUS[0]}
           if [ -f new-code-report.md ]; then
             echo "### New-code gate" >> "$GITHUB_STEP_SUMMARY"

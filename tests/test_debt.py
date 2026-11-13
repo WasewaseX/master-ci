@@ -4,7 +4,7 @@ Covers the documented contract in docs/checks.md:
 - a dirty corpus over budget reports one debt-ratio finding,
 - the SQALE denominator: reconstruction cost from the measured corpus,
 - pricing by registry class: design 120, structural 30, blocking 20,
-  default 10 minutes,
+    default 10 minutes,
 - the floor: a snippet corpus gets no debt verdict even when dirty,
 - the engine's own finding never prices itself,
 - robustness: unparseable files, empty repositories,
