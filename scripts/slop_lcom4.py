@@ -13,11 +13,12 @@ The graph is native where class structure is sound today, one ecosystem
 at a time (the same trade the import-cycle graph makes):
 
 - Python - ast. Exact: attribute loads and stores on ``self``, calls
-  through ``self``, and reads of ``@property`` names (a read of a
-  property is a call to its getter, so it joins the graph the same way).
+    through ``self``, and reads of ``@property`` names (a read of a
+    property is a call to its getter, so it joins the graph the same
+    way).
 - JS/TS - the string-aware block scanner in slop_structural: class
-  bodies by brace depth, methods by header shape, state through
-  ``this.attr`` / ``this.#attr`` and calls through ``this.attr(...)``.
+    bodies by brace depth, methods by header shape, state through
+    ``this.attr`` / ``this.#attr`` and calls through ``this.attr(...)``.
 
 Go methods are package-scoped across files, so per-file class views
 would be fiction; JVM, PHP, C#, Ruby and C++ need their native class
@@ -109,6 +110,18 @@ def _py_method(method: ast.FunctionDef | ast.AsyncFunctionDef) -> MethodView | N
     return MethodView(method.name, method.lineno, frozenset(attrs), frozenset(calls))
 
 
+def _py_methods(node: ast.ClassDef) -> list[MethodView]:
+    """The eligible methods of one class body, in source order."""
+    methods: list[MethodView] = []
+    for item in node.body:
+        if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        method = _py_method(item)
+        if method is not None:
+            methods.append(method)
+    return methods
+
+
 def _py_classes(text: str) -> list[ClassView]:
     """Every class in one Python file, AST-backed."""
     try:
@@ -119,16 +132,8 @@ def _py_classes(text: str) -> list[ClassView]:
     for node in ast.walk(tree):
         if not isinstance(node, ast.ClassDef):
             continue
+        methods = _py_methods(node)
         properties = _py_properties(node)
-        methods = [
-            m
-            for m in (
-                _py_method(item)
-                for item in node.body
-                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
-            )
-            if m
-        ]
         if properties:
             methods = _join_properties(methods, properties)
         out.append(ClassView(node.name, node.lineno, tuple(methods)))

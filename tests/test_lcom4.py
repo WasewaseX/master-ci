@@ -165,28 +165,28 @@ class Broken:
 
 JS_SPLIT = """
 class Ledger {
-  constructor() {
+    constructor() {
     this.balance = 0;
     this.wire = null;
-  }
-  deposit(amount) {
+    }
+    deposit(amount) {
     this.balance += amount;
-  }
-  send(msg) {
+    }
+    send(msg) {
     this.wire.deliver(msg);
-  }
+    }
 }
 """
 
 JS_COHESIVE = """
 class Cart {
-  #items = [];
-  add(item) {
+    #items = [];
+    add(item) {
     this.#items.push(item);
-  }
-  count() {
+    }
+    count() {
     return this.#items.length;
-  }
+    }
 }
 """
 
@@ -194,34 +194,34 @@ class Cart {
 # (the property), the getter reads the private backing field shared with add().
 JS_PROPERTY_EDGE = """
 class Totalizer {
-  #rows = [];
-  add(row) {
+    #rows = [];
+    add(row) {
     this.#rows.push(row);
-  }
-  get total() {
+    }
+    get total() {
     return this.#rows.reduce((sum, row) => sum + row, 0);
-  }
-  summary() {
+    }
+    summary() {
     return "total=" + this.total;
-  }
+    }
 }
 """
 
 JS_STATIC_BRIDGE = """
 class Api {
-  constructor() {
+    constructor() {
     this.url = "";
     this.log = null;
-  }
-  fetch(path) {
+    }
+    fetch(path) {
     return fetch(this.url + path);
-  }
-  static make() {
+    }
+    static make() {
     return new Api();
-  }
-  note(msg) {
+    }
+    note(msg) {
     this.log.write(msg);
-  }
+    }
 }
 """
 
@@ -229,14 +229,14 @@ class Api {
 # empty class view; with it, drain/fill split on left/right.
 JS_ARROW_SPLIT = """
 class Split {
-  left = 0;
-  right = 0;
-  drain = (amount) => {
+    left = 0;
+    right = 0;
+    drain = (amount) => {
     this.left -= amount;
-  };
-  fill = (amount) => {
+    };
+    fill = (amount) => {
     this.right += amount;
-  };
+    };
 }
 """
 
