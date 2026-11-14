@@ -1,0 +1,7 @@
+{
+  "engine": "slop_lcom4",
+  "expected": "detected",
+  "reason": "one CounterHub class holds two disjoint method groups: ledger balance vs outbox",
+  "rule": "low-cohesion",
+  "slug": "low-cohesion"
+}

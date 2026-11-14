@@ -1,0 +1,7 @@
+{
+  "engine": "slop_bloat",
+  "expected": "pending",
+  "reason": "context-aware file verdict needs the semantic phase",
+  "rule": "bloat-long-file",
+  "slug": "long-but-cohesive"
+}

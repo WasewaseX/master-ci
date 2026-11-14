@@ -1,0 +1,7 @@
+{
+  "engine": "slop_dead",
+  "expected": "clean",
+  "reason": "handlers resolve by getattr against a registration tuple; the string mention spares them in the name-occurrence oracle, the documented conservative behavior",
+  "rule": "unused-declaration",
+  "slug": "dynamic-registration"
+}

@@ -1,0 +1,7 @@
+{
+  "engine": "slop_bloat",
+  "expected": "detected",
+  "reason": "a 16-line rubric grader scores cyclomatic 19 against the 15 budget",
+  "rule": "high-cyclomatic",
+  "slug": "short-but-complex"
+}

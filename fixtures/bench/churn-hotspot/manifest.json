@@ -1,0 +1,7 @@
+{
+  "engine": "slop_hotspot",
+  "expected": "detected",
+  "reason": "the runner seeds a temp repo and commits the stockroom file thirty times (twelve fix-shaped); risk = (churn + 3 x fixes) x complexity",
+  "rule": "hotspot-risk",
+  "slug": "churn-hotspot"
+}

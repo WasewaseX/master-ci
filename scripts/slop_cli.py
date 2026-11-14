@@ -21,8 +21,12 @@ Contract:
     or when a requested coverage gate is breached (--min-coverage,
     --min-new-coverage).
 - Exit code 1 also when the quality ratchet regresses: a committed
-    --quality-baseline records per-check finding counts, and any check
-    pushed above its recorded count fails the run.
+    --quality-baseline (schema v2) records per-project per-check finding
+    counts plus the finding identities, and any project pushed above
+    its recorded count fails the run; the identity ledger reports
+    new / resolved / reintroduced findings beside the counts, so
+    swapping one finding for another at a flat total is visible churn,
+    not an invisible pass.
 - Exit code 2 when configuration cannot be honored: an architecture
     config that is present but invalid, a coverage gate that cannot
     be evaluated (no report, an unparseable report, a missing diff
@@ -67,8 +71,8 @@ from slop_ratchet import (
     RatchetError,
     compare,
     load_baseline as load_quality_baseline,
-    metrics as quality_metrics,
     render as render_ratchet,
+    scan_state,
     write_baseline as write_quality_baseline_file,
 )
 from slop_reporting import (
@@ -176,9 +180,11 @@ def _add_baseline_args(parser: argparse.ArgumentParser) -> None:
         metavar="PATH",
         help=(
             "Enforce the quality ratchet against this committed baseline: "
-            "per-check finding counts; any increase fails (exit 1), a "
-            "baseline that cannot be interpreted fails closed (exit 2). "
-            "Counts what the scan reports, before --baseline suppression"
+            "per-project per-check finding counts and the finding "
+            "identities (schema v2); any per-project increase fails "
+            "(exit 1), a baseline that cannot be interpreted fails closed "
+            "(exit 2). Counts what the scan reports, before --baseline "
+            "suppression"
         ),
     )
     parser.add_argument(
@@ -186,9 +192,10 @@ def _add_baseline_args(parser: argparse.ArgumentParser) -> None:
         default="",
         metavar="PATH",
         help=(
-            "Record current per-check counts as the new quality-ratchet "
-            "floor and exit 0 - the reviewed escape hatch after paying "
-            "debt or adopting a new check catalog"
+            "Record current per-project counts and identities as the new "
+            "quality-ratchet floor and exit 0 - the reviewed escape hatch "
+            "after paying debt or adopting a new check catalog (v1 "
+            "baselines are rejected; re-record)"
         ),
     )
 
@@ -395,10 +402,12 @@ def _quality_ratchet(args: argparse.Namespace, findings: list) -> int:
     interpreted (fail-closed configuration error).
     """
     if args.write_quality_baseline:
-        counts = write_quality_baseline_file(args.write_quality_baseline, findings)
+        counts = write_quality_baseline_file(args.write_quality_baseline, findings, root=args.root)
+        projects = len(counts)
+        checks = sum(len(per_project) for per_project in counts.values())
         print(
-            f"quality ratchet floor written: {len(counts)} check(s) "
-            f"-> {args.write_quality_baseline}"
+            f"quality ratchet floor written: {projects} project(s), "
+            f"{checks} check floor(s) -> {args.write_quality_baseline}"
         )
         return 0
     if not args.quality_baseline:
@@ -408,7 +417,7 @@ def _quality_ratchet(args: argparse.Namespace, findings: list) -> int:
     except RatchetError as exc:
         print(f"ai-integrity: quality ratchet rejected: {exc}", file=sys.stderr)
         return 2
-    current = quality_metrics(findings)
+    current = scan_state(findings, root=args.root)
     result = compare(current, floor)
     for line in render_ratchet(current, floor, result):
         print(line)

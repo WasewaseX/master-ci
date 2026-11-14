@@ -1,0 +1,7 @@
+{
+  "engine": "slop_dead",
+  "expected": "detected",
+  "reason": "quarantine_expired occurs exactly once in the tree: its own definition",
+  "rule": "unused-declaration",
+  "slug": "unused-function"
+}

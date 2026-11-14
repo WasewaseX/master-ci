@@ -429,7 +429,7 @@ def test_template_ref_fails_closed_for_foreign_callers():
         "helper checkouts must consume the resolved ref, not the raw input"
     )
     helper_checkouts = text.count("ref: ${{ needs.meta.outputs.template_ref }}")
-    assert helper_checkouts == 15, (
+    assert helper_checkouts == 19, (
         f"all {helper_checkouts} helper checkouts must use the resolved ref "
         "(bump the count when a job gains one - every checkout consumes "
         "the resolved ref, never the raw input)"
@@ -985,8 +985,9 @@ def test_new_language_stacks_are_wired_like_the_existing_ones():
     """java/cpp/csharp/ruby/php must behave exactly like the older stacks:
     gated on meta success, honored by select, auto-detected through the
     changes filter, timeout-declared. Since v2.5 java fetches helpers for
-    workspace-aware project discovery; the rest stay zero-config (the
-    helper-ref contract test pins the checkout count below)."""
+    workspace-aware project discovery; since v2.16 csharp, ruby and php
+    join it (discovery drives their per-project loops) and cpp stays
+    zero-config until its own P2 language-breadth turn."""
     data = load(WF_DIR / "master-ci.yml")
     jobs = data["jobs"]
     for job_id in ("java", "cpp", "csharp", "ruby", "php"):
@@ -1003,8 +1004,8 @@ def test_new_language_stacks_are_wired_like_the_existing_ones():
         fetchers = [
             s for s in job["steps"] if isinstance(s.get("with"), dict) and "repository" in s["with"]
         ]
-        if job_id == "java":
-            assert fetchers, "java must fetch helpers: discovery needs the inventory script"
+        if job_id in ("java", "csharp", "ruby", "php"):
+            assert fetchers, f"{job_id} must fetch helpers: discovery needs the inventory script"
         else:
             assert not fetchers, f"{job_id} must not fetch helpers (zero-config detection)"
 
@@ -2230,3 +2231,39 @@ def test_flaky_skips_are_named_and_node_runner_detection_widened():
     assert 'f"skipped: {self.detail}"' in aggregate, "the table names the skip reason"
     checks = (ROOT / "docs" / "checks.md").read_text(encoding="utf-8")
     assert "Per project since v2.11.2" in checks
+
+
+def test_discovery_drives_python_dotnet_ruby_and_php_jobs(master_ci_text: str):
+    """The P2 acceptance test's discovery half: a monorepo must show an
+    explicit result for every project in every workflow that claims the
+    stack. The python, csharp, ruby and php jobs now discover per
+    project like node, rust, go and jvm always did - and the obsolete
+    "this job analyzes root projects only" warnings are gone, not
+    left lying next to the loops that replaced them."""
+    for family, file_stem in (
+        ("python", "python"),
+        ("dotnet", "dotnet"),
+        ("ruby", "ruby"),
+        ("php", "php"),
+    ):
+        assert f"--family {family} --list" in master_ci_text, f"{family} discovery drives its job"
+        assert f"{file_stem}-projects.txt" in master_ci_text, f"{family} projects loop from a file"
+    assert "root projects only" not in master_ci_text, "the root-only warnings are obsolete"
+    assert "--family jvm --list" in master_ci_text, "the jvm precedent stays"
+
+
+def test_metric_snapshots_appends_to_the_dedicated_branch(master_ci_text: str):
+    """Durable history is a versioned store, not a cache: the
+    metric-snapshots job extracts the scan's metrics from the SARIF the
+    ai-integrity job uploads, records one row per run onto the
+    quality-store branch, and renders the trend. The write is scoped:
+    the job's contents permission serves the store branch only."""
+    text = master_ci_text
+    assert "metric-snapshots:" in text, "the job exists"
+    assert "needs: [meta, ai-integrity]" in text, "the snapshot rides the scan"
+    assert "slop_snapshots.py record" in text and "slop_snapshots.py trend" in text
+    assert "quality-store" in text, "the dedicated store branch is named"
+    assert "slop_snapshot_extract.py --sarif" in text, "the bridge feeds the record"
+    assert "git worktree add --orphan -b quality-store" in text, "first run births the store"
+    sarif_upload = text[text.index("Upload AI-integrity SARIF artifact") :]
+    assert "ai-integrity-sarif" in sarif_upload, "the scan hands its SARIF to other jobs"

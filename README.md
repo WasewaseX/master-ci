@@ -83,7 +83,7 @@ which keeps its baseline reproducible across template releases:
 ```yaml
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v2.15.0
+      template_ref: v2.16.0
 ```
 
 ### Required check
@@ -103,7 +103,7 @@ alone cannot fail on a red CodeQL analysis (audit finding F). Two honest
 shapes:
 
 - **One required check (recommended):** call
-  `WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.15.0`
+  `WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.16.0`
   instead of `master-ci.yml` and require **`required-quality-check / gate`**.
   The first segment is the job id the caller gives the call, so the
   example below names its job `required-quality-check`; a caller naming
@@ -116,7 +116,7 @@ shapes:
   ```yaml
   jobs:
     required-quality-check:
-      uses: WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.15.0
+      uses: WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.16.0
       permissions:
         contents: read
         security-events: write
@@ -192,7 +192,8 @@ works for consumers too.
 | `scorecard` | pushes to default branch, unless `scorecard_publish: false` | OSSF Scorecard |
 | `coverage-gate` | `coverage_min > 0` and a producing stack ran | Measured coverage floors, overall and on the added lines |
 | `new-code-gate` | `diff_base` set and `new_code_gates` true | Dimension ceilings on the merge-base diff: blocking findings, cognitive, cyclomatic |
-| `quality-ratchet` | a `.quality-baseline.json` is committed (or `ratchet: true`) | The committed floor no check may regress from |
+| `quality-ratchet` | a `.quality-baseline.json` is committed (or `ratchet: true`) | The committed floor no project may regress from - per-project counts plus the finding identity ledger (new / resolved / reintroduced) |
+| `metric-snapshots` | the ai-integrity scan ran | One metric row per run appended to the dedicated `quality-store` branch; the trend renders in the step summary |
 | `dashboard` | PRs | Results table comment on the PR |
 | `ci-success` | always | Aggregate gate (exposes a `verdict` output) |
 
@@ -514,10 +515,10 @@ dispatched) wrapper,
 ```yaml
 jobs:
   hunt:
-    uses: WasewaseX/master-ci/.github/workflows/flaky.yml@v2.15.0
+    uses: WasewaseX/master-ci/.github/workflows/flaky.yml@v2.16.0
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v2.15.0
+      template_ref: v2.16.0
     permissions:
       # The called quarantine job declares contents: write and
       # pull-requests: write; a reusable call that grants less than its
@@ -585,7 +586,7 @@ Full semantics live in [docs/checks.md](docs/checks.md).
 | `new_code_max_cognitive` | `15` | Cognitive-complexity ceiling for functions the change touches (`0` = off) |
 | `new_code_max_cyclomatic` | `15` | Cyclomatic-complexity ceiling for functions the change touches (`0` = off) |
 | `ratchet` | `auto` | `auto` enforces the committed baseline when the file exists; `true` demands it (missing = exit 2); `false` skips the job |
-| `ratchet_file` | `.quality-baseline.json` | Baseline file the quality ratchet enforces |
+| `ratchet_file` | `.quality-baseline.json` | Baseline file the quality ratchet enforces (schema v2: per-project counts plus identities) |
 | `scorecard_publish` | `true` | Publish Scorecard results (needs `id-token: write`) |
 | `template_repo` | auto | Helper repo override for forks (validated: `owner/repo`) |
 | `template_ref` | caller's own commit | Helper ref. Empty = the caller's own commit, only when the helpers live there (self/fork); a foreign helper repo must pin a tag, mutable branches print a warning |
@@ -790,7 +791,7 @@ carries a `SKILL.md`, so assistants with a skills directory can load it
 with one command:
 
 ```bash
-git clone --depth 1 --branch v2.15.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+git clone --depth 1 --branch v2.16.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
 ```
 
 MCP clients configure the same install like this:
@@ -968,10 +969,16 @@ orchestration layer: mature semantic analyzers (CodeQL, Semgrep,
 lizard) are integrated, not reimplemented as regexes.
 
 And since v2.2: the **quality ratchet** - one committed baseline file
-freezes per-check finding counts across every domain, any regression
-blocks the run, and re-recording the floor is a reviewed commit. The
-new-code gate keeps the diff honest; the ratchet keeps the trajectory
-honest.
+freezes per-project per-check finding counts across every domain, any
+regression blocks the run, and re-recording the floor is a reviewed
+commit. Since v2.16 the same file carries the finding identity ledger:
+a scan that resolves one finding and introduces another at a flat total
+reports one resolved and one new, so churn cannot hide behind an
+unchanged count. The new-code gate keeps the diff honest; the ratchet
+keeps the trajectory honest, and the `metric-snapshots` job appends the
+measured numbers themselves to a versioned store on the dedicated
+`quality-store` branch - the durable history the cache-borne outcome
+trend could not provide.
 
 And since v2.3: the **flake hunt** - the test suite runs several times
 on a schedule and every verdict flip between iterations is reported;

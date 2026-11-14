@@ -1,0 +1,7 @@
+{
+  "engine": "none",
+  "expected": "pending",
+  "reason": "test-redundancy measurement is a later phase",
+  "rule": "test-redundancy",
+  "slug": "redundant-tests"
+}

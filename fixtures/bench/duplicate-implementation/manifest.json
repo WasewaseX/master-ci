@@ -1,0 +1,7 @@
+{
+  "engine": "slop_duplicates",
+  "expected": "detected",
+  "reason": "eleven service modules carry the same copy-pasted reconcile body; the oracle reports a line repeated ten or more times",
+  "rule": "boilerplate-duplication",
+  "slug": "duplicate-implementation"
+}

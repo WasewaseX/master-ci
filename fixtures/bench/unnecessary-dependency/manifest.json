@@ -1,0 +1,7 @@
+{
+  "engine": "slop_deps",
+  "expected": "detected",
+  "reason": "boto3 is declared in [project] dependencies and never imported under the manifest",
+  "rule": "unused-dependency",
+  "slug": "unnecessary-dependency"
+}

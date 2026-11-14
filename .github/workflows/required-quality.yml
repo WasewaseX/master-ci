@@ -229,8 +229,9 @@ on:
       ratchet:
         description: >-
           auto | true | false - the quality ratchet: a committed baseline
-          file records per-check finding counts and any check pushed above
-          its count fails the run. auto (default) runs only when the
+          file records per-project per-check finding counts and finding
+          identities, and any project pushed above its count fails the
+          run. auto (default) runs only when the
           baseline file exists; true demands the file (missing = fail
           closed, exit 2); false skips the job.
         required: false
@@ -296,7 +297,7 @@ jobs:
     # cannot go stale silently. Forks must edit these two uses: lines;
     # the template_repo/template_ref inputs below still steer every
     # helper fetch the child workflows make.
-    uses: WasewaseX/master-ci/.github/workflows/master-ci.yml@v2.15.0
+    uses: WasewaseX/master-ci/.github/workflows/master-ci.yml@v2.16.0
     permissions:
       contents: read
       security-events: write
@@ -347,7 +348,7 @@ jobs:
       concurrency_key: ${{ inputs.concurrency_key }}
 
   codeql:
-    uses: WasewaseX/master-ci/.github/workflows/codeql.yml@v2.15.0
+    uses: WasewaseX/master-ci/.github/workflows/codeql.yml@v2.16.0
     permissions:
       contents: read
       security-events: write

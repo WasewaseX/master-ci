@@ -239,8 +239,9 @@ on:
       ratchet:
         description: >-
           auto | true | false - the quality ratchet: a committed baseline
-          file records per-check finding counts and any check pushed above
-          its count fails the run. auto (default) runs only when the
+          file records per-project per-check finding counts and finding
+          identities, and any project pushed above its count fails the
+          run. auto (default) runs only when the
           baseline file exists; true demands the file (missing = fail
           closed, exit 2); false skips the job.
         required: false
@@ -993,6 +994,15 @@ jobs:
         with:
           sarif_file: ai_integrity.sarif
           category: ai-integrity
+      - name: Upload AI-integrity SARIF artifact
+        # The metric-snapshots job reads this artifact; the Security-tab
+        # upload above does not hand the file to other jobs.
+        if: always() && hashFiles('ai_integrity.sarif') != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ai-integrity-sarif
+          path: ai_integrity.sarif
+          if-no-files-found: ignore
 
   # ---------------------------------------------------------------------------
   # Coverage gate: measured test assurance, consumed after the stacks run.
@@ -1148,8 +1158,11 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Quality ratchet: the committed baseline no check may regress from.
-  # A .quality-baseline.json records per-check finding counts; any check
-  # pushed above its count fails the run. auto runs only when the file
+  # A .quality-baseline.json (schema v2) records per-project per-check
+  # finding counts plus the finding identities; any project pushed above
+  # its count fails the run, and the identity ledger reports new /
+  # resolved / reintroduced findings beside the counts. auto runs only
+  # when the file
   # exists (opt-in by committing it); true demands the file - a missing
   # baseline cannot be interpreted, so the job fails closed (exit 2).
   # ---------------------------------------------------------------------------
@@ -1207,7 +1220,7 @@ jobs:
       - name: Enforce the quality ratchet
         if: steps.floor.outputs.enforce == 'true'
         run: |
-          # Exit 1 = a check regressed above its recorded count, exit 2 =
+          # Exit 1 = a project regressed above its recorded count, exit 2 =
           # the baseline cannot be interpreted (invalid JSON, a schema or
           # catalog change). Both fail the run: a committed floor is a
           # contract, not advice. Paying debt and catalog adoption
@@ -1222,6 +1235,74 @@ jobs:
             cat ratchet-report.md >> "$GITHUB_STEP_SUMMARY"
           fi
           exit "$rc"
+
+  # ---------------------------------------------------------------------------
+  # Metric snapshots: the durable quality trajectory. quality_history
+  # records CI outcomes in a cache that eviction erases; this job appends
+  # the measured numbers themselves to a versioned store committed to the
+  # dedicated quality-store branch and renders the trend into the step
+  # summary. One row per run, project ".": the scan's blocking/advisory
+  # counts always speak, the engines' ratio findings speak when they
+  # fired. Concurrent runs may race on the push; the losing run's numbers
+  # are re-recorded by its next run.
+  # ---------------------------------------------------------------------------
+  metric-snapshots:
+    needs: [meta, ai-integrity]
+    if: >-
+      always()
+      && (inputs.select == '' || contains(format(',{0},', inputs.select), ',metric-snapshots,'))
+      && needs.meta.result == 'success'
+      && needs.ai-integrity.result != 'skipped'
+    runs-on: ${{ inputs.runs_on }}
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        # persist-credentials stays at its default here on purpose: the
+        # only write this job makes is the snapshot append pushed to the
+        # dedicated quality-store branch - never the consumer's branch.
+      - name: Fetch master-ci helpers
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ needs.meta.outputs.template_repo }}
+          ref: ${{ needs.meta.outputs.template_ref }}
+          path: _ci
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Download the scan's SARIF
+        # gh run download reads the artifact this run's ai-integrity job
+        # uploaded: the workflow's own token, no third-party download
+        # action, and nothing new to pin.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p sarif
+          gh run download "$GITHUB_RUN_ID" -n ai-integrity-sarif -D sarif \
+            || echo "no SARIF artifact - the scan produced none; recording counts only"
+      - name: Record the metric snapshot on the quality-store branch
+        run: |
+          git config user.name "master-ci snapshots"
+          git config user.email "actions@users.noreply.github.com"
+          if git ls-remote --exit-code origin quality-store >/dev/null 2>&1; then
+            git fetch origin quality-store
+            git worktree add store origin/quality-store
+          else
+            # First run: the store branch is born empty, one orphan commit.
+            git worktree add --orphan -b quality-store store
+          fi
+          metrics="{}"
+          if compgen -G 'sarif/*.sarif' >/dev/null; then
+            metrics=$(python3 _ci/scripts/slop_snapshot_extract.py --sarif sarif/ai_integrity.sarif)
+          fi
+          python3 _ci/scripts/slop_snapshots.py record --file store/snapshots.jsonl \
+            --sha "$GITHUB_SHA" --ref "$GITHUB_REF_NAME" --project . --metrics "$metrics"
+          python3 _ci/scripts/slop_snapshots.py trend --file store/snapshots.jsonl --last 10 \
+            >> "$GITHUB_STEP_SUMMARY"
+          cd store
+          git add snapshots.jsonl
+          git commit -m "metric snapshot ${GITHUB_SHA} (${GITHUB_REF_NAME})"
+          git push origin HEAD:quality-store
 
   # ---------------------------------------------------------------------------
   # Documentation: markdown lint
@@ -1485,11 +1566,28 @@ jobs:
           path: _ci
           fetch-depth: 1
           persist-credentials: false
+      - name: Discover Python projects
+        id: detect
+        # Nested pyprojects and requirements files are analyzed explicitly,
+        # so the old root-only behavior is obsolete. Zero projects =
+        # config-only trigger - skip with the reason.
+        run: |
+          python3 _ci/scripts/discover_projects.py --family python --format summary
+          python3 _ci/scripts/discover_projects.py --family python --list \
+            > "$RUNNER_TEMP/python-projects.txt"
+          if [ -s "$RUNNER_TEMP/python-projects.txt" ]; then
+            echo "tool=present" >> "$GITHUB_OUTPUT"
+          else
+            echo "tool=none" >> "$GITHUB_OUTPUT"
+            echo "No pyproject.toml, setup.py, setup.cfg or requirements.txt discovered - config-only trigger, skipping the Python stack"
+          fi
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        if: steps.detect.outputs.tool != 'none'
         with:
           python-version: ${{ inputs.python_version }}
           cache: ${{ (hashFiles('**/requirements*.txt') != '' || hashFiles('**/pyproject.toml') != '') && 'pip' || '' }}
       - name: Install tooling
+        if: steps.detect.outputs.tool != 'none'
         run: |
           python -m pip install --upgrade pip
           # Exact pins from configs/tool-versions.yml: a new analyzer
@@ -1503,28 +1601,45 @@ jobs:
             $(python3 _ci/scripts/tool_versions.py pip ruff mypy vulture lizard pytest tree-sitter tree-sitter-language-pack)
       - name: Ruff lint
         run: |
-          { [ -f ruff.toml ] || [ -f .ruff.toml ]; } || \
-            { grep -q 'tool.ruff' pyproject.toml 2>/dev/null; } || \
-            cp _ci/configs/ruff.toml .
-          ruff check .
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            { [ -f "$dir/ruff.toml" ] || [ -f "$dir/.ruff.toml" ]; } || \
+              { grep -q 'tool.ruff' "$dir/pyproject.toml" 2>/dev/null; } || \
+              cp _ci/configs/ruff.toml "$dir/ruff.toml"
+            echo "Ruff-linting $dir"
+            (cd "$dir" && ruff check .)
+          done < "$RUNNER_TEMP/python-projects.txt"
       - name: Ruff format check
-        run: ruff format --check .
+        run: |
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            echo "Format-checking $dir"
+            (cd "$dir" && ruff format --check .)
+          done < "$RUNNER_TEMP/python-projects.txt"
       - name: Mypy type check
         run: |
-          pyfile=$(git ls-files '*.py' | grep -v '^_ci/' | head -n1)
-          if [ -z "$pyfile" ]; then
-            echo "No python files - skipping mypy"
-            exit 0
-          fi
-          # The scan excludes _ci the way the probe above does: the
-          # transient helper checkout is the template's code, and a
-          # consumer tree with same-named modules must never collide
-          # with it ("Duplicate module named" would fail the run).
-          mypy --ignore-missing-imports --exclude '(^|/)_ci/' .
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            pyfile=$(git ls-files -- "$dir" | grep '\.py$' | head -n1)
+            if [ -z "$pyfile" ]; then
+              echo "No python files in $dir - skipping mypy"
+              continue
+            fi
+            # The scan excludes _ci the way the probe above does: the
+            # transient helper checkout is the template's code, and a
+            # consumer tree with same-named modules must never collide
+            # with it ("Duplicate module named" would fail the run).
+            echo "Type-checking $dir"
+            (cd "$dir" && mypy --ignore-missing-imports --exclude '(^|/)_ci/' .)
+          done < "$RUNNER_TEMP/python-projects.txt"
       - name: Vulture dead-code scan (advisory)
         run: |
-          vulture . --min-confidence 80 --exclude '_ci,build,dist,vendor' \
-            || echo "::warning::vulture flagged possibly dead code (advisory)"
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            echo "Vulture-scanning $dir"
+            (cd "$dir" && vulture . --min-confidence 80 --exclude '_ci,build,dist,vendor') \
+              || echo "::warning::vulture flagged possibly dead code in $dir (advisory)"
+          done < "$RUNNER_TEMP/python-projects.txt"
       - name: Lizard complexity gate
         run: |
           # The parser guarantee (v2.5): this gate is parse-backed, so a
@@ -1534,11 +1649,19 @@ jobs:
             echo "::error::lizard is not importable after the pinned install - the complexity gate cannot run"
             exit 2
           }
-          out=$(lizard -l python -C "$CX_MAX" -x '_ci/*' . || true)
-          echo "$out"
-          if echo "$out" | grep -q '!!!!'; then
+          found=0
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            echo "Measuring complexity in $dir"
+            out=$(lizard -l python -C "$CX_MAX" -x '_ci/*' "$dir" || true)
+            echo "$out"
+            if echo "$out" | grep -q '!!!!'; then
+              found=1
+            fi
+          done < "$RUNNER_TEMP/python-projects.txt"
+          if [ "$found" = 1 ]; then
             if [ "$CX_ENFORCE" = "true" ]; then
-              echo "::error file=::functions exceed cyclomatic complexity $CX_MAX"
+              echo "::error::functions exceed cyclomatic complexity $CX_MAX"
               exit 1
             fi
             echo "::warning::functions exceed cyclomatic complexity $CX_MAX (advisory in this profile)"
@@ -1548,13 +1671,16 @@ jobs:
           # Installing the project is part of the test contract: a packaging
           # failure must fail loudly, never leave the tests running against a
           # bare environment that happens to pass.
-          if [ -f pyproject.toml ] && grep -q '^\[project\]' pyproject.toml; then
-            pip install -e . || pip install .
-          elif [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-          else
-            echo "No installable python project - skipping dependency install"
-          fi
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            if [ -f "$dir/pyproject.toml" ] && grep -q '^\[project\]' "$dir/pyproject.toml"; then
+              (cd "$dir" && { pip install -e . || pip install .; })
+            elif [ -f "$dir/requirements.txt" ]; then
+              (cd "$dir" && pip install -r requirements.txt)
+            else
+              echo "No installable python project in $dir - skipping dependency install"
+            fi
+          done < "$RUNNER_TEMP/python-projects.txt"
       - name: Run pytest
         run: |
           # COVERAGE_MIN > 0 opts the stack into measured test assurance:
@@ -1573,23 +1699,27 @@ jobs:
               python -m pytest -q
             fi
           }
-          if [ -d tests ]; then
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
             # test suites that parse workflow YAML need PyYAML; it ships with
             # many toolchains but is not a pytest dependency - install on miss
             python -c "import yaml" 2>/dev/null || python -m pip install --quiet pyyaml
-            run_pytest
-          elif find . -maxdepth 3 \( -name 'test_*.py' -o -name '*_test.py' \) \
-            -not -path './_ci/*' -not -path './node_modules/*' | grep -q .; then
-            run_pytest
-          else
-            echo "No tests found - skipping pytest"
-          fi
+            if [ -d "$dir/tests" ] || find "$dir" -maxdepth 3 \( -name 'test_*.py' -o -name '*_test.py' \) \
+              -not -path './_ci/*' -not -path '*/node_modules/*' | grep -q .; then
+              echo "Running pytest in $dir"
+              (cd "$dir" && run_pytest)
+            else
+              echo "No tests found in $dir - skipping pytest"
+            fi
+          done < "$RUNNER_TEMP/python-projects.txt"
       - name: Upload coverage report
-        if: env.COVERAGE_MIN != '0' && env.COVERAGE_MIN != '' && hashFiles('coverage.json') != ''
+        if: env.COVERAGE_MIN != '0' && env.COVERAGE_MIN != '' && hashFiles('**/coverage.json') != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: coverage-python
-          path: coverage.json
+          path: |
+            coverage.json
+            **/coverage.json
           if-no-files-found: ignore
 
   # ---------------------------------------------------------------------------
@@ -2127,46 +2257,62 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Detect .NET project
+      - name: Fetch master-ci helpers
+        # Helper checkout moves ahead of discovery: workspace-aware .NET
+        # analysis needs the template's project inventory script.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ needs.meta.outputs.template_repo }}
+          ref: ${{ needs.meta.outputs.template_ref }}
+          path: _ci
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Discover .NET projects
         id: detect
+        # Nested projects are analyzed explicitly, so the old
+        # root-projects-only warning is obsolete. Zero projects =
+        # config-only trigger - skip with the reason.
         run: |
-          if compgen -G '*.sln' >/dev/null || compgen -G '*.slnx' >/dev/null; then
-            echo "project=true" >> "$GITHUB_OUTPUT"
-          elif compgen -G '*.csproj' >/dev/null || compgen -G '*.fsproj' >/dev/null; then
-            echo "project=true" >> "$GITHUB_OUTPUT"
+          python3 _ci/scripts/discover_projects.py --family dotnet --format summary
+          python3 _ci/scripts/discover_projects.py --family dotnet --list \
+            > "$RUNNER_TEMP/dotnet-projects.txt"
+          if [ -s "$RUNNER_TEMP/dotnet-projects.txt" ]; then
+            echo "tool=present" >> "$GITHUB_OUTPUT"
           else
-            echo "project=false" >> "$GITHUB_OUTPUT"
-            nested=$(git ls-files '*/*.csproj' '*/*.fsproj' '*/*.sln' '*/*.slnx' | head -5 | tr '\n' ' ')
-            if [ -n "$nested" ]; then
-              echo "::warning::nested .NET project(s) detected but this job analyzes root projects only: $nested"
-            fi
-            echo "No .sln or .csproj/.fsproj at repository root - .NET stack supports root projects only"
+            echo "tool=none" >> "$GITHUB_OUTPUT"
+            echo "No .csproj/.fsproj/.sln/.slnx discovered - config-only trigger, skipping the .NET stack"
           fi
       - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         # global.json is the project's own SDK pin and always wins over
         # the dotnet_version input
-        if: steps.detect.outputs.project == 'true' && hashFiles('global.json') == ''
+        if: steps.detect.outputs.tool != 'none' && hashFiles('global.json') == ''
         with:
           dotnet-version: ${{ inputs.dotnet_version }}
       - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
-        if: steps.detect.outputs.project == 'true' && hashFiles('global.json') != ''
+        if: steps.detect.outputs.tool != 'none' && hashFiles('global.json') != ''
         with:
           global-json-file: global.json
       - name: Build and test
-        if: steps.detect.outputs.project == 'true'
+        if: steps.detect.outputs.tool != 'none'
         run: |
-          dotnet build -c Release
-          dotnet test -c Release --no-build
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            echo "Building and testing $dir"
+            (cd "$dir" && dotnet build -c Release && dotnet test -c Release --no-build)
+          done < "$RUNNER_TEMP/dotnet-projects.txt"
       - name: Format drift (dotnet format, advisory)
         # checked only when an .editorconfig exists - adopting the check is
         # a decision the project makes by committing its formatting policy
-        if: steps.detect.outputs.project == 'true' && hashFiles('.editorconfig') != ''
+        if: steps.detect.outputs.tool != 'none' && hashFiles('.editorconfig') != ''
         run: |
-          rc=0
-          dotnet format --verify-no-changes || rc=$?
-          if [ "$rc" -ne 0 ]; then
-            echo "::warning::dotnet format found drift (advisory in every profile)"
-          fi
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            rc=0
+            (cd "$dir" && dotnet format --verify-no-changes) || rc=$?
+            if [ "$rc" -ne 0 ]; then
+              echo "::warning::dotnet format found drift in $dir (advisory in every profile)"
+            fi
+          done < "$RUNNER_TEMP/dotnet-projects.txt"
 
   # ---------------------------------------------------------------------------
   # Ruby stack: bundler install with cache, advisory RuboCop and
@@ -2184,63 +2330,97 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Detect Ruby project
+      - name: Fetch master-ci helpers
+        # Helper checkout moves ahead of discovery: workspace-aware Ruby
+        # analysis needs the template's project inventory script.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ needs.meta.outputs.template_repo }}
+          ref: ${{ needs.meta.outputs.template_ref }}
+          path: _ci
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Discover Ruby projects
         id: detect
+        # Nested Gemfiles are analyzed explicitly, so the old
+        # root-projects-only warning is obsolete. A root Rakefile or
+        # gemspec without a Gemfile stays analyzable: the root joins the
+        # inventory as "." (discovery's ruby manifests list Gemfile only,
+        # and that gap is documented, not hidden). Zero projects =
+        # config-only trigger - skip with the reason.
         run: |
-          if [ -f Gemfile ] || [ -f Rakefile ] || compgen -G '*.gemspec' >/dev/null; then
-            echo "project=true" >> "$GITHUB_OUTPUT"
+          python3 _ci/scripts/discover_projects.py --family ruby --format summary
+          python3 _ci/scripts/discover_projects.py --family ruby --list \
+            > "$RUNNER_TEMP/ruby-projects.txt"
+          if [ ! -s "$RUNNER_TEMP/ruby-projects.txt" ] \
+            && { [ -f Rakefile ] || compgen -G '*.gemspec' >/dev/null; }; then
+            echo "." >> "$RUNNER_TEMP/ruby-projects.txt"
+            echo "Root Rakefile or gemspec without a Gemfile - scanning the repository root"
+          fi
+          if [ -s "$RUNNER_TEMP/ruby-projects.txt" ]; then
+            echo "tool=present" >> "$GITHUB_OUTPUT"
           else
-            echo "project=false" >> "$GITHUB_OUTPUT"
-            nested=$(git ls-files '*Gemfile' '*Rakefile' '*.gemspec' | head -5 | tr '\n' ' ')
-            if [ -n "$nested" ]; then
-              echo "::warning::nested Ruby project(s) detected but this job analyzes root projects only: $nested"
-            fi
-            echo "No Gemfile, gemspec or Rakefile at repository root - Ruby stack supports root projects only"
+            echo "tool=none" >> "$GITHUB_OUTPUT"
+            echo "No Gemfile, gemspec or Rakefile discovered - config-only trigger, skipping the Ruby stack"
           fi
       - uses: ruby/setup-ruby@b3aaceaef7e0ee231b499e7b5f49c03fc1d32199 # v1.338.0
-        if: steps.detect.outputs.project == 'true'
+        if: steps.detect.outputs.tool != 'none'
         with:
           ruby-version: ${{ inputs.ruby_version }}
           # bundler-cache installs the Gemfile with dependency caching; a
           # gemspec-only project has no Gemfile and must not fail setup
           bundler-cache: ${{ hashFiles('Gemfile') != '' }}
       - name: Lint (RuboCop, advisory)
-        if: steps.detect.outputs.project == 'true'
+        if: steps.detect.outputs.tool != 'none'
         run: |
-          if bundle exec rubocop --version >/dev/null 2>&1; then
-            rc=0
-            bundle exec rubocop || rc=$?
-            if [ "$rc" -ne 0 ]; then
-              echo "::warning::RuboCop flagged offenses (advisory in every profile)"
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            if [ -f "$dir/Gemfile" ] && [ "$dir" != "." ]; then
+              # setup-ruby's bundler-cache covers the root Gemfile only;
+              # a nested project installs its own bundle before linting.
+              (cd "$dir" && bundle install --quiet)
             fi
-          else
-            echo "RuboCop is not in the bundle - skipping"
-          fi
+            if (cd "$dir" && bundle exec rubocop --version >/dev/null 2>&1); then
+              rc=0
+              (cd "$dir" && bundle exec rubocop) || rc=$?
+              if [ "$rc" -ne 0 ]; then
+                echo "::warning::RuboCop flagged offenses in $dir (advisory in every profile)"
+              fi
+            else
+              echo "RuboCop is not in the bundle in $dir - skipping"
+            fi
+          done < "$RUNNER_TEMP/ruby-projects.txt"
       - name: Dependency advisories (bundler-audit, advisory)
-        if: steps.detect.outputs.project == 'true'
+        if: steps.detect.outputs.tool != 'none'
         # the audit gem below is a scanner, not a project dependency; its
         # version is deliberately not locked (advisory step)
         run: | # zizmor: ignore[adhoc-packages]
-          if [ -f Gemfile.lock ]; then
-            gem install bundler-audit --no-document >/dev/null 2>&1 || true
-            rc=0
-            bundle-audit check --update || rc=$?
-            if [ "$rc" -ne 0 ]; then
-              echo "::warning::bundler-audit flagged vulnerable gems (advisory in every profile)"
+          gem install bundler-audit --no-document >/dev/null 2>&1 || true
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            if [ -f "$dir/Gemfile.lock" ]; then
+              rc=0
+              (cd "$dir" && bundle-audit check --update) || rc=$?
+              if [ "$rc" -ne 0 ]; then
+                echo "::warning::bundler-audit flagged vulnerable gems in $dir (advisory in every profile)"
+              fi
+            else
+              echo "No Gemfile.lock in $dir - skipping bundler-audit"
             fi
-          else
-            echo "No Gemfile.lock - skipping bundler-audit"
-          fi
+          done < "$RUNNER_TEMP/ruby-projects.txt"
       - name: Test suite
-        if: steps.detect.outputs.project == 'true'
+        if: steps.detect.outputs.tool != 'none'
         run: |
-          if [ -d spec ]; then
-            bundle exec rspec
-          elif [ -d test ]; then
-            bundle exec rake test
-          else
-            echo "No spec/ or test/ directory - skipping Ruby tests"
-          fi
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            if [ -d "$dir/spec" ]; then
+              (cd "$dir" && bundle exec rspec)
+            elif [ -d "$dir/test" ]; then
+              (cd "$dir" && bundle exec rake test)
+            else
+              echo "No spec/ or test/ directory in $dir - skipping Ruby tests"
+            fi
+          done < "$RUNNER_TEMP/ruby-projects.txt"
 
   # ---------------------------------------------------------------------------
   # PHP stack: composer install (lockfile-faithful), syntax check over every
@@ -2259,59 +2439,88 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Detect PHP project
+      - name: Fetch master-ci helpers
+        # Helper checkout moves ahead of discovery: workspace-aware PHP
+        # analysis needs the template's project inventory script.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ needs.meta.outputs.template_repo }}
+          ref: ${{ needs.meta.outputs.template_ref }}
+          path: _ci
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Discover PHP projects
         id: detect
+        # Nested composer.json files are analyzed explicitly, so the old
+        # root-projects-only warning is obsolete. Zero projects =
+        # config-only trigger - skip with the reason.
         run: |
-          if [ -f composer.json ]; then
-            echo "project=true" >> "$GITHUB_OUTPUT"
+          python3 _ci/scripts/discover_projects.py --family php --format summary
+          python3 _ci/scripts/discover_projects.py --family php --list \
+            > "$RUNNER_TEMP/php-projects.txt"
+          if [ -s "$RUNNER_TEMP/php-projects.txt" ]; then
+            echo "tool=present" >> "$GITHUB_OUTPUT"
           else
-            echo "project=false" >> "$GITHUB_OUTPUT"
-            nested=$(git ls-files '*/composer.json' | head -5 | tr '\n' ' ')
-            if [ -n "$nested" ]; then
-              echo "::warning::nested PHP project(s) detected but this job analyzes root projects only: $nested"
-            fi
-            echo "No composer.json at repository root - PHP stack supports root projects only"
+            echo "tool=none" >> "$GITHUB_OUTPUT"
+            echo "No composer.json discovered - config-only trigger, skipping the PHP stack"
           fi
       - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2
-        if: steps.detect.outputs.project == 'true'
+        if: steps.detect.outputs.tool != 'none'
         with:
           php-version: ${{ inputs.php_version }}
           coverage: none
       - name: Install dependencies
         # composer install never rewrites composer.lock: a lock drift is a
         # consumer decision, not something CI resolves silently
-        if: steps.detect.outputs.project == 'true'
-        run: composer install --no-interaction --prefer-dist --no-progress
+        if: steps.detect.outputs.tool != 'none'
+        run: |
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            echo "Installing dependencies in $dir"
+            (cd "$dir" && composer install --no-interaction --prefer-dist --no-progress)
+          done < "$RUNNER_TEMP/php-projects.txt"
       - name: Syntax check (php -l)
-        if: steps.detect.outputs.project == 'true'
+        if: steps.detect.outputs.tool != 'none'
         run: |
-          files=$(git ls-files '*.php' | grep -v '^vendor/' || true)
-          if [ -n "$files" ]; then
-            printf '%s\n' "$files" | xargs -r -n1 php -l
-          fi
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            files=$(git ls-files -- "$dir" | grep '\.php$' | grep -v '/vendor/' || true)
+            if [ -n "$files" ]; then
+              echo "Syntax-checking $dir"
+              printf '%s\n' "$files" | xargs -r -n1 php -l
+            fi
+          done < "$RUNNER_TEMP/php-projects.txt"
       - name: Static analysis (PHPStan, only when the repo opts in)
-        if: steps.detect.outputs.project == 'true'
+        if: steps.detect.outputs.tool != 'none'
         run: |
-          config=""
-          for candidate in phpstan.neon.dist phpstan.neon phpstan.neon.dist.php; do
-            [ -f "$candidate" ] && { config="$candidate"; break; }
-          done
-          if [ -n "$config" ] && [ -x vendor/bin/phpstan ]; then
-            vendor/bin/phpstan analyse --no-progress
-          else
-            echo "No PHPStan config or dev dependency - skipping"
-          fi
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            config=""
+            for candidate in phpstan.neon.dist phpstan.neon phpstan.neon.dist.php; do
+              [ -f "$dir/$candidate" ] && { config="$candidate"; break; }
+            done
+            if [ -n "$config" ] && [ -x "$dir/vendor/bin/phpstan" ]; then
+              echo "Running PHPStan in $dir"
+              (cd "$dir" && vendor/bin/phpstan analyse --no-progress)
+            else
+              echo "No PHPStan config or dev dependency in $dir - skipping"
+            fi
+          done < "$RUNNER_TEMP/php-projects.txt"
       - name: Test suite
-        if: steps.detect.outputs.project == 'true'
+        if: steps.detect.outputs.tool != 'none'
         run: |
-          test_script=$(composer config scripts.test 2>/dev/null || true)
-          if [ -n "$test_script" ]; then
-            composer test
-          elif ls phpunit.xml phpunit.xml.dist >/dev/null 2>&1 && [ -x vendor/bin/phpunit ]; then
-            vendor/bin/phpunit
-          else
-            echo "No composer test script or PHPUnit config - skipping PHP tests"
-          fi
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            test_script=$(cd "$dir" && composer config scripts.test 2>/dev/null || true)
+            if [ -n "$test_script" ]; then
+              (cd "$dir" && composer test)
+            elif ls "$dir"/phpunit.xml "$dir"/phpunit.xml.dist >/dev/null 2>&1 && [ -x "$dir/vendor/bin/phpunit" ]; then
+              echo "Running PHPUnit in $dir"
+              (cd "$dir" && vendor/bin/phpunit)
+            else
+              echo "No composer test script or PHPUnit config in $dir - skipping PHP tests"
+            fi
+          done < "$RUNNER_TEMP/php-projects.txt"
 
   # ---------------------------------------------------------------------------
   # Docker stack: hadolint lint (advisory), a proof-build per tracked

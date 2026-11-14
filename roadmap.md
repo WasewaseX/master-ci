@@ -64,10 +64,11 @@ and per-suite status table (v2.11.2), the required aggregate kept
 since v2.8, and the stale descriptions here. The remaining P0 note -
 the scheduled (cron) mutation firing on a multi-tool consumer - is
 evidence to collect, not code to write. The canary's cron mechanism
-is proven live: the CI workflow's schedule has fired seven times, all
-success (latest run 43431866970, 2026-11-13, under the v2.13.0
-pins) - scheduled triggers fire and run green on the consumer. The
-mutation workflow's own cron window is the last unbanked firing.
+is proven live: the CI workflow's schedule has fired eight times, all
+success (latest run 43594116995, 2026-11-14) - scheduled triggers fire
+and run green on the consumer. The
+mutation workflow's own cron window is the last unbanked firing
+(first window Monday 2026-11-16).
 P1 has begun: LCOM4, the phase's first metric and the audit's largest
 single gap, shipped in v2.12.0, and the densities - complexity density
 and duplication density - in v2.13.0; remediation debt with the debt
@@ -151,10 +152,10 @@ stay advisory.
 
 | Task                  | Required result                                                                 | Verified state today |
 | --------------------- | ------------------------------------------------------------------------------- | -------------------- |
-| Finding fingerprints  | The quality ratchet reports new / resolved / unchanged / reintroduced from stable identities (rule id, project, file, symbol, normalized fingerprint, severity, rule version) | The ratchet freezes per-check counts; removing one old finding while adding a new one leaves the count unchanged and invisible. A fingerprint suppression baseline already exists for advisory findings - this upgrades the ratchet, it does not start from zero |
-| Per-project baselines | Monorepo projects cannot hide a regression behind another project's improvement  | Baseline is per check id, not per project |
+| Finding fingerprints  | The quality ratchet reports new / resolved / unchanged / reintroduced from stable identities (rule id, project, file, symbol, normalized fingerprint, severity, rule version) | Shipped in v2.16.0: the ratchet's schema v2 carries, per project, the full identity set (`project|check|path|fingerprint` - lines excluded because they drift) beside the counts, and reports the identity ledger - new / resolved / unchanged / reintroduced - beside the delta table; the roadmap's acceptance test is a named contract (`test_roadmap_acceptance_swap_reports_churn_at_flat_counts`): one old finding removed, one new added, flat total, verdict OK with 1 resolved + 1 new named. Reintroduced debt is reported, never gating; the v1 file format is rejected (exit 2, re-record) |
+| Per-project baselines | Monorepo projects cannot hide a regression behind another project's improvement  | Shipped in v2.16.0: the floor is per project - `project_of` derives the monorepo dimension from the first path segment holding a family manifest (dotnet globs included), unmanifested files stay the root project, and the delta table and the identity ledger are both keyed by project; a project pushed above its own count fails even when the repo total drops |
 | New-code gates        | Duplication density, debt ratio, LCOM4 and coupling join cognitive/cyclomatic on the merge-base diff | Shipped in v2.15.0: `--max-new-duplication` (duplicated long lines over non-blank added lines), `--max-new-debt` (findings on added lines priced by the debt engine's minutes over the SQALE cost of the added lines) and `--max-design-findings` (low-cohesion, high-coupling, unstable-hub verdicts anchored on added lines) in `new_code_gate.py`, wired through the `new_code_*` inputs of both reusable workflows with defaults 5% / 5% / 0; the scan runs once and feeds all three finding-based ceilings |
-| Durable history       | Metric snapshots in a versioned store (dedicated branch), not just CI outcomes   | `quality_history.py` records ts/run_id/ref/sha/verdict/coverage_min/failed_jobs in an `actions/cache` JSONL; caches unused for seven days are evicted - it is a trend of CI outcomes, not of code quality |
+| Durable history       | Metric snapshots in a versioned store (dedicated branch), not just CI outcomes   | Shipped in v2.16.0: `slop_snapshots.py` - a versioned JSONL store (schema 1, eleven declared metric fields with directions, absent metrics omitted never zero-filled) with record / trend / diff and a SARIF bridge (`slop_snapshot_extract.py`) feeding it from the scan; the `metric-snapshots` job appends one row per run to the dedicated `quality-store` branch (orphan first run, worktree append after) and renders the trend into the step summary - the cache-borne outcome trend keeps its job, the measured numbers now outlive cache eviction |
 | Analyzer profiles     | Qodana-style per-language rules, severities, scopes, thresholds, baseline-aware gates | Thresholds are global constants |
 | Refactoring proposals | Reviewable PRs with evidence - the quarantine-PR pattern generalized to quality debt | Quarantine is the only PR-emitting loop today |
 
@@ -171,9 +172,12 @@ Use each ecosystem's native engines; do not duplicate their analysis.
 3. PHP with PHPStan and Composer metadata.
 4. Ruby with native parser and dependency metadata.
 5. C/C++ with clang-tidy and build-graph analysis.
-6. Python monorepo discovery (workflow gap: discovery drives node,
-   rust, go and jvm only; Python, .NET, Ruby and PHP jobs are
-   root-manifest-only today).
+6. Python monorepo discovery - shipped in v2.16.0 beyond the named
+   gap: the python, csharp, ruby and php jobs all discover per project
+   like node, rust, go and jvm (the JVM detect shape: zero projects is
+   a config-only trigger, skipped with the reason); ruby keeps its
+   root Rakefile/gemspec fallback. C/C++ with build-graph analysis
+   stays the breadth item (clang-tidy and CMake discovery).
 
 ## The benchmark (the proof competitors cannot fake)
 
@@ -195,6 +199,18 @@ declared expected outcome:
 | Circular dependencies                | Architecture violation detected |
 | Complex code with high churn         | Hotspot identified              |
 | Redundant tests                      | Test redundancy identified      |
+
+The seed shipped in v2.16.0: `fixtures/bench/` carries all twelve rows
+as declared-outcome fixtures (`manifest.json` per slug: expected
+detected / clean / pending with the reason) and `fixture_benchmark.py`
+judges every shipped engine against the declarations - ten verdicts
+proven (duplicate implementation, low cohesion, unused function,
+dynamic registration stays clean, short-but-complex, abstraction chain,
+unnecessary dependency, framework wrapper stays clean, cycles, churn
+hotspot on a real git history built in temp), two declared pending with
+their reason (context-aware file verdicts and test redundancy are later
+phases). Exit 0 with pendings, 1 on any failed declaration, 2 on a
+malformed manifest; the fixtures never carry git internals.
 
 Five measurements per rule: precision, recall, false-positive rate,
 analysis coverage, runtime and memory. Then run the same fixtures

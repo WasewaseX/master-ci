@@ -1,0 +1,7 @@
+{
+  "engine": "slop_abstraction",
+  "expected": "clean",
+  "reason": "a single-inheritance exporter hook whose one method computes from the registry; not a delegation ladder of 4+ rungs to one injected object, so the shell verdict stays silent",
+  "rule": "no-behavior-class",
+  "slug": "framework-wrapper"
+}

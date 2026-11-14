@@ -1025,21 +1025,30 @@ passes.
 
 The new-code gate keeps the diff honest; the ratchet keeps the whole
 repository honest over time. One committed file,
-`.quality-baseline.json` (override with `ratchet_file`), records how
-many findings each check id reports at baseline time. Every run
-compares the current scan against that floor:
+`.quality-baseline.json` (override with `ratchet_file`), records, per
+project, how many findings each check id reports at baseline time plus
+the findings' stable identities (project, check, file, fingerprint -
+line numbers are excluded because they drift with unrelated edits).
+Every run compares the current scan against that floor:
 
-- **Any check above its recorded count fails the run** (exit 1). The
+- **Any project above its recorded count fails the run** (exit 1). The
   step summary shows the delta table - regressions first, improvements
   below them - so a red ratchet names the exact check and how far it
-  moved.
+  moved. A monorepo cannot hide one project's regression behind
+  another's improvement: the floor is per project.
+- **Swapping findings is visible**: the same summary carries the
+  identity ledger - new / resolved / unchanged / reintroduced - so
+  removing one old finding while introducing a new one under the same
+  rule reports one resolved and one new even though the total count
+  never moved. Reintroducing previously resolved debt is named.
 - **Paying debt is visible**: counts that drop render as improvements.
   Deleting the last finding of a check removes its row entirely.
 - **Re-recording the floor is a reviewed commit**: run
   `python3 scripts/ai_slop_detector.py . --write-quality-baseline
   .quality-baseline.json` and commit the change. Git history then shows
   when and why the floor moved - the escape hatch is not a silent
-  waiver.
+  waiver. A version-1 baseline file is rejected (exit 2, the schema
+  moved to version 2); re-record it the same reviewed way.
 - **Parser guarantee (v2.5):** the enforcing scan runs
   `--require-parsers` - a floor recorded with parsers must be enforced
   with parsers; a missing analyzer is exit 2, not a quietly smaller

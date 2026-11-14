@@ -1,0 +1,7 @@
+{
+  "engine": "slop_cycles",
+  "expected": "detected",
+  "reason": "ledger.py imports report.summarize and report.py imports ledger.balance",
+  "rule": "import-cycle",
+  "slug": "circular-dependencies"
+}

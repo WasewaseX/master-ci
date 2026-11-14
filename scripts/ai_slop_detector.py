@@ -350,7 +350,7 @@ def _repo_level_findings(
 ) -> list[Finding]:
     """Whole-repo views: duplication, dependency and architecture checks."""
     findings: list[Finding] = []
-    findings.extend(scan_duplicates(files))
+    findings.extend(scan_duplicates(files, root, globs))
     findings.extend(check_unused_declarations(root, files, globs))
     findings.extend(check_unused_dependencies(root, files, globs))
     findings.extend(check_orphan_modules(root, files, globs))

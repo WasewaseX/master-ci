@@ -1,0 +1,7 @@
+{
+  "engine": "slop_abstraction",
+  "expected": "detected",
+  "reason": "four module rungs forward to the same persist target and none transforms the call",
+  "rule": "forwarding-chain",
+  "slug": "abstraction-chain"
+}
