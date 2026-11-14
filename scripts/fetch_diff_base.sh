@@ -12,17 +12,17 @@ if git rev-parse --verify --quiet "$DIFF_BASE" >/dev/null; then
 fi
 
 case "$DIFF_BASE" in
-  origin/*)
-    branch="${DIFF_BASE#origin/}"
-    git fetch --depth=1 origin "+refs/heads/$branch:refs/remotes/origin/$branch"
-    ;;
-  refs/*)
-    git fetch --depth=1 origin "+$DIFF_BASE:$DIFF_BASE"
-    ;;
-  *)
-    git fetch --depth=1 origin "+refs/heads/$DIFF_BASE:refs/remotes/origin/$DIFF_BASE" ||
-      git fetch --depth=1 origin "+refs/tags/$DIFF_BASE:refs/tags/$DIFF_BASE" ||
-      git fetch --depth=1 origin "$DIFF_BASE"
-    ;;
+origin/*)
+  branch="${DIFF_BASE#origin/}"
+  git fetch --depth=1 origin "+refs/heads/$branch:refs/remotes/origin/$branch"
+  ;;
+refs/*)
+  git fetch --depth=1 origin "+$DIFF_BASE:$DIFF_BASE"
+  ;;
+*)
+  git fetch --depth=1 origin "+refs/heads/$DIFF_BASE:refs/remotes/origin/$DIFF_BASE" ||
+    git fetch --depth=1 origin "+refs/tags/$DIFF_BASE:refs/tags/$DIFF_BASE" ||
+    git fetch --depth=1 origin "$DIFF_BASE"
+  ;;
 esac
 git rev-parse --verify "$DIFF_BASE" >/dev/null
