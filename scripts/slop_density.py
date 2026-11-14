@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -189,12 +190,19 @@ def _render_files(worst: tuple[tuple[str, int], ...]) -> str:
     return names
 
 
-def _complexity_finding(facts: DensityFacts) -> Finding:
+def _budget(budgets: Mapping[str, float] | None, check: str, default: float) -> float:
+    """One effective budget: the profile override when present, else the shipped constant."""
+    if budgets is None:
+        return default
+    return budgets.get(check, default)
+
+
+def _complexity_finding(facts: DensityFacts, budget: float) -> Finding:
     density = 1000 * facts.complexity / facts.exec_lines
     anchor = facts.worst_files[0][0] if facts.worst_files else "."
     message = (
         f"complexity density {density:.0f} per 1000 executable lines "
-        f"(budget {COMPLEXITY_DENSITY_BUDGET}): {facts.complexity} decision points "
+        f"(budget {budget}): {facts.complexity} decision points "
         f"across {facts.exec_lines} lines in {facts.files} files; "
         f"by language: {_render_langs(facts.per_lang)}; "
         f"worst contributors: {_render_files(facts.worst_files)}"
@@ -209,7 +217,7 @@ def _complexity_finding(facts: DensityFacts) -> Finding:
     )
 
 
-def _duplication_finding(facts: DensityFacts) -> Finding:
+def _duplication_finding(facts: DensityFacts, budget: float) -> Finding:
     pct = 100 * facts.duplicated / facts.exec_lines
     evidence = ""
     anchor_path, anchor_line = ".", 1
@@ -218,7 +226,7 @@ def _duplication_finding(facts: DensityFacts) -> Finding:
         evidence = f"; most repeated: {text[:MAX_LINE_RENDER]}... ({seen_rel}:{seen_lineno})"
         anchor_path, anchor_line = seen_rel, seen_lineno
     message = (
-        f"duplication density {pct:.1f}% (budget {DUP_DENSITY_BUDGET}%): "
+        f"duplication density {pct:.1f}% (budget {budget}%): "
         f"{facts.duplicated} duplicated executable lines of {facts.exec_lines}"
         f"{evidence}"
     )
@@ -232,16 +240,23 @@ def _duplication_finding(facts: DensityFacts) -> Finding:
     )
 
 
-def density_findings(facts: DensityFacts) -> list[Finding]:
+def density_findings(
+    facts: DensityFacts, budgets: Mapping[str, float] | None = None
+) -> list[Finding]:
     """The two density findings for a measured corpus, over budget only.
 
     Takes the measured facts rather than a root: the pipeline computes
     the corpus once and shares it with the debt ratio, so every ratio
-    in the report divides by the same denominator.
+    in the report divides by the same denominator. `budgets` carries
+    per-check replacement thresholds keyed by check id (the analyzer
+    profiles' budget overrides); None keeps the module constants, so
+    the shipped verdict and message are reproduced byte for byte.
     """
+    complexity_budget = _budget(budgets, "complexity-density", COMPLEXITY_DENSITY_BUDGET)
+    dup_budget = _budget(budgets, "duplication-density", DUP_DENSITY_BUDGET)
     findings: list[Finding] = []
-    if 1000 * facts.complexity / facts.exec_lines > COMPLEXITY_DENSITY_BUDGET:
-        findings.append(_complexity_finding(facts))
-    if 100 * facts.duplicated / facts.exec_lines > DUP_DENSITY_BUDGET:
-        findings.append(_duplication_finding(facts))
+    if 1000 * facts.complexity / facts.exec_lines > complexity_budget:
+        findings.append(_complexity_finding(facts, complexity_budget))
+    if 100 * facts.duplicated / facts.exec_lines > dup_budget:
+        findings.append(_duplication_finding(facts, dup_budget))
     return findings
