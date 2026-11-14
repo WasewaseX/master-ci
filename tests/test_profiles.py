@@ -3,18 +3,18 @@
 Covers the profile contract documented in scripts/slop_profiles.py:
 - DEFAULT_PROFILE is a proven no-op on a real findings list,
 - severity moves are downgrade-only: blocking->advisory works,
-  advisory->blocking is rejected at load time, "off" suppresses,
+advisory->blocking is rejected at load time, "off" suppresses,
 - scope exclusions silence findings with a visible Suppression reason,
-  keyed by check id or "*", matched on the finding path or the caller's
-  rel_path,
+keyed by check id or "*", matched on the finding path or the caller's
+rel_path,
 - load_profile fails closed: malformed JSON/YAML, unknown check ids,
-  illegal severities, unknown top-level keys, bad budget ids and
-  non-positive budgets all raise ValueError naming the offender,
+illegal severities, unknown top-level keys, bad budget ids and
+non-positive budgets all raise ValueError naming the offender,
 - a budget override flows end-to-end through density_findings and
-  flips a verdict at a lower threshold,
+flips a verdict at a lower threshold,
 - the identity contract: DEFAULT_PROFILE leaves the shipped constants
-  (complexity density 300, duplication density 5.0, coupling fan-out
-  30, hotspot risk 1200) in charge, so a silent retune fails loudly.
+(complexity density 300, duplication density 5.0, coupling fan-out
+30, hotspot risk 1200) in charge, so a silent retune fails loudly.
 """
 
 import json
