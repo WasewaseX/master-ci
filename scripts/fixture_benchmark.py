@@ -13,11 +13,15 @@ and maps the outcome:
 engine's findings for the fixture, fails when it does not;
 - expected "clean" passes when the check id does not appear, fails when
 it does;
-- expected "pending" is judged by nobody yet: the row reports PENDING
-with the manifest's reason. Two rows are pending - the long-but-
-cohesive file needs a context-aware file verdict from the semantic
-phase (bloat-long-file fires on size alone), and no engine ships
-test-redundancy yet.
+- expected "pending" is judged by nobody: the row reports PENDING with
+the manifest's reason. The seed shipped with two pendings; v2.17.0
+ships both phases - the long-file verdict consults the LCOM4 cohesion
+oracle (a proven-cohesive long file reports `long-but-cohesive`
+instead of the size-only bloat flag, and the row's probe additionally
+demands the ordinary `bloat-long-file` verdict stayed silent) and
+slop_test_redundancy judges exact duplicate test bodies - so all
+twelve rows are proven today. The vocabulary keeps "pending" for the
+next deferred measurement.
 
 Precision and recall math are the audit's later phase and are out of
 scope here; the seed proves only that each fixture produces its declared
@@ -60,6 +64,7 @@ from slop_hotspot import check_hotspot_metrics, churn_map
 from slop_lcom4 import check_class_cohesion
 from slop_lizard import lizard_available
 from slop_model import Finding
+from slop_test_redundancy import check_test_redundancy
 
 DEFAULT_FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "bench"
 MANIFEST_KEYS = {"slug", "rule", "engine", "expected", "reason"}
@@ -168,18 +173,29 @@ def _probe_hotspot(root: Path, files: list[Path]) -> list[Finding]:
         return check_hotspot_metrics(facts, None, churn, defects)
 
 
-def _probe_unshipped(root: Path, files: list[Path]) -> list[Finding]:
-    del root, files
-    raise Pending("no engine ships this measurement yet")
+def _probe_test_redundancy(root: Path, files: list[Path]) -> list[Finding]:
+    """check_test_redundancy is per-file; aggregate over the fixture's .py files."""
+    findings: list[Finding] = []
+    for path, rel in _py_pairs(root, files):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        findings.extend(check_test_redundancy(path, text, rel))
+    return findings
 
 
 @dataclass(frozen=True)
 class Probe:
-    """One fixture's engine contract: the finding engine and its check id."""
+    """One fixture's engine contract: the finding engine and its check id.
+
+    `absent` names check ids that must stay silent for a detected
+    declaration to pass - the long-but-cohesive row proves not only
+    that the context-aware verdict fired but that the ordinary
+    `bloat-long-file` verdict did not.
+    """
 
     engine: str
     rule: str
     run: ProbeFn
+    absent: tuple[str, ...] = ()
 
 
 PROBES: dict[str, Probe] = {
@@ -191,9 +207,14 @@ PROBES: dict[str, Probe] = {
     ),
     "dynamic-registration": Probe("slop_dead", "unused-declaration", _probe_dead),
     "framework-wrapper": Probe("slop_abstraction", "no-behavior-class", _probe_abstraction),
-    "long-but-cohesive": Probe("slop_bloat", "bloat-long-file", _probe_cyclomatic),
+    "long-but-cohesive": Probe(
+        "slop_bloat",
+        "long-but-cohesive",
+        _probe_cyclomatic,
+        absent=("bloat-long-file",),
+    ),
     "low-cohesion": Probe("slop_lcom4", "low-cohesion", _probe_lcom4),
-    "redundant-tests": Probe("none", "test-redundancy", _probe_unshipped),
+    "redundant-tests": Probe("slop_test_redundancy", "redundant-test", _probe_test_redundancy),
     "short-but-complex": Probe("slop_bloat", "high-cyclomatic", _probe_cyclomatic),
     "unnecessary-dependency": Probe("slop_deps", "unused-dependency", _probe_deps),
     "unused-function": Probe("slop_dead", "unused-declaration", _probe_dead),
@@ -277,7 +298,9 @@ def evaluate(row: BenchRow, fixtures_dir: Path) -> RowResult:
     observed_ids = sorted({finding.check for finding in findings})
     observed = ",".join(observed_ids) if observed_ids else "none"
     if row.expected == "detected":
-        verdict = "PASS" if row.rule in observed_ids else "FAIL"
+        present = row.rule in observed_ids
+        silent = not set(probe.absent).intersection(observed_ids)
+        verdict = "PASS" if present and silent else "FAIL"
     else:
         verdict = "PASS" if row.rule not in observed_ids else "FAIL"
     return RowResult(row, observed, verdict, row.reason)

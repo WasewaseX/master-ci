@@ -53,6 +53,11 @@ TIERED_CHECKS: dict[str, float] = {
     "hotspot-risk": TIER_MAINTAINABILITY,
     "forwarding-chain": TIER_MAINTAINABILITY,
     "no-behavior-class": TIER_MAINTAINABILITY,
+    # v2.17: the context-aware long-file verdict is an observation, not
+    # a defect claim - deliberately lighter than the size flag it
+    # replaces; exact duplicate test bodies are a mechanical cleanup.
+    "long-but-cohesive": TIER_INFO,
+    "redundant-test": TIER_MECHANICAL,
     "phantom-import": TIER_MECHANICAL,
     "duplicate-import": TIER_MECHANICAL,
     "debug-print": TIER_MECHANICAL,

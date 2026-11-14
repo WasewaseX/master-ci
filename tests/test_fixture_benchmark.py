@@ -1,17 +1,22 @@
-"""Contract tests for the benchmark seed (roadmap: the proof competitors cannot fake).
+"""Contract tests for the benchmark (roadmap: the proof competitors cannot fake).
 
-Covers the seed's declared contract:
+Covers the benchmark's declared contract:
 - every manifest parses, carries exactly the five declaration keys, and
 the twelve roadmap rows are all present under fixtures/bench/,
 - manifest files are 2-space indented, key-sorted and newline-terminated,
 - the runner's registry agrees with every manifest on engine and rule,
 - each DETECTED fixture produces its check id, each CLEAN fixture stays
-silent, and the two PENDING rows report PENDING with their reason,
-- exit codes: 0 with pendings allowed, 1 forced by a declaration the
-engine contradicts, 2 on missing dir and malformed manifests,
+silent, and no row is pending any more: v2.17 shipped the two phases
+the seed deferred (the pending vocabulary itself is still honored and
+is pinned with a synthetic row),
+- exit codes: 0 with the twelve proven rows, 1 forced by a declaration
+the engine contradicts - including the long-but-cohesive row's demand
+that the ordinary long-file verdict stayed silent - 2 on missing dir
+and malformed manifests,
 - deterministic output bytes across repeated runs, table and json,
 - hygiene: no .git internals under fixtures/bench, every fixture file
-tiny, ASCII, concrete (no placeholder tokens, no TODO markers),
+tiny except the long-but-cohesive corpus (whose length is the point),
+ASCII, concrete (no placeholder tokens, no TODO markers),
 - the churn fixture builds real git history in a temp repo, and a
 missing git reports PENDING with a reason, never a guessed count.
 """
@@ -78,7 +83,7 @@ def test_manifests_cover_the_twelve_roadmap_rows():
         if row.expected == "pending":
             assert row.reason, "a pending row must carry its reason"
     pendings = {row.slug for row in rows if row.expected == "pending"}
-    assert pendings == {"long-but-cohesive", "redundant-tests"}
+    assert pendings == set(), "both deferred phases shipped in v2.17: none may stay pending"
 
 
 def test_manifest_format_is_sorted_and_terminated():
@@ -122,21 +127,30 @@ def test_clean_fixtures_stay_clean():
         assert result.observed == "none"
 
 
-def test_pending_rows_stay_pending_with_reason():
-    """Pending rows are judged by nobody: PENDING, the manifest's reason."""
-    for row in fb.load_benchmark(BENCH):
-        if row.expected != "pending":
-            continue
-        result = fb.evaluate(row, BENCH)
-        assert result.verdict == "PENDING"
-        assert result.observed == "not-judged"
-        assert result.reason == row.reason
+def test_pending_vocabulary_still_judges_nobody():
+    """A pending declaration is judged by nobody - the seed's contract survives.
+
+    No shipped row is pending any more, so the vocabulary is pinned with
+    a synthetic row: evaluate() must report PENDING without running the
+    probe, the exact not-judged shape the seed promised.
+    """
+    row = fb.BenchRow(
+        slug="redundant-tests",
+        rule="redundant-test",
+        engine="slop_test_redundancy",
+        expected="pending",
+        reason="a future deferred measurement would carry its reason here",
+    )
+    result = fb.evaluate(row, BENCH)
+    assert result.verdict == "PENDING"
+    assert result.observed == "not-judged"
+    assert result.reason == row.reason
 
 
 # --- CLI contract -----------------------------------------------------------
 
 
-def test_table_run_exit_zero_with_pendings():
+def test_table_run_exits_zero_all_proven():
     """The shipped benchmark runs green: exit 0, twelve rows, sorted by slug."""
     out, code = fb.run_benchmark(BENCH, "table")
     lines = out.splitlines()
@@ -146,7 +160,7 @@ def test_table_run_exit_zero_with_pendings():
     assert len(data_rows) == 12
     slugs = [line.split()[0] for line in data_rows]
     assert slugs == sorted(slugs)
-    assert lines[-1] == "12 fixtures: 10 pass, 0 fail, 2 pending"
+    assert lines[-1] == "12 fixtures: 12 pass, 0 fail, 0 pending"
 
 
 def test_json_run_shape_and_summary():
@@ -157,7 +171,7 @@ def test_json_run_shape_and_summary():
     assert {fixture["slug"] for fixture in payload["fixtures"]} == ROADMAP_SLUGS
     summary = payload["summary"]
     assert summary["total"] == 12
-    assert summary["pass"] == 10 and summary["fail"] == 0 and summary["pending"] == 2
+    assert summary["pass"] == 12 and summary["fail"] == 0 and summary["pending"] == 0
 
 
 def test_failed_declaration_exits_one(tmp_path):
@@ -173,6 +187,81 @@ def test_failed_declaration_exits_one(tmp_path):
     payload = json.loads(proc.stdout)
     failed = {f["slug"]: f["verdict"] for f in payload["fixtures"]}
     assert failed["low-cohesion"] == "FAIL"
+
+
+# --- the two v2.17 rows -----------------------------------------------------
+
+
+def _debt_source(rows: int = 110) -> str:
+    """A long file whose class splits into two disconnected method groups."""
+    lines = [
+        '"""A long file with cohesion debt: two disjoint state clusters."""',
+        "",
+        "class SplitHub:",
+        "    def __init__(self):",
+        "        self.balance = 0",
+        "        self.outbox = []",
+        "",
+    ]
+    for index in range(rows):
+        lines += [
+            f"    def debit_{index}(self, amount):",
+            "        self.balance += amount",
+            "        return self.balance",
+            "",
+            f"    def post_{index}(self, message):",
+            "        self.outbox.append(message)",
+            "        return len(self.outbox)",
+            "",
+        ]
+    return "\n".join(lines)
+
+
+def test_long_but_cohesive_row_proves_the_context_aware_verdict():
+    """The row passes on the context-aware verdict with the ordinary one silent."""
+    row = row_by_slug(fb.load_benchmark(BENCH), "long-but-cohesive")
+    assert fb.PROBES[row.slug].absent == ("bloat-long-file",)
+    result = fb.evaluate(row, BENCH)
+    assert result.verdict == "PASS"
+    assert result.observed == "long-but-cohesive"
+
+
+def test_long_but_cohesive_row_fails_when_the_ordinary_verdict_fires(tmp_path):
+    """Swapping the fixture for a long file with cohesion debt flips the row to FAIL.
+
+    The probe's absent constraint is what makes the row judge the
+    context-aware phase honestly: a size-only engine that never consults
+    cohesion cannot pass this row.
+    """
+    copied = tmp_path / "bench"
+    shutil.copytree(BENCH, copied)
+    (copied / "long-but-cohesive" / "store_ledger.py").write_text(_debt_source(), encoding="utf-8")
+    row = row_by_slug(fb.load_benchmark(copied), "long-but-cohesive")
+    result = fb.evaluate(row, copied)
+    assert result.verdict == "FAIL"
+    observed = result.observed.split(",")
+    assert "bloat-long-file" in observed
+    assert "long-but-cohesive" not in observed
+
+
+def test_redundant_tests_row_and_its_distinct_test():
+    """The row passes on redundant-test; the distinct test never joins a group."""
+    row = row_by_slug(fb.load_benchmark(BENCH), "redundant-tests")
+    result = fb.evaluate(row, BENCH)
+    assert result.verdict == "PASS"
+    assert result.observed == "redundant-test"
+    fixture_dir = BENCH / "redundant-tests"
+    findings = fb._probe_test_redundancy(fixture_dir, fb._fixture_files(fixture_dir))
+    assert len(findings) == 1, "one finding per duplicate group"
+    message = findings[0].message
+    for twin in (
+        "test_rounded_rate_matches_reference",
+        "test_rounded_rate_matches_reference_again",
+        "test_rounded_rate_matches_reference_repeated",
+    ):
+        assert twin in message
+    assert "test_line_sum_matches_invoice_total" not in message
+    assert message.count("(line") == 3
 
 
 def test_missing_fixtures_dir_exits_two():
@@ -204,6 +293,24 @@ def test_missing_fixtures_dir_exits_two():
                 encoding="utf-8",
             ),
             id="unknown-slug",
+        ),
+        pytest.param(
+            lambda p: p.write_text(
+                json.dumps(
+                    {
+                        "slug": "low-cohesion",
+                        "rule": "bloat-long-file",
+                        "engine": "slop_lcom4",
+                        "expected": "detected",
+                        "reason": "",
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            ),
+            id="stale-rule",
         ),
         pytest.param(
             lambda p: p.write_text(
@@ -255,14 +362,22 @@ def test_no_git_internals_under_fixtures():
 
 
 def test_fixture_files_are_tiny_ascii_and_concrete():
-    """Every fixture file: under 30 lines, ASCII, no placeholders, no TODO."""
+    """Every fixture file: under 30 lines, ASCII, no placeholders, no TODO.
+
+    The one exemption is the long-but-cohesive corpus, whose length is
+    the declaration - it must exceed the 400-line budget, never fall
+    back under it.
+    """
     import re
 
     for path in sorted(BENCH.rglob("*")):
         if not path.is_file():
             continue
         text = path.read_text(encoding="utf-8")
-        assert len(text.splitlines()) < 30, path
+        if path.parent.name == "long-but-cohesive" and path.suffix == ".py":
+            assert len(text.splitlines()) > 400, path
+        else:
+            assert len(text.splitlines()) < 30, path
         assert text.isascii(), path
         assert not re.search(r"\b(foo|bar|baz)\b", text), path
         assert "TODO" not in text and "todo" not in text, path

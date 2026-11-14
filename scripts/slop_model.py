@@ -172,6 +172,12 @@ ADVISORY_ONLY_CHECKS = frozenset(
         "hotspot-risk",
         "forwarding-chain",
         "no-behavior-class",
+        # v2.17: the benchmark's two phases ship. The context-aware file
+        # verdict is the long-file budget's cohesion outcome, and the
+        # test-redundancy oracle judges a cleanup decision, not a defect
+        # - both advisory like every other budget.
+        "long-but-cohesive",
+        "redundant-test",
     }
 )
 

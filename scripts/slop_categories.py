@@ -80,6 +80,10 @@ CHECK_CATEGORIES: dict[str, str] = {
     "bloat-long-file": "code-health",
     "bloat-comment-ratio": "code-health",
     "bloat-banner-comments": "code-health",
+    # v2.17: the context-aware long-file verdict. Same conversation as
+    # the size flag it replaces - a reviewer reading code health sees
+    # the cohesion context where the bloat accusation would have been.
+    "long-but-cohesive": "code-health",
     "god-function": "code-health",
     "deep-nesting": "code-health",
     "chained-dict-get": "code-health",
@@ -131,6 +135,8 @@ CHECK_CATEGORIES: dict[str, str] = {
     # Test assurance: tests that cannot fail, or that do not exist.
     "empty-test": "test-assurance",
     "tautological-test": "test-assurance",
+    # v2.17: exact duplicate test bodies - redundancy the suite pays for.
+    "redundant-test": "test-assurance",
     "missing-tests": "test-assurance",
     "low-new-coverage": "test-assurance",
     # Dependency health: the manifest against the imports.

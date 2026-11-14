@@ -1,7 +1,7 @@
 {
   "engine": "slop_bloat",
-  "expected": "pending",
-  "reason": "context-aware file verdict needs the semantic phase",
-  "rule": "bloat-long-file",
+  "expected": "detected",
+  "reason": "a 453-non-blank-line single-class ledger whose LCOM4 graph is one connected method group; the context-aware verdict replaces the size-only bloat flag",
+  "rule": "long-but-cohesive",
   "slug": "long-but-cohesive"
 }

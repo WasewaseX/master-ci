@@ -1,7 +1,7 @@
 {
-  "engine": "none",
-  "expected": "pending",
-  "reason": "test-redundancy measurement is a later phase",
-  "rule": "test-redundancy",
+  "engine": "slop_test_redundancy",
+  "expected": "detected",
+  "reason": "three tests share one exact normalized body; the distinct fourth test stays outside the group",
+  "rule": "redundant-test",
   "slug": "redundant-tests"
 }

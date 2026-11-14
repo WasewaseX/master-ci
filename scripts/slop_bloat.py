@@ -5,6 +5,14 @@ this module turns them into findings, judges file-level budgets, and
 falls back to the line-scanner block view in slop_structural where no
 parse exists. Nesting is always judged from the line scanner - it is
 the one function fact the parser does not carry.
+
+The file-length verdict is context-aware (v2.17, benchmark phase 1):
+over the budget, the LCOM4 cohesion oracle in slop_lcom4 arbitrates.
+A file whose classes all hold one connected method group - and at
+least one class actually measured - reports `long-but-cohesive` with
+the line count and the cohesion proof as evidence; cohesion debt, an
+unmeasurable structure or a family without a sound graph keeps the
+ordinary `bloat-long-file` verdict.
 """
 
 from __future__ import annotations
@@ -14,6 +22,7 @@ import re
 from pathlib import Path
 
 from slop_files import is_test_path
+from slop_lcom4 import ClassView, _js_classes, _py_classes, _state_groups
 from slop_lizard import COMPLEXITY_BUDGET, FunctionFact, parse_functions
 from slop_model import Comment, Finding
 from slop_structural import (
@@ -138,6 +147,85 @@ def _banner_padding_finding(
     )
 
 
+# Evidence bound for the cohesion proof, the slop_lcom4 render convention.
+_MAX_PROOF_CLASSES = 4
+
+
+def _class_views(text: str, family: str) -> list[ClassView] | None:
+    """The file's classes under the cohesion oracle, or None without a graph.
+
+    The graph is sound exactly where slop_lcom4 measures natively
+    (Python ast, JS/TS scanner); every other family keeps the size-only
+    verdict rather than a guessed cohesion claim.
+    """
+    if family == "py":
+        return _py_classes(text)
+    if family == "js":
+        return _js_classes(text)
+    return None
+
+
+def _cohesion_proof(text: str, family: str) -> str | None:
+    """The cohesion evidence when the file passes the LCOM4 signal, else None.
+
+    Passing is slop_lcom4's own logic: no class splits into two or more
+    state-connected groups, so no low-cohesion verdict is attributable
+    to this file, AND at least one class actually measured - a file with
+    no measurable class cannot prove cohesion, and absence of evidence
+    is not cohesion. Any debt returns None and the size verdict stands.
+    """
+    views = _class_views(text, family)
+    if views is None:
+        return None
+    proven: list[str] = []
+    for view in views:
+        groups = _state_groups(view.methods)
+        if len(groups) > 1:
+            return None
+        if groups:
+            proven.append(view.name)
+    if not proven:
+        return None
+    rendered = ", ".join(proven[:_MAX_PROOF_CLASSES])
+    if len(proven) > _MAX_PROOF_CLASSES:
+        rendered += f", +{len(proven) - _MAX_PROOF_CLASSES}"
+    plural = "es" if len(proven) != 1 else ""
+    each = "" if len(proven) == 1 else " each"
+    return f"{len(proven)} measured class{plural}, one connected method group{each}: {rendered}"
+
+
+def _long_file_verdict(path: Path, non_blank: int, text: str, family: str) -> Finding:
+    """The over-budget verdict with its cohesion context.
+
+    A file the LCOM4 oracle proves cohesive reports `long-but-cohesive`
+    - same line evidence, plus the proof - because the honest split
+    conversation needs to know the file is one responsibility. Debt, an
+    unmeasurable structure or an unsound graph reports the ordinary
+    `bloat-long-file` verdict unchanged.
+    """
+    proof = _cohesion_proof(text, family)
+    if proof is None:
+        return Finding(
+            path=str(path),
+            line=1,
+            check="bloat-long-file",
+            message=f"file spans {non_blank} non-blank lines (budget {BLOAT_FILE_LINES})",
+            weight=1,
+            advisory=True,
+        )
+    return Finding(
+        path=str(path),
+        line=1,
+        check="long-but-cohesive",
+        message=(
+            f"file spans {non_blank} non-blank lines (budget {BLOAT_FILE_LINES}); "
+            f"cohesion proven: {proof}"
+        ),
+        weight=1,
+        advisory=True,
+    )
+
+
 def _file_bloat_findings(
     path: Path,
     text: str,
@@ -145,20 +233,11 @@ def _file_bloat_findings(
     comments: list[Comment],
     rel: str,
 ) -> list[Finding]:
-    """File-level budgets: length, comment pressure, banner padding."""
+    """File-level budgets: length (context-aware), comment pressure, banners."""
     findings: list[Finding] = []
     non_blank = sum(1 for line in text.splitlines() if line.strip())
     if non_blank > BLOAT_FILE_LINES and not is_test_path(rel):
-        findings.append(
-            Finding(
-                path=str(path),
-                line=1,
-                check="bloat-long-file",
-                message=f"file spans {non_blank} non-blank lines (budget {BLOAT_FILE_LINES})",
-                weight=1,
-                advisory=True,
-            )
-        )
+        findings.append(_long_file_verdict(path, non_blank, text, family))
     pressure = _comment_pressure_finding(path, _comment_lines_of(family, comments, text), non_blank)
     if pressure:
         findings.append(pressure)

@@ -17,6 +17,11 @@ REMEDIES = {
     "bloat-long-file": (
         "Split the file by responsibility; ask for the version doing the same job in fewer lines"
     ),
+    # v2.17: the context-aware outcome for a proven-cohesive long file.
+    "long-but-cohesive": (
+        "No split demanded: the file is long and one responsibility - "
+        "weigh future additions against that same axis"
+    ),
     "bloat-param-count": (
         "Group the parameters into an options object or struct; more than "
         "six parameters is unreadable at the call site"
@@ -61,6 +66,10 @@ REMEDIES = {
     "placeholder-note": "Replace the template note with the real value or implementation",
     "stub-function": "Implement the stub or remove it; list it in a TODO ticket instead",
     "empty-test": "Add assertions; a test that cannot fail proves nothing",
+    # v2.17: exact duplicate test bodies.
+    "redundant-test": (
+        "Delete the twin or vary what it asserts; identical bodies prove one behavior N times"
+    ),
     "bare-except": "Catch the specific exception and handle or re-raise it",
     "swallowed-exception": "Log, wrap or re-raise; a pass-only handler hides failures",
     "empty-catch": "Handle the error or propagate it; an empty catch hides bugs",

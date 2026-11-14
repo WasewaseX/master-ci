@@ -158,6 +158,7 @@ from slop_reporting import (  # noqa: F401
 from slop_residue import (  # noqa: F401
     check_residue,
 )
+from slop_test_redundancy import check_test_redundancy  # noqa: F401
 from slop_ui_prose import (  # noqa: F401
     check_doc_extras,
     check_ui_slop,
@@ -191,6 +192,9 @@ def scan_code_file(
         # other families lean on the family scanners' own oracles.
         findings.extend(check_unclosed_resource(path, text))
         findings.extend(check_shared_mutable_state(path, text))
+        # Test redundancy scopes itself to test paths via is_test_path;
+        # production modules return empty before the AST is parsed.
+        findings.extend(check_test_redundancy(path, text, rel))
     findings.extend(check_bloat(path, text, family, rel, comments))
     findings.extend(check_cognitive(path, text, ext))
     findings.extend(check_exceptions_js_family(path, text, family))
