@@ -574,14 +574,14 @@ jobs:
             --run-url "$RUN_URL"
       - name: Upload the quarantine proposal
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: flaky-quarantine
           path: ${{ runner.temp }}/quarantine
           if-no-files-found: ignore
       - name: Upload hunt report
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: flaky-report
           path: flaky-report.json
@@ -664,7 +664,7 @@ jobs:
           persist-credentials: false
 
       - name: Download the hunt's evidence
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: flaky-*
           path: evidence
@@ -696,7 +696,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Open or update the quarantine PR
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        uses: peter-evans/create-pull-request@15733dbdfeedb4f7fdb73d13c6f5ac83b710fab8 # v8.1.2
         with:
           token: ${{ secrets.AUTOFIX_TOKEN || github.token }}
           branch: ci/flake-quarantine
