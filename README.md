@@ -83,7 +83,7 @@ which keeps its baseline reproducible across template releases:
 ```yaml
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v2.16.0
+      template_ref: v2.17.0
 ```
 
 ### Required check
@@ -103,7 +103,7 @@ alone cannot fail on a red CodeQL analysis (audit finding F). Two honest
 shapes:
 
 - **One required check (recommended):** call
-  `WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.16.0`
+  `WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.17.0`
   instead of `master-ci.yml` and require **`required-quality-check / gate`**.
   The first segment is the job id the caller gives the call, so the
   example below names its job `required-quality-check`; a caller naming
@@ -116,7 +116,7 @@ shapes:
   ```yaml
   jobs:
     required-quality-check:
-      uses: WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.16.0
+      uses: WasewaseX/master-ci/.github/workflows/required-quality.yml@v2.17.0
       permissions:
         contents: read
         security-events: write
@@ -183,6 +183,7 @@ works for consumers too.
 | `go-test` | Go changed | Build + race-tested, shuffled test suite |
 | `java` | JVM changed | Gradle wrapper validation, Maven/Gradle build + verify (Java, Kotlin, Scala) |
 | `cpp` | C/C++ changed | cppcheck, opt-in clang-format, CMake/Make build + ctest |
+| `quality-cpp` | C/C++ changed | CMake per-project discovery, clang-tidy over the exported build graph; every project's outcome named in the summary |
 | `csharp` | .NET changed | Release build, tests, advisory `dotnet format` (C#, F#) |
 | `ruby` | Ruby changed | bundler install, advisory RuboCop + bundler-audit, rake/rspec tests |
 | `php` | PHP changed | composer install, `php -l`, opt-in PHPStan, PHPUnit/composer tests |
@@ -515,10 +516,10 @@ dispatched) wrapper,
 ```yaml
 jobs:
   hunt:
-    uses: WasewaseX/master-ci/.github/workflows/flaky.yml@v2.16.0
+    uses: WasewaseX/master-ci/.github/workflows/flaky.yml@v2.17.0
     with:
       template_repo: WasewaseX/master-ci
-      template_ref: v2.16.0
+      template_ref: v2.17.0
     permissions:
       # The called quarantine job declares contents: write and
       # pull-requests: write; a reusable call that grants less than its
@@ -791,7 +792,7 @@ carries a `SKILL.md`, so assistants with a skills directory can load it
 with one command:
 
 ```bash
-git clone --depth 1 --branch v2.16.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
+git clone --depth 1 --branch v2.17.0 https://github.com/WasewaseX/master-ci <skills-dir>/master-ci
 ```
 
 MCP clients configure the same install like this:
@@ -979,6 +980,18 @@ keeps the trajectory honest, and the `metric-snapshots` job appends the
 measured numbers themselves to a versioned store on the dedicated
 `quality-store` branch - the durable history the cache-borne outcome
 trend could not provide.
+
+And since v2.17: the **analyzer profile and the proposal drafts** -
+`--profile` loads a Qodana-style analyzer profile (JSON or YAML) with
+downgrade-only severities, scope exclusions and budget overrides, every
+silenced finding named with its reason; `--proposals DIR` writes one
+debt-priced, reviewable markdown draft per finding, local files only.
+The file-length verdict consults the LCOM4 cohesion oracle
+(`long-but-cohesive`), duplicate Python test bodies are flagged
+(`redundant-test`), the fixture benchmark judges all twelve declared
+outcomes proven, and the `quality-cpp` job runs clang-tidy per
+discovered CMake project over the build graph with every project's
+outcome named.
 
 And since v2.3: the **flake hunt** - the test suite runs several times
 on a schedule and every verdict flip between iterations is reported;

@@ -156,8 +156,8 @@ stay advisory.
 | Per-project baselines | Monorepo projects cannot hide a regression behind another project's improvement  | Shipped in v2.16.0: the floor is per project - `project_of` derives the monorepo dimension from the first path segment holding a family manifest (dotnet globs included), unmanifested files stay the root project, and the delta table and the identity ledger are both keyed by project; a project pushed above its own count fails even when the repo total drops |
 | New-code gates        | Duplication density, debt ratio, LCOM4 and coupling join cognitive/cyclomatic on the merge-base diff | Shipped in v2.15.0: `--max-new-duplication` (duplicated long lines over non-blank added lines), `--max-new-debt` (findings on added lines priced by the debt engine's minutes over the SQALE cost of the added lines) and `--max-design-findings` (low-cohesion, high-coupling, unstable-hub verdicts anchored on added lines) in `new_code_gate.py`, wired through the `new_code_*` inputs of both reusable workflows with defaults 5% / 5% / 0; the scan runs once and feeds all three finding-based ceilings |
 | Durable history       | Metric snapshots in a versioned store (dedicated branch), not just CI outcomes   | Shipped in v2.16.0: `slop_snapshots.py` - a versioned JSONL store (schema 1, eleven declared metric fields with directions, absent metrics omitted never zero-filled) with record / trend / diff and a SARIF bridge (`slop_snapshot_extract.py`) feeding it from the scan; the `metric-snapshots` job appends one row per run to the dedicated `quality-store` branch (orphan first run, worktree append after) and renders the trend into the step summary - the cache-borne outcome trend keeps its job, the measured numbers now outlive cache eviction |
-| Analyzer profiles     | Qodana-style per-language rules, severities, scopes, thresholds, baseline-aware gates | Thresholds are global constants |
-| Refactoring proposals | Reviewable PRs with evidence - the quarantine-PR pattern generalized to quality debt | Quarantine is the only PR-emitting loop today |
+| Analyzer profiles     | Qodana-style per-language rules, severities, scopes, thresholds, baseline-aware gates | Shipped in v2.17.0: `slop_profiles.py` - analyzer profiles as data (`ProfileSpec`: per-check downgrade-only severities, scope exclusions, budget overrides, loaded from JSON or YAML with fail-closed validation against the one check-id registry); `apply_profile` returns every silenced finding as a visible `Suppression` (a profile relaxes noise, it never invents severity), `DEFAULT_PROFILE` is a proven no-op, the shipped budget identity (density 300/5.0, coupling 30, hotspot 1200) is pinned by contract test, and the density pair flows end-to-end through `density_findings(budgets=...)`; `--profile` applies before baselines, ratchets and gates |
+| Refactoring proposals | Reviewable PRs with evidence - the quarantine-PR pattern generalized to quality debt | Shipped in v2.17.0: `slop_refactor.py` generalizes the quarantine-PR pattern to quality debt - one debt-priced, reviewable markdown draft per finding at `proposals/<check>/<slug>.md` plus a sorted `index.md` and schema-stamped `bundle.json`, every fact sourced verbatim from the Finding, the slop_remedies registry and slop_debt's pricing (an unpriced check id fails closed before any write), byte-identical regeneration behind a `.slop-proposals` marker - local files only, no push, no PR, no permissions beyond its own output directory, so the emission step never repeats the v2.16.0 `contents:write` failure; `--proposals DIR` |
 
 Acceptance test: remove one old finding and introduce another under
 the same rule. The baseline must report one resolved and one new
@@ -171,7 +171,16 @@ Use each ecosystem's native engines; do not duplicate their analysis.
 2. Java and Kotlin with build/compiler metadata.
 3. PHP with PHPStan and Composer metadata.
 4. Ruby with native parser and dependency metadata.
-5. C/C++ with clang-tidy and build-graph analysis.
+5. C/C++ with clang-tidy and build-graph analysis - shipped in v2.17.0:
+   the `cpp` family's declared-name contract completed (every directory
+   holding a `CMakeLists.txt` is a project, nested projects
+   independent, declared `project()` name with a dir-name fallback)
+   and the new `quality-cpp` job running clang-tidy per project over
+   the exported `compile_commands.json` (translation units from the
+   build graph, headers via `-header-filter`), `contents: read`
+   exactly, zero projects a config-only skip, and every project's
+   outcome named in the step summary - findings counted, skips loud
+   with the reason.
 6. Python monorepo discovery - shipped in v2.16.0 beyond the named
    gap: the python, csharp, ruby and php jobs all discover per project
    like node, rust, go and jvm (the JVM detect shape: zero projects is
@@ -200,17 +209,22 @@ declared expected outcome:
 | Complex code with high churn         | Hotspot identified              |
 | Redundant tests                      | Test redundancy identified      |
 
-The seed shipped in v2.16.0: `fixtures/bench/` carries all twelve rows
-as declared-outcome fixtures (`manifest.json` per slug: expected
-detected / clean / pending with the reason) and `fixture_benchmark.py`
-judges every shipped engine against the declarations - ten verdicts
-proven (duplicate implementation, low cohesion, unused function,
-dynamic registration stays clean, short-but-complex, abstraction chain,
-unnecessary dependency, framework wrapper stays clean, cycles, churn
-hotspot on a real git history built in temp), two declared pending with
-their reason (context-aware file verdicts and test redundancy are later
-phases). Exit 0 with pendings, 1 on any failed declaration, 2 on a
-malformed manifest; the fixtures never carry git internals.
+The seed shipped in v2.16.0 and completed in v2.17.0: `fixtures/bench/`
+carries all twelve rows as declared-outcome fixtures (`manifest.json`
+per slug: expected detected / clean / pending with the reason) and
+`fixture_benchmark.py` judges every shipped engine against the
+declarations - twelve verdicts proven, zero pending: duplicate
+implementation, low cohesion, unused function, dynamic registration
+stays clean, short-but-complex, abstraction chain, unnecessary
+dependency, framework wrapper stays clean, cycles, churn hotspot on a
+real git history built in temp, the context-aware file verdict
+(`long-but-cohesive` - the file-length check consults the LCOM4
+cohesion oracle and the ordinary size-only flag stays silent) and test
+redundancy (`redundant-test` - exact normalized duplicate Python test
+bodies, test paths only). Exit 0 when every declaration holds, 1 on
+any failed declaration, 2 on a malformed manifest; the pending
+vocabulary stays for future deferred rows; the fixtures never carry
+git internals.
 
 Five measurements per rule: precision, recall, false-positive rate,
 analysis coverage, runtime and memory. Then run the same fixtures

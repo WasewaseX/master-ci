@@ -659,6 +659,30 @@ Profile presets (quick / standard / strict / custom) only change the
   lines), `--max-new-debt` (findings on added lines priced over the
   SQALE cost of the added lines) and `--max-design-findings`, wired
   through the `new_code_*` inputs with defaults 5% / 5% / 0.
+- **v2.17 - analyzer profiles, proposal drafts, context-aware verdicts
+  and test redundancy (the P2 rows):** `--profile PATH` loads a
+  Qodana-style analyzer profile (JSON or YAML - distinct from the
+  workflow's `profile` presets): per-check downgrade-only severities,
+  scope exclusions and budget overrides, validated fail-closed against
+  the one check registry, every silenced finding reported with its
+  reason, applied before baselines, ratchets and gates
+  (`slop_profiles.py`; the shipped-budget identity - density 300/5.0,
+  coupling 30, hotspot 1200 - is pinned by contract test and the
+  density pair flows through `density_findings(budgets=...)`).
+  `--proposals DIR` emits one reviewable markdown draft per finding at
+  `proposals/<check>/<slug>.md` plus `index.md` and `bundle.json`,
+  priced by the debt engine's minutes, remedy text from the registry,
+  an after-fix verify command, byte-identical regeneration behind a
+  `.slop-proposals` marker - local files only, no push, no PR, no
+  permissions beyond the output directory (`slop_refactor.py`). The
+  file-length verdict consults the LCOM4 cohesion oracle:
+  a proven-cohesive long file reports `long-but-cohesive` (advisory,
+  line count plus the cohesion proof) and the ordinary size-only flag
+  stays silent; a long file with cohesion debt keeps the ordinary
+  verdict. `slop_test_redundancy.py` flags exact normalized duplicate
+  Python test bodies (`redundant-test`, advisory, test paths only -
+  the conservative first oracle). The fixture benchmark judges all
+  twelve declared outcomes: 12 proven, 0 pending.
 - **Disable:** `profile: quick` keeps the whole job advisory; with
   `profile: custom` set `fail_on_ai_slop: false` explicitly. Provenance
   and test inventory can be turned off with `--no-provenance`; the
@@ -807,6 +831,28 @@ Profile presets (quick / standard / strict / custom) only change the
   inline suppressions (`--inline-suppr` is enabled).
 - **Disable:** `run_cpp: 'false'`; force with `run_cpp: 'true'`.
 - **Time:** 2-10 minutes depending on project size.
+
+## `quality-cpp` - the C/C++ quality slice (v2.17)
+
+- **Inspects:** every CMake project (each directory holding a
+  `CMakeLists.txt` is a project, nested projects independent, declared
+  `project()` name with a dir-name fallback) with clang-tidy over the
+  exported build graph: the job configures with
+  `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON`, runs clang-tidy against the
+  project's translation units from `compile_commands.json` and headers
+  via `-header-filter` anchored at the project directory.
+- **Does not inspect:** projects whose configure fails - each one is
+  skipped loudly with its reason in the step summary, never a silent
+  pass; engine-side C/C++ metrics stay lexer-backed (lizard).
+- **Fails when:** nothing on its own - clang-tidy findings are advisory
+  by convention (the cppcheck/RuboCop/PHPStan precedent) and every
+  project's outcome (finding count or skipped-with-reason) is named in
+  the step summary; no omitted project hides behind a green aggregate.
+- **Permissions:** `contents: read` exactly - the v2.16.0 snapshot
+  lesson, enforced by contract test.
+- **Disable:** `run_cpp: 'false'`; zero discovered projects skip with
+  the config-only reason (the JVM detect shape).
+- **Time:** 2-15 minutes depending on project count and size.
 
 ## `csharp` - .NET stack (C#, F#)
 
