@@ -1652,7 +1652,11 @@ jobs:
           while IFS= read -r dir; do
             [ -z "$dir" ] && continue
             echo "Measuring complexity in $dir"
-            out=$(lizard -l python -C "$CX_MAX" -x '_ci/*' "$dir" || true)
+            # fixtures/ holds the declared-slop benchmark trees - a
+            # short-but-complex fixture exceeds the budget BY DESIGN
+            # (the manifest says so), exactly like .ai-integrity-ignore
+            # exempts them from the detector. The gate measures projects.
+            out=$(lizard -l python -C "$CX_MAX" -x '_ci/*' -x 'fixtures/*' "$dir" || true)
             echo "$out"
             if echo "$out" | grep -q '!!!!'; then
               found=1
