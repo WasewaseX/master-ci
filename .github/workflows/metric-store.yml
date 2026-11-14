@@ -1,0 +1,81 @@
+# =============================================================================
+# Metric Store - the template's own durable quality trajectory.
+# =============================================================================
+# master-ci.yml's metric-snapshots job is read-only by design (a reusable
+# workflow's callers grant contents: read at most; a job demanding more
+# fails the whole call at startup). The store therefore advances in a
+# workflow the template repo owns: this one. It runs the full scan on the
+# template itself, extracts the metric dictionary from the scan's SARIF,
+# appends one row per run to snapshots.jsonl on the dedicated
+# quality-store branch (orphan first run, worktree append after), and
+# renders the trend into the step summary. The branch is a versioned
+# store, not a cache: nothing evicts it.
+#
+# Concurrency queues appends instead of racing them; a failed push (a
+# protection rule the repo opts into) fails the run loudly - the losing
+# row is re-recorded by the next run.
+# =============================================================================
+
+name: Metric Store
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/**"
+      - ".github/workflows/metric-store.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: metric-store
+  cancel-in-progress: false
+
+jobs:
+  store:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        # persist-credentials stays at its default: the push below is the
+        # one write this workflow makes, to its own quality-store branch.
+      - name: Install pinned parser tooling
+        # The parser guarantee (v2.5): the scan advertises parse-backed
+        # dimensions and runs --require-parsers - a missing analyzer is
+        # exit 2, never a silently weakened row.
+        run: |
+          # the pin list is meant to word-split:
+          # shellcheck disable=SC2046
+          pip install --quiet $(python3 scripts/tool_versions.py pip lizard tree-sitter tree-sitter-language-pack)
+      - name: Scan the template
+        run: |
+          rc=0
+          python3 scripts/ai_slop_detector.py . --require-parsers --sarif ai_integrity.sarif || rc=$?
+          # exit 1 = the blocking gate tripped: the row still records -
+          # a metric store that only kept good days would be a liar.
+          # exit 2 = the scan could not run at all: fail closed.
+          if [ "$rc" -eq 2 ]; then
+            exit 2
+          fi
+      - name: Append the snapshot to the quality-store branch
+        run: |
+          git config user.name "master-ci metric store"
+          git config user.email "actions@users.noreply.github.com"
+          if git ls-remote --exit-code origin quality-store >/dev/null 2>&1; then
+            git fetch origin quality-store
+            git worktree add store origin/quality-store
+          else
+            # First run: the store branch is born empty, one orphan commit.
+            git worktree add --orphan -b quality-store store
+          fi
+          metrics=$(python3 scripts/slop_snapshot_extract.py --sarif ai_integrity.sarif)
+          python3 scripts/slop_snapshots.py record --file store/snapshots.jsonl \
+            --sha "$GITHUB_SHA" --ref "$GITHUB_REF_NAME" --project . --metrics "$metrics"
+          python3 scripts/slop_snapshots.py trend --file store/snapshots.jsonl --last 10 \
+            >> "$GITHUB_STEP_SUMMARY"
+          cd store
+          git add snapshots.jsonl
+          git commit -m "metric snapshot ${GITHUB_SHA} (${GITHUB_REF_NAME})"
+          git push origin HEAD:quality-store

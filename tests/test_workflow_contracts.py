@@ -2252,18 +2252,43 @@ def test_discovery_drives_python_dotnet_ruby_and_php_jobs(master_ci_text: str):
     assert "--family jvm --list" in master_ci_text, "the jvm precedent stays"
 
 
-def test_metric_snapshots_appends_to_the_dedicated_branch(master_ci_text: str):
-    """Durable history is a versioned store, not a cache: the
-    metric-snapshots job extracts the scan's metrics from the SARIF the
-    ai-integrity job uploads, records one row per run onto the
-    quality-store branch, and renders the trend. The write is scoped:
-    the job's contents permission serves the store branch only."""
-    text = master_ci_text
-    assert "metric-snapshots:" in text, "the job exists"
-    assert "needs: [meta, ai-integrity]" in text, "the snapshot rides the scan"
-    assert "slop_snapshots.py record" in text and "slop_snapshots.py trend" in text
-    assert "quality-store" in text, "the dedicated store branch is named"
-    assert "slop_snapshot_extract.py --sarif" in text, "the bridge feeds the record"
-    assert "git worktree add --orphan -b quality-store" in text, "first run births the store"
-    sarif_upload = text[text.index("Upload AI-integrity SARIF artifact") :]
+def test_metric_snapshots_job_is_read_only_and_hands_the_store_forward(master_ci_text: str):
+    """A reusable workflow's callers grant contents: read at most - a
+    job demanding more fails the whole call at startup (the v2.16.0
+    startup_failure, caught by the canary and bisected to this exact
+    line). The reusable job therefore records and renders the trend and
+    hands the store forward as an artifact; the dedicated-branch commit
+    is a grant the template's own repo makes in metric-store.yml."""
+    data = load(WF_DIR / "master-ci.yml")
+    job = data["jobs"]["metric-snapshots"]
+    perms = job.get("permissions") or {}
+    assert perms.get("contents") == "read", "the reusable job stays read-only"
+    assert "needs: [meta, ai-integrity]" in master_ci_text, "the snapshot rides the scan"
+    assert "slop_snapshots.py record" in master_ci_text, "the job records"
+    assert "slop_snapshots.py trend" in master_ci_text, "the job renders the trend"
+    assert "slop_snapshot_extract.py --sarif" in master_ci_text, "the bridge feeds the record"
+    assert "name: quality-store" in master_ci_text, "the store travels forward as an artifact"
+    sarif_upload = master_ci_text[master_ci_text.index("Upload AI-integrity SARIF artifact") :]
     assert "ai-integrity-sarif" in sarif_upload, "the scan hands its SARIF to other jobs"
+
+
+def test_metric_store_workflow_owns_the_dedicated_branch():
+    """The versioned store's commit-back lives in a workflow the
+    template repo owns: contents: write is a grant the repo makes, not
+    one it demands from consumers. The branch is born as one orphan
+    commit and appended through a worktree, and the run fails loudly if
+    the push is refused - a store that lost a row silently would be a
+    cache, which is exactly what this replaces."""
+    data = load(WF_DIR / "metric-store.yml")
+    perms = data.get("permissions") or {}
+    assert perms.get("contents") == "write", "the template grants its own store write"
+    on_key = True if True in data else "on"
+    triggers = data.get(on_key) or {}
+    assert "workflow_call" not in triggers, "the store workflow is template-owned, not reusable"
+    raw = (WF_DIR / "metric-store.yml").read_text(encoding="utf-8")
+    assert "git worktree add --orphan -b quality-store" in raw, "first run births the store"
+    assert "push origin HEAD:quality-store" in raw, "the append lands on the branch"
+    assert "slop_snapshots.py record" in raw and "slop_snapshots.py trend" in raw
+    assert "cancel-in-progress: false" in raw, "appends queue, never race"
+    for job_id, job in data["jobs"].items():
+        assert isinstance(job.get("timeout-minutes"), int), f"{job_id} needs a timeout"

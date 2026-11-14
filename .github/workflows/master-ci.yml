@@ -1236,16 +1236,19 @@ jobs:
           fi
           exit "$rc"
 
-  # ---------------------------------------------------------------------------
   # Metric snapshots: the durable quality trajectory. quality_history
   # records CI outcomes in a cache that eviction erases; this job appends
-  # the measured numbers themselves to a versioned store committed to the
-  # dedicated quality-store branch and renders the trend into the step
-  # summary. One row per run, project ".": the scan's blocking/advisory
-  # counts always speak, the engines' ratio findings speak when they
-  # fired. Concurrent runs may race on the push; the losing run's numbers
-  # are re-recorded by its next run.
-  # ---------------------------------------------------------------------------
+  # the measured numbers themselves to a versioned store and renders the
+  # trend into the step summary. One row per run, project ".": the scan's
+  # blocking/advisory counts always speak, the engines' ratio findings
+  # speak when they fired.
+  #
+  # The reusable job stays read-only ON PURPOSE: callers grant this
+  # template contents: read at most, and a job demanding more fails the
+  # whole call at startup. The store travels forward as an artifact;
+  # committing it to the dedicated quality-store branch is the
+  # template's own metric-store.yml (contents: write is a grant the
+  # template's own repo makes, not one it demands from consumers).
   metric-snapshots:
     needs: [meta, ai-integrity]
     if: >-
@@ -1256,12 +1259,11 @@ jobs:
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 10
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        # persist-credentials stays at its default here on purpose: the
-        # only write this job makes is the snapshot append pushed to the
-        # dedicated quality-store branch - never the consumer's branch.
+        with:
+          persist-credentials: false
       - name: Fetch master-ci helpers
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1277,32 +1279,29 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p sarif
+          mkdir -p sarif quality-store
           gh run download "$GITHUB_RUN_ID" -n ai-integrity-sarif -D sarif \
             || echo "no SARIF artifact - the scan produced none; recording counts only"
-      - name: Record the metric snapshot on the quality-store branch
+      - name: Record the metric snapshot
         run: |
-          git config user.name "master-ci snapshots"
-          git config user.email "actions@users.noreply.github.com"
-          if git ls-remote --exit-code origin quality-store >/dev/null 2>&1; then
-            git fetch origin quality-store
-            git worktree add store origin/quality-store
-          else
-            # First run: the store branch is born empty, one orphan commit.
-            git worktree add --orphan -b quality-store store
-          fi
           metrics="{}"
           if compgen -G 'sarif/*.sarif' >/dev/null; then
             metrics=$(python3 _ci/scripts/slop_snapshot_extract.py --sarif sarif/ai_integrity.sarif)
           fi
-          python3 _ci/scripts/slop_snapshots.py record --file store/snapshots.jsonl \
+          python3 _ci/scripts/slop_snapshots.py record --file quality-store/snapshots.jsonl \
             --sha "$GITHUB_SHA" --ref "$GITHUB_REF_NAME" --project . --metrics "$metrics"
-          python3 _ci/scripts/slop_snapshots.py trend --file store/snapshots.jsonl --last 10 \
+          python3 _ci/scripts/slop_snapshots.py trend --file quality-store/snapshots.jsonl --last 10 \
             >> "$GITHUB_STEP_SUMMARY"
-          cd store
-          git add snapshots.jsonl
-          git commit -m "metric snapshot ${GITHUB_SHA} (${GITHUB_REF_NAME})"
-          git push origin HEAD:quality-store
+      - name: Upload the snapshot store
+        # The next stage of the pipeline (a wrapper job with a write
+        # token, or the template's own metric-store.yml) appends this
+        # file to the dedicated quality-store branch.
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: quality-store
+          path: quality-store/snapshots.jsonl
+          if-no-files-found: error
+
 
   # ---------------------------------------------------------------------------
   # Documentation: markdown lint
