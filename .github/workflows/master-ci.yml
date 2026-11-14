@@ -1656,7 +1656,7 @@ jobs:
             # short-but-complex fixture exceeds the budget BY DESIGN
             # (the manifest says so), exactly like .ai-integrity-ignore
             # exempts them from the detector. The gate measures projects.
-            out=$(lizard -l python -C "$CX_MAX" -x '_ci/*' -x 'fixtures/*' "$dir" || true)
+            out=$(lizard -l python -C "$CX_MAX" -x '*_ci/*' -x '*fixtures/*' "$dir" || true)
             echo "$out"
             if echo "$out" | grep -q '!!!!'; then
               found=1
@@ -2312,10 +2312,12 @@ jobs:
         run: |
           report="$RUNNER_TEMP/cpp-quality-report.md"
           : > "$report"
-          echo "### C/C++ quality (clang-tidy, per project)" >> "$report"
-          echo "" >> "$report"
-          echo "| Project | Outcome |" >> "$report"
-          echo "|---|---|" >> "$report"
+          {
+            echo "### C/C++ quality (clang-tidy, per project)"
+            echo ""
+            echo "| Project | Outcome |"
+            echo "|---|---|"
+          } >> "$report"
           while IFS= read -r dir; do
             [ -z "$dir" ] && continue
             if ! cmake -S "$dir" -B "$dir/build-ci" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
