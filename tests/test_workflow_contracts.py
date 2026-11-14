@@ -24,6 +24,9 @@ project documents, so a regression cannot land silently:
     buried inside `run: |` block scalars
 - the selftest workflow really exercises pass, enforced-failure and
     input-validation paths of the reusable workflow
+- the quality-cpp C/C++ slice holds `contents: read` only, discovers per
+    project for the cmake family and names every project's outcome in the
+    step summary (skips loud, never silent)
 - event filters are explicit, clean pattern lists and the self-loop
     workflows push-target exactly [main] (trigger regression net)
 """
@@ -429,7 +432,7 @@ def test_template_ref_fails_closed_for_foreign_callers():
         "helper checkouts must consume the resolved ref, not the raw input"
     )
     helper_checkouts = text.count("ref: ${{ needs.meta.outputs.template_ref }}")
-    assert helper_checkouts == 19, (
+    assert helper_checkouts == 20, (
         f"all {helper_checkouts} helper checkouts must use the resolved ref "
         "(bump the count when a job gains one - every checkout consumes "
         "the resolved ref, never the raw input)"
@@ -2292,3 +2295,140 @@ def test_metric_store_workflow_owns_the_dedicated_branch():
     assert "cancel-in-progress: false" in raw, "appends queue, never race"
     for job_id, job in data["jobs"].items():
         assert isinstance(job.get("timeout-minutes"), int), f"{job_id} needs a timeout"
+
+
+# ---------------------------------------------------------------------------
+# v2.17.0: the C/C++ breadth slice - cmake discovery and quality-cpp
+# ---------------------------------------------------------------------------
+
+
+def _quality_cpp_block(master_ci_text: str) -> str:
+    """The quality-cpp job source, from its key to the next job key."""
+    return master_ci_text.split("\n  quality-cpp:")[1].split("\n  csharp:")[0]
+
+
+def _quality_cpp_steps(master_ci_text: str) -> dict[str, str]:
+    """The job's run blocks, keyed by step name."""
+    data = load(WF_DIR / "master-ci.yml")
+    return {
+        str(step.get("name", step.get("uses", ""))): str(step.get("run", ""))
+        for step in data["jobs"]["quality-cpp"]["steps"]
+    }
+
+
+def _quality_cpp_step_ifs(master_ci_text: str) -> dict[str, str]:
+    """The job's step conditions, keyed by step name."""
+    data = load(WF_DIR / "master-ci.yml")
+    return {
+        str(step.get("name", step.get("uses", ""))): str(step.get("if", ""))
+        for step in data["jobs"]["quality-cpp"]["steps"]
+    }
+
+
+def test_quality_cpp_job_exists_and_invokes_cmake_discovery(master_ci_text: str):
+    """Roadmap P2 breadth item 5: the C/C++ slice discovers per project for
+    the cmake family (a CMakeLists.txt directory is one project, nested
+    projects independent), rides the cpp change filter and run_cpp toggle
+    like every family job, and joins the aggregates."""
+    data = load(WF_DIR / "master-ci.yml")
+    job = data["jobs"]["quality-cpp"]
+    condition = str(job.get("if", ""))
+    assert "contains(format(',{0},', inputs.select), ',quality-cpp,')" in condition, (
+        "the slice is selectable by its own token"
+    )
+    assert "needs.changes.outputs.cpp == 'true'" in condition, "the cpp filter drives it"
+    discovery = str(
+        next(
+            step.get("run", "")
+            for step in job["steps"]
+            if step.get("name") == "Discover CMake projects"
+        )
+    )
+    assert "--family cpp --format summary" in discovery
+    assert "--family cpp --list" in discovery, "the cmake family drives the job"
+    assert "quality-cpp" in master_ci_text.split("ci-success:")[1].split("jobs:")[0], (
+        "ci-success must aggregate the slice"
+    )
+    assert '("quality-cpp", "C/C++ quality (clang-tidy)")' in master_ci_text, (
+        "the PR dashboard carries the slice"
+    )
+    assert 'valid_jobs="$valid_jobs quality-ratchet quality-cpp"' in master_ci_text, (
+        "select must accept the slice's token"
+    )
+
+
+def test_quality_cpp_holds_exactly_contents_read(master_ci_text: str):
+    """The v2.16.0 startup_failure lesson, enforced for the new slice: a
+    reusable workflow's job may demand no permission beyond what its
+    callers grant - contents: read, exactly, nothing beside it."""
+    perms = load(WF_DIR / "master-ci.yml")["jobs"]["quality-cpp"].get("permissions") or {}
+    assert perms == {"contents": "read"}, (
+        f"quality-cpp must hold exactly contents: read, got {perms}"
+    )
+    block = _quality_cpp_block(master_ci_text)
+    assert "security-events" not in block and "pull-requests" not in block
+    assert "id-token" not in block
+
+
+def test_quality_cpp_zero_projects_skip_with_the_config_only_reason(master_ci_text: str):
+    """The JVM shape, carried to C/C++: zero discovered projects is a
+    config-only trigger. Discovery records tool=none with the reason and
+    every analysis step is gated on that verdict, so a config-only run
+    skips loudly instead of passing silently."""
+    detect = _quality_cpp_steps(master_ci_text)["Discover CMake projects"]
+    assert "config-only trigger, skipping the C/C++ quality slice" in detect
+    assert "tool=none" in detect and "tool=present" in detect
+    ifs = _quality_cpp_step_ifs(master_ci_text)
+    for step_name in (
+        "Record the toolchain (evidence trail)",
+        "Configure and tidy (per project)",
+        "Report per-project outcomes",
+    ):
+        assert "steps.detect.outputs.tool != 'none'" in ifs[step_name], (
+            f"{step_name} must be gated on the discovery verdict"
+        )
+
+
+def test_quality_cpp_runs_clang_tidy_against_the_build_graph(master_ci_text: str):
+    """The roadmap row's engine: configure exports compile_commands.json,
+    clang-tidy consumes it with -p, so the build graph decides what is
+    analyzed - *.c/*.cc/*.cpp translation units directly, *.h/*.hpp
+    diagnostics through -header-filter. A configure failure is a LOUD
+    skip with the reason, never a silent pass."""
+    tidy = _quality_cpp_steps(master_ci_text)["Configure and tidy (per project)"]
+    assert 'cmake -S "$dir" -B "$dir/build-ci" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON' in tidy
+    assert 'clang-tidy -p "$dir/build-ci/compile_commands.json"' in tidy
+    assert "\\.(c|cc|cpp)$" in tidy and "\\.(h|hpp)$" in tidy, (
+        "the slice must cover the project's C/C++ sources, headers included"
+    )
+    assert (
+        "clang-tidy --version"
+        in _quality_cpp_steps(master_ci_text)["Record the toolchain (evidence trail)"]
+    ), "the toolchain version is recorded for the evidence trail"
+    assert "::warning::cmake configure failed in $dir" in tidy
+    assert "skipped - cmake configure failed" in tidy, "configure failure is a loud skip"
+    assert "skipped - clang-tidy run failed (exit %s)" in tidy, "a tidy crash is loud too"
+
+
+def test_quality_cpp_summary_names_every_project_outcome(master_ci_text: str):
+    """The P0 acceptance test for the new family: every discovered
+    project's outcome - tidy findings count or skipped with the reason -
+    lands in the step summary table. No omitted project hides behind a
+    green aggregate."""
+    tidy = _quality_cpp_steps(master_ci_text)["Configure and tidy (per project)"]
+    assert "| Project | Outcome |" in tidy, "the summary table names projects"
+    for outcome in (
+        "skipped - cmake configure failed",
+        "skipped - configure produced no compile_commands.json",
+        "skipped - compile_commands.json unreadable",
+        "skipped - no tracked C/C++ sources in the build graph",
+        "skipped - clang-tidy run failed (exit %s)",
+        "%s clang-tidy finding(s)",
+    ):
+        assert f"| %s | {outcome} |" in tidy, f"outcome rows must name the project: {outcome}"
+    report = _quality_cpp_steps(master_ci_text)["Report per-project outcomes"]
+    assert '>> "$GITHUB_STEP_SUMMARY"' in report, "the table reaches the step summary"
+    assert (
+        "always() && steps.detect.outputs.tool"
+        in _quality_cpp_step_ifs(master_ci_text)["Report per-project outcomes"]
+    ), "a mid-loop crash must still render the rows already written"

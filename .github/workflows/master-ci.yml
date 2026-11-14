@@ -382,7 +382,7 @@ jobs:
               # the allowlist is one variable so the error message can
               # never drift from the accepted set
               valid_jobs="hygiene secrets ai-integrity docs node-lint node-test python rust go-lint go-test java cpp csharp ruby php docker security deps-review scorecard coverage-gate new-code-gate"
-              valid_jobs="$valid_jobs quality-ratchet"
+              valid_jobs="$valid_jobs quality-ratchet quality-cpp"
               for token in $(printf '%s' "$SELECT" | tr ',' ' '); do
                 case " $valid_jobs " in
                   *" $token "*) ;;
@@ -2245,6 +2245,142 @@ jobs:
         run: make -j2
 
   # ---------------------------------------------------------------------------
+  # C/C++ quality slice (roadmap P2 breadth item 5): per-project clang-tidy
+  # over the CMake build graph. Scope, stated honestly: engine-side C/C++
+  # metrics stay lexer-backed (lizard); this slice is clang-tidy plus CMake
+  # discovery, exactly the roadmap row - the native toolchain reports, no
+  # homemade semantic engine. A configure failure is a loud skip with the
+  # reason in the summary, never a silent pass, and every discovered project
+  # is named in the step summary (the P0 acceptance test: no omitted project
+  # hides behind a green aggregate).
+  # ---------------------------------------------------------------------------
+  quality-cpp:
+    needs: [changes, meta]
+    if: >-
+      (inputs.select == '' || contains(format(',{0},', inputs.select), ',quality-cpp,'))
+      && needs.meta.result == 'success'
+      && ((inputs.run_cpp == 'auto' && needs.changes.outputs.cpp == 'true') || inputs.run_cpp == 'true')
+    runs-on: ${{ inputs.runs_on }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Fetch master-ci helpers
+        # Helper checkout moves ahead of discovery: workspace-aware C/C++
+        # analysis needs the template's project inventory script.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ needs.meta.outputs.template_repo }}
+          ref: ${{ needs.meta.outputs.template_ref }}
+          path: _ci
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Discover CMake projects
+        id: detect
+        # Every directory holding a CMakeLists.txt is one project and
+        # nested projects are discovered independently. Zero projects =
+        # config-only trigger - skip with the reason.
+        run: |
+          python3 _ci/scripts/discover_projects.py --family cpp --format summary
+          python3 _ci/scripts/discover_projects.py --family cpp --list \
+            > "$RUNNER_TEMP/cpp-projects.txt"
+          if [ -s "$RUNNER_TEMP/cpp-projects.txt" ]; then
+            echo "tool=present" >> "$GITHUB_OUTPUT"
+          else
+            echo "tool=none" >> "$GITHUB_OUTPUT"
+            echo "No CMakeLists.txt discovered - config-only trigger, skipping the C/C++ quality slice"
+          fi
+      - name: Record the toolchain (evidence trail)
+        if: steps.detect.outputs.tool != 'none'
+        run: |
+          clang-tidy --version
+          cmake --version | head -n 1
+      - name: Configure and tidy (per project)
+        # cmake configure is best-effort by design: a project whose build
+        # graph cannot be generated is a loud skip with the reason in the
+        # summary, never a silent pass. clang-tidy rides the
+        # compile_commands.json that configure exported, so only translation
+        # units the build graph actually compiles are analyzed (a nested
+        # independent project is not in the parent's database); the project's
+        # own headers (*.h, *.hpp) come along through -header-filter, since
+        # CMake writes database entries for translation units only. A
+        # crashing tidy run is a loud skip, not a silent pass.
+        if: steps.detect.outputs.tool != 'none'
+        run: |
+          report="$RUNNER_TEMP/cpp-quality-report.md"
+          : > "$report"
+          echo "### C/C++ quality (clang-tidy, per project)" >> "$report"
+          echo "" >> "$report"
+          echo "| Project | Outcome |" >> "$report"
+          echo "|---|---|" >> "$report"
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            if ! cmake -S "$dir" -B "$dir/build-ci" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+              > "$RUNNER_TEMP/configure.log" 2>&1; then
+              echo "::warning::cmake configure failed in $dir - skipped, not passed silently"
+              tail -n 5 "$RUNNER_TEMP/configure.log"
+              printf '| %s | skipped - cmake configure failed |\n' "$dir" >> "$report"
+              continue
+            fi
+            if [ ! -f "$dir/build-ci/compile_commands.json" ]; then
+              echo "::warning::no compile_commands.json from configure in $dir - skipped, not passed silently"
+              printf '| %s | skipped - configure produced no compile_commands.json |\n' "$dir" >> "$report"
+              continue
+            fi
+            units=$(git ls-files -- "$dir" | grep -E '\.(c|cc|cpp)$' || true)
+            units=$(
+              python3 - "$dir/build-ci/compile_commands.json" "$units" <<'PY'
+          import json, os, sys
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              known = set()
+              for entry in json.load(handle):
+                  source = entry["file"]
+                  if not os.path.isabs(source):
+                      source = os.path.join(entry["directory"], source)
+                  known.add(os.path.abspath(source))
+          for row in sys.argv[2].splitlines():
+              if row and os.path.abspath(row) in known:
+                  print(row)
+          PY
+            ) || {
+              echo "::warning::compile_commands.json could not be read for $dir - skipped, not passed silently"
+              printf '| %s | skipped - compile_commands.json unreadable |\n' "$dir" >> "$report"
+              continue
+            }
+            if [ -z "$units" ]; then
+              echo "::warning::no tracked translation units in $dir's build graph - skipped, not passed silently"
+              printf '| %s | skipped - no tracked C/C++ sources in the build graph |\n' "$dir" >> "$report"
+              continue
+            fi
+            log="$RUNNER_TEMP/clang-tidy.log"
+            rc=0
+            abs_dir="$(cd "$dir" && pwd)"
+            printf '%s\n' "$units" \
+              | xargs -r -d '\n' clang-tidy -p "$dir/build-ci/compile_commands.json" \
+                -header-filter="^$abs_dir/.+\.(h|hpp)$" -quiet > "$log" 2>&1 || rc=$?
+            findings=$(grep -c 'warning:' "$log" || true)
+            if [ "$rc" -ne 0 ]; then
+              echo "::warning::clang-tidy run failed (exit $rc) in $dir - skipped, not passed silently"
+              printf '| %s | skipped - clang-tidy run failed (exit %s) |\n' "$dir" "$rc" >> "$report"
+              continue
+            fi
+            echo "::notice::$dir: clang-tidy reported $findings finding(s)"
+            printf '| %s | %s clang-tidy finding(s) |\n' "$dir" "$findings" >> "$report"
+          done < "$RUNNER_TEMP/cpp-projects.txt"
+      - name: Report per-project outcomes
+        # always(), so a mid-loop crash still renders the rows already
+        # written: no project's outcome may vanish behind a green job.
+        if: always() && steps.detect.outputs.tool != 'none'
+        run: |
+          report="$RUNNER_TEMP/cpp-quality-report.md"
+          if [ -f "$report" ]; then
+            cat "$report" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # ---------------------------------------------------------------------------
   # .NET stack (C#, F#): setup-dotnet (global.json wins over the input),
   # release build with implicit restore, tests, advisory format drift.
   # ---------------------------------------------------------------------------
@@ -2810,7 +2946,7 @@ jobs:
         changes, meta, hygiene, secrets, ai-integrity, docs, node-lint,
         node-test, python, rust, go-lint, go-test, java, cpp, csharp, ruby,
         php, docker, security, deps-review, scorecard, coverage-gate,
-        new-code-gate, quality-ratchet,
+        new-code-gate, quality-ratchet, quality-cpp,
       ]
     if: always() && github.event_name == 'pull_request'
     runs-on: ${{ inputs.runs_on }}
@@ -2862,6 +2998,7 @@ jobs:
               ("coverage-gate", "Coverage gate"),
               ("new-code-gate", "New-code gate"),
               ("quality-ratchet", "Quality ratchet"),
+              ("quality-cpp", "C/C++ quality (clang-tidy)"),
           ]
           icon = {
               "success": "white_check_mark",
@@ -2975,7 +3112,7 @@ jobs:
         changes, meta, hygiene, secrets, ai-integrity, docs, node-lint,
         node-test, python, rust, go-lint, go-test, java, cpp, csharp, ruby,
         php, docker, security, deps-review, scorecard, coverage-gate,
-        new-code-gate, quality-ratchet,
+        new-code-gate, quality-ratchet, quality-cpp,
       ]
     if: always()
     runs-on: ${{ inputs.runs_on }}
@@ -3028,6 +3165,7 @@ jobs:
               "coverage-gate",
               "new-code-gate",
               "quality-ratchet",
+              "quality-cpp",
           ]
           labels = {
               "changes": "Change detection",
@@ -3054,6 +3192,7 @@ jobs:
               "coverage-gate": "Coverage gate",
               "new-code-gate": "New-code gate",
               "quality-ratchet": "Quality ratchet",
+              "quality-cpp": "C/C++ quality (clang-tidy)",
           }
           icon = {
               "success": ":white_check_mark:",

@@ -41,6 +41,7 @@ SKIP_DIRS = {
     "node_modules",
     "dist",
     "build",
+    "build-ci",  # the quality-cpp job's own configure output
     "target",
     "vendor",
     "venv",
@@ -138,9 +139,21 @@ def _dotnet_dirs(root: Path) -> list[Path]:
     return sorted(found, key=lambda p: p.relative_to(root).as_posix())
 
 
+def _cpp_project_name(directory: Path, manifest: str) -> str:
+    """The declared CMake ``project(<name>)`` name, else the directory name."""
+    try:
+        text = (directory / manifest).read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    hit = re.search(r"^\s*project\s*\(\s*([A-Za-z0-9_.+-]+)", text, re.M)
+    return hit.group(1) if hit else directory.name
+
+
 def _project_name(directory: Path, family: str, manifest: str) -> str:
     """Best-effort project name from its manifest, for honest summaries."""
     try:
+        if family == "cpp" and manifest == "CMakeLists.txt":
+            return _cpp_project_name(directory, manifest)
         if family == "node" and manifest == "package.json":
             data = json.loads((directory / manifest).read_text(encoding="utf-8"))
             return str(data.get("name") or "")

@@ -3,8 +3,11 @@
 Covers the documented contract: workspace markers enumerate their actual
 members (npm/pnpm, go.work, Cargo), member globs expand to real manifest
 directories, a declared member that cannot be backed by a manifest fails
-closed (WorkspaceError -> exit 2, never root-only analysis), and plain
-(non-workspace) manifest trees still inventory per directory.
+closed (WorkspaceError -> exit 2, never root-only analysis), plain
+(non-workspace) manifest trees still inventory per directory, and the
+cmake family inventories every directory holding a CMakeLists.txt -
+nested projects independently, declared name from the project() call
+with the directory-name fallback.
 """
 
 from __future__ import annotations
@@ -236,3 +239,76 @@ def test_summary_renders_names_and_warnings(
     assert "- . (package.json: root)" in out
     assert "- packages/a (package.json: a)" in out
     assert "! workspace glob 'ghost/*' matched no member" in out
+
+
+# The cmake family: every directory holding a CMakeLists.txt is one
+# project; nested projects are discovered independently of their parent.
+
+
+def test_cmake_root_project_found_with_declared_name(tmp_path: Path) -> None:
+    _make(
+        tmp_path,
+        {"CMakeLists.txt": "cmake_minimum_required(VERSION 3.16)\nproject(demo C)\n"},
+    )
+    inventory = dp.discover(tmp_path, "cpp")
+    assert inventory["workspace"] is False
+    assert inventory["warnings"] == []
+    assert inventory["projects"] == [{"path": ".", "manifest": "CMakeLists.txt", "name": "demo"}]
+    assert "- . (CMakeLists.txt: demo)" in dp.summary(inventory)
+
+
+def test_cmake_nested_projects_discovered_independently(tmp_path: Path) -> None:
+    _make(
+        tmp_path,
+        {
+            "CMakeLists.txt": "project(root C)\nadd_subdirectory(libs/math)\n",
+            "libs/math/CMakeLists.txt": "project(math CXX)\n",
+            "apps/cli/CMakeLists.txt": "project(cli C)\n",
+        },
+    )
+    names = {p["path"]: p["name"] for p in dp.discover(tmp_path, "cpp")["projects"]}
+    assert names == {".": "root", "libs/math": "math", "apps/cli": "cli"}
+
+
+def test_cmake_zero_projects_yield_the_config_only_skip_shape(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The JVM shape: zero projects is a config-only trigger. The CLI exits
+    # clean with an empty inventory so the workflow can skip with the
+    # reason instead of pretending the stack ran.
+    _make(tmp_path, {"README.md": "# not a CMake tree\n"})
+    inventory = dp.discover(tmp_path, "cpp")
+    assert inventory["projects"] == []
+    assert inventory["warnings"] == []
+    assert dp.summary(inventory) == "cpp: no projects discovered"
+    assert dp.main(["--family", "cpp", "--root", str(tmp_path), "--list"]) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_cmake_without_project_call_falls_back_to_dir_name(tmp_path: Path) -> None:
+    _make(tmp_path, {"tools/gen/CMakeLists.txt": "add_custom_target(generate ALL)\n"})
+    projects = dp.discover(tmp_path, "cpp")["projects"]
+    assert [p["path"] for p in projects] == ["tools/gen"]
+    assert projects[0]["name"] == "gen"
+
+
+def test_cmake_directories_without_cmake_lists_are_ignored(tmp_path: Path) -> None:
+    _make(
+        tmp_path,
+        {
+            "CMakeLists.txt": "project(root C)\n",
+            "src/main.c": "int main(void) { return 0; }\n",
+            "docs/readme.md": "# docs\n",
+            "build/generated/CMakeLists.txt": "project(stale C)\n",
+        },
+    )
+    paths = [p["path"] for p in dp.discover(tmp_path, "cpp")["projects"]]
+    assert paths == ["."]
+
+
+def test_cmake_declared_name_parses_from_project_call(tmp_path: Path) -> None:
+    _make(
+        tmp_path,
+        {"CMakeLists.txt": "project(fancy VERSION 1.2.3 LANGUAGES C CXX)\n"},
+    )
+    assert dp.discover(tmp_path, "cpp")["projects"][0]["name"] == "fancy"
