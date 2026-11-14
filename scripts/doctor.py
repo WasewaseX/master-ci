@@ -35,6 +35,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from slop_files import read_text_lax
+
 DEFAULT_TEMPLATE = "WasewaseX/master-ci"
 KNOWN_REUSABLE = {
     "master-ci.yml",
@@ -248,7 +250,7 @@ def _load_all(workflows_dir, pyyaml) -> tuple[list[dict], list[str]] | Note:
     docs: list[dict] = []
     raw_texts: list[str] = []
     for path in names:
-        raw_texts.append(path.read_text(encoding="utf-8", errors="replace"))
+        raw_texts.append(read_text_lax(path))
         doc, err = _load_yaml(path, pyyaml)
         if err:
             return Note("error", "doctor-internal", err)

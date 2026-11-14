@@ -6,7 +6,10 @@ import re
 from collections import Counter
 from pathlib import Path
 
-from slop_files import is_ignored
+from slop_files import (
+    is_ignored,
+    read_text_lax,  # noqa: E402
+)
 from slop_model import Finding
 from slop_patterns import CODE_EXTS, DUP_LINE_MIN_LEN, DUP_LINE_THRESHOLD
 
@@ -35,7 +38,7 @@ def scan_duplicates(
     for path in _scoped_files(files, root, globs):
         if path.suffix.lower() not in CODE_EXTS:
             continue
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = read_text_lax(path)
         for lineno, raw in enumerate(text.splitlines(), start=1):
             line = raw.strip()
             if not line or line.startswith(("#", "//", "*", "<!--")):

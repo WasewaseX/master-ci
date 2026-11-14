@@ -8,6 +8,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from slop_files import read_text_lax
 from slop_model import Finding, _finding
 from slop_patterns import NODE_BUILTINS, PY_IMPORT_ALIASES, SKIP_DIRS, STD_LIB_NAMES
 
@@ -115,7 +116,7 @@ def _js_phantom_imports(path: Path, text: str) -> list[Finding]:
 
 def _parse_py_manifest(manifest: Path, declared: set[str]) -> None:
     try:
-        content = manifest.read_text(encoding="utf-8", errors="replace")
+        content = read_text_lax(manifest)
     except OSError:
         return
     if manifest.suffix == ".txt":
@@ -215,7 +216,7 @@ def collect_js_dependencies(root: Path) -> set[str]:
     if not manifest or not manifest.is_file():
         return set()
     try:
-        data = json.loads(manifest.read_text(encoding="utf-8", errors="replace"))
+        data = json.loads(read_text_lax(manifest))
     except (OSError, json.JSONDecodeError):
         return set()
     deps: set[str] = set()

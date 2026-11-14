@@ -37,7 +37,7 @@ import os
 import re
 from pathlib import Path
 
-from slop_files import is_ignored
+from slop_files import is_ignored, read_text_lax
 from slop_model import Finding
 from slop_patterns import PY_IMPORT_ALIASES, SKIP_DIRS, SKIP_PATTERN
 
@@ -97,7 +97,7 @@ def texts(files: list[Path], exts: tuple[str, ...]) -> dict[Path, str]:
         if path.suffix.lower() not in exts:
             continue
         try:
-            out[path] = path.read_text(encoding="utf-8", errors="replace")
+            out[path] = read_text_lax(path)
         except OSError:
             continue
     return out
@@ -130,7 +130,7 @@ def _py_inline_deps(stripped: str, deps: dict[str, int], lineno: int) -> None:
 def _py_runtime_deps(manifest: Path) -> dict[str, int]:
     """pyproject [project] dependencies -> {dist name: declaration line}."""
     try:
-        lines = manifest.read_text(encoding="utf-8", errors="replace").splitlines()
+        lines = read_text_lax(manifest).splitlines()
     except OSError:
         return {}
     deps: dict[str, int] = {}
@@ -195,7 +195,7 @@ def _py_unused_dep_findings(py_deps: dict[str, int], files: list[Path], rel: str
 def _js_runtime_deps(manifest: Path) -> dict[str, int]:
     """package.json dependencies+peerDependencies -> {pkg: declaration line}."""
     try:
-        raw = manifest.read_text(encoding="utf-8", errors="replace")
+        raw = read_text_lax(manifest)
         data = json.loads(raw)
     except (OSError, json.JSONDecodeError, UnicodeDecodeError):
         return {}

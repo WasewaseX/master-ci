@@ -38,7 +38,11 @@ from collections import Counter
 from collections.abc import Iterable
 from pathlib import Path
 
-from slop_files import is_ignored, is_test_path
+from slop_files import (
+    is_ignored,
+    is_test_path,
+    read_text_lax,  # noqa: E402
+)
 from slop_model import Finding, _finding
 from slop_patterns import MAX_FILE_BYTES, SKIP_DIRS, SKIP_PATTERN
 
@@ -98,7 +102,7 @@ def _deadness_texts(files: list[Path]) -> dict[Path, str]:
         if suffix != ".py" and suffix not in _JS_EXTS:
             continue
         try:
-            texts[path] = path.read_text(encoding="utf-8", errors="replace")
+            texts[path] = read_text_lax(path)
         except OSError:
             continue
     return texts
@@ -334,7 +338,7 @@ def _read_extra(path: Path) -> str | None:
     try:
         if path.stat().st_size > MAX_FILE_BYTES:
             return None
-        return path.read_text(encoding="utf-8", errors="replace")
+        return read_text_lax(path)
     except (OSError, UnicodeDecodeError):
         return None
 
@@ -384,7 +388,7 @@ def _orphan_corpus(root: Path, files: list[Path]) -> dict[Path, str]:
     budget = MAX_CORPUS_BYTES
     for path in files:
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = read_text_lax(path)
         except OSError:
             continue
         budget -= len(text)

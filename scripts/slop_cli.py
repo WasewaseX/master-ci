@@ -31,9 +31,10 @@ Contract:
     config that is present but invalid, a coverage gate that cannot
     be evaluated (no report, an unparseable report, a missing diff
     base), a quality baseline that cannot be interpreted (missing
-    file, invalid JSON, wrong schema version, unknown check ids), or
-    --require-parsers set while an analyzer (lizard, tree-sitter) is
-    not importable.
+    file, invalid JSON, wrong schema version, unknown check ids), an
+    analyzer profile that cannot be honored (unreadable file, unknown
+    check id, illegal severity), or --require-parsers set while an
+    analyzer (lizard, tree-sitter) is not importable.
     Fail-closed: a rule set or gate that cannot be evaluated fails the
     run instead of being silently skipped.
 - Blocking-grade signals are deterministic content defects (elided code,
@@ -61,12 +62,13 @@ import argparse
 import sys
 from pathlib import Path
 
-from coverage_gate import CoverageGateError, run_gate
+from coverage_gate import coverage_gate_stage
 from slop_arch import ArchConfigError
 from slop_cognitive import tree_sitter_available
 from slop_files import load_phrases
 from slop_lizard import lizard_available
-from slop_model import Finding, enforce_structural_budget
+from slop_model import enforce_structural_budget
+from slop_profiles import apply_profile_stage, profile_from_args
 from slop_ratchet import (
     RatchetError,
     compare,
@@ -93,6 +95,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("root", type=Path, help="Repo path to scan")
     _add_gate_args(parser)
     _add_baseline_args(parser)
+    _add_profile_args(parser)
     _add_coverage_args(parser)
     return parser.parse_args(argv)
 
@@ -200,6 +203,23 @@ def _add_baseline_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_profile_args(parser: argparse.ArgumentParser) -> None:
+    """The analyzer profile: downgrade-only severities, scopes, budgets."""
+    parser.add_argument(
+        "--profile",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help=(
+            "Analyzer profile (JSON or YAML): downgrade-only per-check "
+            "severities, scope exclusions and budget overrides. Applied "
+            "before baselines, ratchets and gates; every silenced finding "
+            "is reported with its reason; a profile that cannot be "
+            "honored fails closed (exit 2)"
+        ),
+    )
+
+
 def _add_coverage_args(parser: argparse.ArgumentParser) -> None:
     """The measured-coverage gates: floors, diff window, report paths."""
     parser.add_argument(
@@ -254,34 +274,6 @@ def _add_coverage_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _coverage_gate(args: argparse.Namespace, findings: list) -> tuple[int, list[str]]:
-    """Run the requested coverage gates; SystemExit(2) when unevaluable.
-
-    Returns (exit contribution, report sections); gate findings are
-    appended to `findings` as advisory low-new-coverage entries.
-    """
-    if args.min_coverage <= 0 and args.min_new_coverage <= 0:
-        return 0, []
-    try:
-        gate = run_gate(
-            args.root,
-            min_coverage=args.min_coverage,
-            min_new_coverage=args.min_new_coverage,
-            diff_base=args.diff_base,
-            report_paths=args.coverage_report,
-        )
-    except CoverageGateError as exc:
-        # Fail closed: a gate that cannot be evaluated must fail the
-        # run, not silently pass. Exit 2 = configuration error.
-        print(f"ai-integrity: coverage gate rejected: {exc}", file=sys.stderr)
-        raise SystemExit(2) from exc
-    findings.extend(
-        Finding(path=path, line=line, check="low-new-coverage", message=message, weight=1)
-        for path, line, message in gate.findings
-    )
-    return gate.exit_code, gate.sections
-
-
 def _parser_guarantee(args: argparse.Namespace) -> int:
     """--require-parsers: demand the analyzers or fail closed (exit 2).
 
@@ -316,6 +308,9 @@ def main(argv: list[str] | None = None) -> int:
     parser_exit = _parser_guarantee(args)
     if parser_exit:
         return parser_exit
+    profile = profile_from_args(args)
+    if profile is None:
+        return 2
     if args.enforce_bloat:
         # Registry mutation must precede the scan: Finding.__post_init__
         # resolves severity from the enforced set at construction time.
@@ -327,19 +322,26 @@ def main(argv: list[str] | None = None) -> int:
 
     phrases = load_phrases()
     try:
-        findings = scan(args.root, phrases, extra_globs=args.ignore, provenance=args.provenance)
+        findings = scan(
+            args.root,
+            phrases,
+            extra_globs=args.ignore,
+            provenance=args.provenance,
+            budgets=profile.budgets or None,
+        )
     except ArchConfigError as exc:
         # Fail closed: a declared rule set that cannot be honored must
         # fail the run, not silently pass. Exit 2 = configuration error.
         print(f"ai-integrity: architecture config rejected: {exc}", file=sys.stderr)
         return 2
+    findings, _ = apply_profile_stage(findings, profile)
     ratchet_exit = _quality_ratchet(args, findings)
     if ratchet_exit == 2 or (args.write_quality_baseline and ratchet_exit == 0):
         return ratchet_exit
     suppressed = 0
     if args.baseline:
         findings, suppressed = apply_baseline(findings, args.baseline)
-    gate_exit, gate_sections = _coverage_gate(args, findings)
+    gate_exit, gate_sections = coverage_gate_stage(args, findings)
     if args.write_baseline:
         write_baseline(args.write_baseline, findings)
         print(

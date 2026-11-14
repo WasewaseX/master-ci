@@ -43,6 +43,7 @@ from coverage_parsers import (  # noqa: F401 - re-exported, one import door
     parse_report,
 )
 from coverage_subjects import is_coverage_subject
+from slop_model import Finding
 
 
 def _normalize(path: str) -> str:
@@ -305,6 +306,36 @@ def main(argv: list[str] | None = None) -> int:
     if gate.sections:
         print("\n".join(gate.sections))
     return gate.exit_code
+
+
+def coverage_gate_stage(args: argparse.Namespace, findings: list) -> tuple[int, list[str]]:
+    """Run the requested coverage gates; SystemExit(2) when unevaluable.
+
+    Returns (exit contribution, report sections); gate findings are
+    appended to `findings` as advisory low-new-coverage entries. The
+    CLI stage lives here rather than in slop_cli.py so the CLI module
+    stays inside the same 400-line budget it enforces on consumers.
+    """
+    if args.min_coverage <= 0 and args.min_new_coverage <= 0:
+        return 0, []
+    try:
+        gate = run_gate(
+            args.root,
+            min_coverage=args.min_coverage,
+            min_new_coverage=args.min_new_coverage,
+            diff_base=args.diff_base,
+            report_paths=args.coverage_report,
+        )
+    except CoverageGateError as exc:
+        # Fail closed: a gate that cannot be evaluated must fail the
+        # run, not silently pass. Exit 2 = configuration error.
+        print(f"ai-integrity: coverage gate rejected: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
+    findings.extend(
+        Finding(path=path, line=line, check="low-new-coverage", message=message, weight=1)
+        for path, line, message in gate.findings
+    )
+    return gate.exit_code, gate.sections
 
 
 if __name__ == "__main__":

@@ -44,6 +44,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from slop_deps import cap_findings, manifests, scoped, texts
+from slop_files import read_text_lax
 from slop_model import Finding
 
 _GO_EXTS = (".go",)
@@ -94,7 +95,7 @@ def _go_requires(manifest: Path) -> dict[str, int]:
     and never match either require shape.
     """
     try:
-        text = manifest.read_text(encoding="utf-8", errors="replace")
+        text = read_text_lax(manifest)
     except OSError:
         return {}
     deps: dict[str, int] = {}
@@ -145,7 +146,7 @@ def _rust_deps(manifest: Path) -> dict[str, tuple[int, str | None]]:
     catalog, and per-target tables are conditional by definition.
     """
     try:
-        text = manifest.read_text(encoding="utf-8", errors="replace")
+        text = read_text_lax(manifest)
     except OSError:
         return {}
     deps: dict[str, tuple[int, str | None]] = {}
@@ -206,7 +207,7 @@ def _php_requires(manifest: Path) -> dict[str, int]:
     never by a named reference.
     """
     try:
-        raw = manifest.read_text(encoding="utf-8", errors="replace")
+        raw = read_text_lax(manifest)
         data = json.loads(raw)
     except (OSError, json.JSONDecodeError, UnicodeDecodeError):
         return {}
@@ -262,7 +263,7 @@ def _cs_packages(manifest: Path) -> dict[str, int]:
     ``Update=`` entries are central version management, not dependencies.
     """
     try:
-        raw = manifest.read_text(encoding="utf-8", errors="replace")
+        raw = read_text_lax(manifest)
     except OSError:
         return {}
     deps: dict[str, int] = {}
@@ -324,7 +325,7 @@ def _java_artifacts(pom: Path) -> dict[str, int]:
     container weight, not the app's declared imports.
     """
     try:
-        raw = pom.read_text(encoding="utf-8", errors="replace")
+        raw = read_text_lax(pom)
         tree = ET.fromstring(raw)
     except (OSError, ET.ParseError, UnicodeDecodeError):
         return {}

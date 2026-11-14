@@ -60,6 +60,7 @@ from slop_dead import check_unused_declarations
 from slop_density import measure as measure_density
 from slop_deps import check_unused_dependencies
 from slop_duplicates import scan_duplicates
+from slop_files import read_text_lax
 from slop_hotspot import check_hotspot_metrics, churn_map
 from slop_lcom4 import check_class_cohesion
 from slop_lizard import lizard_available
@@ -137,9 +138,7 @@ def _probe_abstraction(root: Path, files: list[Path]) -> list[Finding]:
     """check_abstraction is per-file; aggregate over the fixture's .py files."""
     findings: list[Finding] = []
     for path, _rel in _py_pairs(root, files):
-        findings.extend(
-            check_abstraction(path, path.read_text(encoding="utf-8", errors="replace"), "py")
-        )
+        findings.extend(check_abstraction(path, read_text_lax(path), "py"))
     return findings
 
 
@@ -149,7 +148,7 @@ def _probe_cyclomatic(root: Path, files: list[Path]) -> list[Finding]:
         raise Pending("lizard analyzer unavailable")
     findings: list[Finding] = []
     for path, rel in _py_pairs(root, files):
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = read_text_lax(path)
         findings.extend(check_bloat(path, text, "py", rel, extract_comments(text, "py")))
     return findings
 
@@ -177,7 +176,7 @@ def _probe_test_redundancy(root: Path, files: list[Path]) -> list[Finding]:
     """check_test_redundancy is per-file; aggregate over the fixture's .py files."""
     findings: list[Finding] = []
     for path, rel in _py_pairs(root, files):
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = read_text_lax(path)
         findings.extend(check_test_redundancy(path, text, rel))
     return findings
 

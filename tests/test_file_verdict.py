@@ -208,6 +208,11 @@ def test_verdict_registered_advisory_code_health():
     assert registered.advisory
     assert "long-but-cohesive" not in mod.BLOCKING_CHECKS
     assert "long-but-cohesive" not in mod.STRUCTURAL_BUDGET_CHECKS
+    # The enforcement mutates module-global state: snapshot and restore
+    # so the escalation never leaks into tests that run after this one.
+    enforced_snapshot = set(mod.ENFORCED_CHECKS)
     mod.enforce_structural_budget()
     escalated = mod.Finding(path="x", line=1, check="long-but-cohesive", message="m", weight=1)
     assert escalated.advisory, "the cohesion note must never escalate to blocking"
+    mod.ENFORCED_CHECKS.clear()
+    mod.ENFORCED_CHECKS.update(enforced_snapshot)

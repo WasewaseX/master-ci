@@ -7,6 +7,7 @@ from collections import Counter
 from pathlib import Path
 
 from slop_comments import phrase_findings
+from slop_files import read_text_lax
 from slop_model import Finding, _finding
 from slop_patterns import DOC_EXTS, EMOJI_PATTERN, MD_EMOJI_HEADING, MD_RESIDUE, WORD_PATTERN
 from slop_ui_patterns import (
@@ -257,7 +258,7 @@ def collect_bullet_groups(lines: list[str]) -> list[list[str]]:
 
 def scan_doc_file(path: Path, ext: str, phrases: dict) -> list[Finding]:
     findings: list[Finding] = []
-    text = path.read_text(encoding="utf-8", errors="replace")
+    text = read_text_lax(path)
     findings.extend(
         phrase_findings(path, text, phrases["doc_phrases"], "ai-prose", 1, advisory=True)
     )

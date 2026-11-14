@@ -273,3 +273,38 @@ def test_default_profile_identity_matches_shipped_constants() -> None:
     assert shipped_budget("duplication-density") == DUP_DENSITY_BUDGET == 5.0
     assert shipped_budget("high-coupling") == COUPLING_FAN_OUT_BUDGET == 30
     assert shipped_budget("hotspot-risk") == HOTSPOT_RISK_BUDGET == 1200
+
+
+# --- CLI and scan wiring (integration) --------------------------------------
+
+
+def test_cli_rejects_an_unhonorable_profile_fail_closed(tmp_path, capsys):
+    """--profile with a profile the loader refuses exits 2 before scanning."""
+    import slop_cli
+
+    bad = tmp_path / "profile.json"
+    bad.write_text(
+        json.dumps({"name": "typo", "severities": {"no-such-check": "advisory"}}),
+        encoding="utf-8",
+    )
+    assert slop_cli.main([str(tmp_path), "--profile", str(bad)]) == 2
+    assert "profile rejected" in capsys.readouterr().err
+
+
+def test_scan_passes_profile_budgets_through_to_the_density_verdict(tmp_path):
+    """scan(budgets=...) is the pass-through the CLI feeds; None is a no-op."""
+    from ai_slop_detector import scan
+
+    assignments = "\n".join(f"VALUE{i} = {i}" for i in range(130))
+    body = "def pick(a, b):\n    if a > b:\n        return a\n    return b\n"
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    for name in ("m0.py", "m1.py"):
+        (pkg / name).write_text(assignments + "\n" + body, encoding="utf-8")
+    from slop_files import load_phrases
+
+    phrases = load_phrases()
+    base = scan(tmp_path, phrases, provenance=False)
+    assert not [f for f in base if f.check == "complexity-density"]
+    tight = scan(tmp_path, phrases, provenance=False, budgets={"complexity-density": 1})
+    assert [f for f in tight if f.check == "complexity-density"]

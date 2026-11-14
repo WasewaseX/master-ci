@@ -9,6 +9,7 @@ and the MCP server keep their import surface.
 from __future__ import annotations
 
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -90,6 +91,7 @@ from slop_files import (  # noqa: F401
     iter_files,
     load_ignore_rules,
     load_phrases,
+    read_text_lax,
 )
 from slop_hotspot import (  # noqa: F401
     HOTSPOT_RISK_BUDGET,
@@ -178,7 +180,7 @@ def scan_code_file(
     py_manifests: tuple[set[str], set[str]],
     js_deps: set[str],
 ) -> list[Finding]:
-    text = path.read_text(encoding="utf-8", errors="replace")
+    text = read_text_lax(path)
     family = FAMILY_OF_EXT.get(ext, "")
     findings: list[Finding] = []
     comments = extract_comments(text, family)
@@ -322,9 +324,7 @@ def _scan_one_file(path: Path, suffix: str, rel: str, ctx: ScanContext) -> list[
     else:
         return findings
     if ctx.provenance:
-        findings.extend(
-            provenance_findings(path, path.read_text(encoding="utf-8", errors="replace"))
-        )
+        findings.extend(provenance_findings(path, read_text_lax(path)))
     return findings
 
 
@@ -351,8 +351,14 @@ def _repo_level_findings(
     files: list[Path],
     globs: list[str],
     provenance: bool,
+    budgets: Mapping[str, float] | None = None,
 ) -> list[Finding]:
-    """Whole-repo views: duplication, dependency and architecture checks."""
+    """Whole-repo views: duplication, dependency and architecture checks.
+
+    `budgets` carries an analyzer profile's budget overrides (v2.17) so
+    the density verdicts judge against the profile's lines, not the
+    shipped constants; None keeps the shipped budgets byte-identical.
+    """
     findings: list[Finding] = []
     findings.extend(scan_duplicates(files, root, globs))
     findings.extend(check_unused_declarations(root, files, globs))
@@ -368,7 +374,7 @@ def _repo_level_findings(
         # reads git once, complexity and dependents arrive pre-computed.
         churn, defects = churn_map(root)
         findings.extend(check_hotspot_metrics(facts, coupling, churn, defects))
-        findings.extend(density_findings(facts))
+        findings.extend(density_findings(facts, budgets=budgets))
     findings.extend(check_architecture_rules(root, files, globs))
     findings.extend(check_unknown_directives(root, files, globs))
     if provenance:
@@ -398,7 +404,9 @@ def scan(
     phrases: dict,
     extra_globs: list[str] | None = None,
     provenance: bool = True,
+    budgets: Mapping[str, float] | None = None,
 ) -> list[Finding]:
+    """One full scan; `budgets` is the analyzer profile's overrides."""
     files = iter_files(root)
     globs, disabled, scoped = load_ignore_rules(root)
     globs = globs + list(extra_globs or [])
@@ -410,7 +418,7 @@ def scan(
         provenance,
     )
     findings = _file_findings(root, files, globs, ctx)
-    findings.extend(_repo_level_findings(root, files, globs, provenance))
+    findings.extend(_repo_level_findings(root, files, globs, provenance, budgets))
     return _apply_suppression(findings, disabled, scoped)
 
 

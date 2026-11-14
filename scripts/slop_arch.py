@@ -20,6 +20,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from slop_files import read_text_lax
 from slop_model import Finding, _finding
 
 ARCH_CONFIG_NAME = ".ai-integrity-arch.json"
@@ -164,7 +165,7 @@ def load_arch_config(root: Path) -> ArchConfig | None:
     if not path.is_file():
         return None
     try:
-        raw = path.read_text(encoding="utf-8", errors="replace")
+        raw = read_text_lax(path)
     except OSError as exc:
         raise ArchConfigError(f"{ARCH_CONFIG_NAME}: unreadable: {exc}") from exc
     try:
@@ -248,7 +249,7 @@ def _forbidden_findings(cfg: ArchConfig, rels: list[tuple[Path, str]]) -> list[F
     findings: list[Finding] = []
     for path, rel in rels:
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = read_text_lax(path)
         except OSError:
             continue
         for name, pos in _import_names(rel, text):
@@ -277,7 +278,7 @@ def _layer_findings(
         if holder is None or not rules[holder].must_not_import:
             continue
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = read_text_lax(path)
         except OSError:
             continue
         for name, pos in _import_names(rel, text):
@@ -303,7 +304,7 @@ def _required_findings(cfg: ArchConfig, rels: list[tuple[Path, str]]) -> list[Fi
             if not fnmatch.fnmatch(rel, rule.glob):
                 continue
             try:
-                text = path.read_text(encoding="utf-8", errors="replace")
+                text = read_text_lax(path)
             except OSError:
                 continue
             if not rule.pattern.search(text):

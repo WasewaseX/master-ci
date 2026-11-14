@@ -58,6 +58,9 @@ def _normalized_body(func: ast.FunctionDef | ast.AsyncFunctionDef) -> str | None
     return ast.dump(ast.Module(body=body, type_ignores=[]))
 
 
+_TEST_CALLABLE = (ast.FunctionDef, ast.AsyncFunctionDef)
+
+
 def _test_functions(tree: ast.Module) -> list[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef]]:
     """Every ``test_*`` callable pytest would collect, in definition order.
 
@@ -66,14 +69,14 @@ def _test_functions(tree: ast.Module) -> list[tuple[str, ast.FunctionDef | ast.A
     """
     found: list[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef]] = []
     for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if node.name.startswith("test_"):
-                found.append((node.name, node))
+        if isinstance(node, _TEST_CALLABLE) and node.name.startswith("test_"):
+            found.append((node.name, node))
         elif isinstance(node, ast.ClassDef):
-            for item in node.body:
-                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    if item.name.startswith("test_"):
-                        found.append((f"{node.name}.{item.name}", item))
+            found.extend(
+                (f"{node.name}.{item.name}", item)
+                for item in node.body
+                if isinstance(item, _TEST_CALLABLE) and item.name.startswith("test_")
+            )
     return found
 
 

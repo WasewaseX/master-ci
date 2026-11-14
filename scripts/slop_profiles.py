@@ -32,7 +32,9 @@ fails loudly instead of drifting under the profile layer.
 
 from __future__ import annotations
 
+import argparse
 import json
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from functools import lru_cache
@@ -335,3 +337,32 @@ def _budgets(path: Path, raw: object) -> dict[str, float]:
             )
         out[check] = float(value)
     return out
+
+
+def profile_from_args(args: argparse.Namespace) -> ProfileSpec | None:
+    """The requested analyzer profile for a parsed CLI namespace.
+
+    None (after the reject line on stderr) when the profile cannot be
+    honored - the configuration-error class, exit 2 at the call site,
+    raised before the scan is spent. Lives here rather than in the CLI
+    module so the CLI stays inside the same 400-line budget it enforces
+    on consumers (the slop_cli split precedent).
+    """
+    try:
+        return load_profile(args.profile) if args.profile else DEFAULT_PROFILE
+    except (ValueError, OSError) as exc:
+        print(f"ai-integrity: profile rejected: {exc}", file=sys.stderr)
+        return None
+
+
+def apply_profile_stage(findings: list, profile: ProfileSpec) -> tuple[list, list[Suppression]]:
+    """Apply the profile to the scanned report and name every silence.
+
+    Every suppressed finding is printed one per line with its reason: a
+    profile relaxes noise, it never deletes it silently. Returns the
+    profiled report and the suppression records for the run summary.
+    """
+    kept, suppressed = apply_profile(findings, profile, ".")
+    for item in suppressed:
+        print(f"profile: suppressed {item.check} at {item.path}: {item.reason}")
+    return kept, suppressed

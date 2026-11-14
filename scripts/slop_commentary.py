@@ -21,7 +21,7 @@ import fnmatch
 import re
 from pathlib import Path
 
-from slop_files import is_ignored, is_test_path
+from slop_files import is_ignored, is_test_path, read_text_lax
 from slop_model import Comment, Finding
 from slop_patterns import (
     CODE_EXTS,
@@ -303,7 +303,7 @@ def _manifest_configured(root: Path) -> set[str]:
     configured: set[str] = set()
     for candidate in candidates:
         try:
-            text = candidate.read_text(encoding="utf-8", errors="replace")
+            text = read_text_lax(candidate)
         except OSError:
             continue
         configured.update(
@@ -326,7 +326,7 @@ def _configured_tools(root: Path) -> set[str]:
 def _file_directive_findings(path: Path, configured: set[str]) -> list[Finding]:
     """Unknown directives in one file: at most one report per file."""
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = read_text_lax(path)
     except OSError:
         return []
     # String literals may name a directive (regex tables, docs);
