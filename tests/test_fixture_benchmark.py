@@ -2,18 +2,18 @@
 
 Covers the seed's declared contract:
 - every manifest parses, carries exactly the five declaration keys, and
-  the twelve roadmap rows are all present under fixtures/bench/,
+the twelve roadmap rows are all present under fixtures/bench/,
 - manifest files are 2-space indented, key-sorted and newline-terminated,
 - the runner's registry agrees with every manifest on engine and rule,
 - each DETECTED fixture produces its check id, each CLEAN fixture stays
-  silent, and the two PENDING rows report PENDING with their reason,
+silent, and the two PENDING rows report PENDING with their reason,
 - exit codes: 0 with pendings allowed, 1 forced by a declaration the
-  engine contradicts, 2 on missing dir and malformed manifests,
+engine contradicts, 2 on missing dir and malformed manifests,
 - deterministic output bytes across repeated runs, table and json,
 - hygiene: no .git internals under fixtures/bench, every fixture file
-  tiny, ASCII, concrete (no placeholder tokens, no TODO markers),
+tiny, ASCII, concrete (no placeholder tokens, no TODO markers),
 - the churn fixture builds real git history in a temp repo, and a
-  missing git reports PENDING with a reason, never a guessed count.
+missing git reports PENDING with a reason, never a guessed count.
 """
 
 import json

@@ -8,36 +8,36 @@ new / resolved / unchanged / reintroduced (roadmap P2, "finding
 fingerprints"). Three decisions live here, each with its reasoning:
 
 - Identity = (project, check, path, fingerprint), lines deliberately
-  EXCLUDED: a line drifts with unrelated edits, and a drifted line must
-  never masquerade as a resolved-plus-new pair. The fingerprint half is
-  slop_reporting's ``fingerprint`` - the one derivation the suppression
-  baseline already uses (path, check, message with digits normalized to
-  '#'), reused so the ratchet and the suppression baseline can never
-  disagree about what "the same finding" means.
+EXCLUDED: a line drifts with unrelated edits, and a drifted line must
+never masquerade as a resolved-plus-new pair. The fingerprint half is
+slop_reporting's ``fingerprint`` - the one derivation the suppression
+baseline already uses (path, check, message with digits normalized to
+'#'), reused so the ratchet and the suppression baseline can never
+disagree about what "the same finding" means.
 
 - The project dimension (``project_of``): the first path segment under
-  the scan root when that segment directly holds a family manifest
-  (``discover_projects.FAMILY_MANIFESTS``) or a dotnet project file,
-  else the root project ``.``. Only the first segment is examined, on
-  purpose: a project nested deeper (``services/api/package.json``)
-  attributes to the root - over-grouping can only merge two projects'
-  churn into one delta row, while deeper matching could split one
-  project's findings across two identities and invent churn from a
-  folder rename. Ignored directories (``discover_projects.SKIP_DIRS``,
-  dot-prefixed segments, absolute paths) are root-attributed: discovery
-  never enumerates them as projects, so no identity may claim them.
+the scan root when that segment directly holds a family manifest
+(``discover_projects.FAMILY_MANIFESTS``) or a dotnet project file,
+else the root project ``.``. Only the first segment is examined, on
+purpose: a project nested deeper (``services/api/package.json``)
+attributes to the root - over-grouping can only merge two projects'
+churn into one delta row, while deeper matching could split one
+project's findings across two identities and invent churn from a
+folder rename. Ignored directories (``discover_projects.SKIP_DIRS``,
+dot-prefixed segments, absolute paths) are root-attributed: discovery
+never enumerates them as projects, so no identity may claim them.
 
 - Reintroduction, one of the roadmap's allowed shapes, chosen and kept
-  testable: an identity present in the current scan AND recorded in the
-  baseline's per-project ``resolved_history`` ledger - the baseline's
-  witness that this identity existed under a previous floor and was
-  resolved since (``slop_ratchet.write_baseline`` carries resolved
-  identities forward when re-recording, and releases them once reported
-  again). One committed baseline against one scan never sees the
-  intermediate state, so the ledger stands in for the roadmap's "absent
-  in the immediately following state" witness. Tracked membership wins
-  over a stale ledger entry; reintroduction is reported, never gating -
-  the count verdict stays the exit contract.
+testable: an identity present in the current scan AND recorded in the
+baseline's per-project ``resolved_history`` ledger - the baseline's
+witness that this identity existed under a previous floor and was
+resolved since (``slop_ratchet.write_baseline`` carries resolved
+identities forward when re-recording, and releases them once reported
+again). One committed baseline against one scan never sees the
+intermediate state, so the ledger stands in for the roadmap's "absent
+in the immediately following state" witness. Tracked membership wins
+over a stale ledger entry; reintroduction is reported, never gating -
+the count verdict stays the exit contract.
 """
 
 from __future__ import annotations

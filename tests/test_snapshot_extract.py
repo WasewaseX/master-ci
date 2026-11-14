@@ -27,7 +27,7 @@ def _result(rule: str, text: str, blocking: bool) -> dict:
     }
 
 
-def _sarif(*results: dict) -> dict:
+def _sarif(*results: object) -> dict:
     return {"runs": [{"results": list(results)}]}
 
 

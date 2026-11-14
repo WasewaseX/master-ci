@@ -15,23 +15,23 @@ append one durable metric row per run without re-running any engine:
 Extraction rules, in honesty order:
 
 - Finding-count metrics (``blocking-findings``, ``advisory-findings``,
-  ``low-cohesion-classes``, ``unstable-hubs``) count SARIF results by
-  rule id and severity. A scan that ran always speaks here - zero is a
-  real measurement, not an absence.
+``low-cohesion-classes``, ``unstable-hubs``) count SARIF results by
+rule id and severity. A scan that ran always speaks here - zero is a
+real measurement, not an absence.
 - Ratio metrics (``debt-ratio-pct``, ``complexity-density``,
-  ``duplication-density-pct``, ``hotspot-top-risk``, ``max-fan-out``)
-  parse the number out of the finding's message. The engines emit at
-  most one finding per scan for each, so the first match is THE match.
-  When the engine reported no finding the metric is OMITTED, never
-  zero-filled - SARIF cannot distinguish "measured clean" from "not
-  measured", and a zero would read as a measurement that never happened.
+``duplication-density-pct``, ``hotspot-top-risk``, ``max-fan-out``)
+parse the number out of the finding's message. The engines emit at
+most one finding per scan for each, so the first match is THE match.
+When the engine reported no finding the metric is OMITTED, never
+zero-filled - SARIF cannot distinguish "measured clean" from "not
+measured", and a zero would read as a measurement that never happened.
 - ``reliability-grade`` comes from the rating message's band letter;
-  ``reliability-score`` is the same finding's percent-of-dev-cost, the
-  number the band was graded from. One finding, both fields.
+``reliability-score`` is the same finding's percent-of-dev-cost, the
+number the band was graded from. One finding, both fields.
 - Blocking/advisory classification reads the SARIF properties the
-  writer already stamped (``security-severity`` 8.0 = blocking), which
-  are derived from the model's blocking registry at write time - the
-  bridge re-imports no registry and cannot drift from the scan.
+writer already stamped (``security-severity`` 8.0 = blocking), which
+are derived from the model's blocking registry at write time - the
+bridge re-imports no registry and cannot drift from the scan.
 
 Contract:
 - exit 0  the metrics JSON printed as one line (keys are exactly the

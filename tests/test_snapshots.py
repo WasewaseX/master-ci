@@ -20,7 +20,9 @@ import pytest
 import slop_snapshots as snap  # noqa: E402
 
 
-def _record(path: Path, ts: str, metrics: dict[str, object], **kw: object) -> dict[str, object]:
+def _record(
+    path: Path, ts: str, metrics: "dict[str, float | str]", **kw: object
+) -> dict[str, object]:
     return snap.record(
         path,
         snap.SnapshotRow(
@@ -110,7 +112,9 @@ def test_absent_metrics_are_omitted_never_zero_filled(tmp_path: Path) -> None:
     path = tmp_path / "store.jsonl"
     _record(path, "2026-11-15T00:00:00Z", {"debt-ratio-pct": 0.14})
     row = snap.load_rows(path)[0]
-    assert set(row["metrics"]) == {"debt-ratio-pct"}
+    metrics_field = row["metrics"]
+    assert isinstance(metrics_field, dict)
+    assert {str(k) for k in metrics_field} == {"debt-ratio-pct"}
     body = "\n".join(snap.run_trend(path, last=10))
     assert "| 0.14 | - |" in body, "absent metrics render '-', never 0"
 

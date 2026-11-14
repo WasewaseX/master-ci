@@ -10,14 +10,14 @@ directly - no subprocess python - scans only that fixture's own subtree,
 and maps the outcome:
 
 - expected "detected" passes when the rule's check id appears in the
-  engine's findings for the fixture, fails when it does not;
+engine's findings for the fixture, fails when it does not;
 - expected "clean" passes when the check id does not appear, fails when
-  it does;
+it does;
 - expected "pending" is judged by nobody yet: the row reports PENDING
-  with the manifest's reason. Two rows are pending - the long-but-
-  cohesive file needs a context-aware file verdict from the semantic
-  phase (bloat-long-file fires on size alone), and no engine ships
-  test-redundancy yet.
+with the manifest's reason. Two rows are pending - the long-but-
+cohesive file needs a context-aware file verdict from the semantic
+phase (bloat-long-file fires on size alone), and no engine ships
+test-redundancy yet.
 
 Precision and recall math are the audit's later phase and are out of
 scope here; the seed proves only that each fixture produces its declared
