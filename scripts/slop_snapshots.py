@@ -23,7 +23,7 @@ METRIC_FIELDS, each with its unit and declared direction (DIRECTIONS):
 - debt-ratio-pct - remediation cost as a percent of the SQALE development cost (slop_debt); lower is better
 - complexity-density - cyclomatic decision points per 1000 executable lines (slop_density); lower is better
 - duplication-density-pct - duplicated executable lines as a percent of the measured corpus (slop_density); lower is better
-- reliability-score - the reliability rating as a 0-100 band score, 0 the clean A band (slop_reliability); lower is better
+- reliability-score - the weighted severity score the reliability grade was read from: blocking x 100 + advisory x 2 (v2.18, severity-based per audit finding C), 0 the clean A band (slop_reliability); lower is better
 - reliability-grade - the rating's letter band A-E (slop_reliability); categorical, rendered in the trend, judged by no arrow
 - hotspot-top-risk - risk points at the hottest file, (churn + 3 x fixes) x ccn x (1 + fan_in / 10) (slop_hotspot); lower is better
 - max-fan-out - distinct in-repo modules imported by the worst offender (slop_coupling); lower is better

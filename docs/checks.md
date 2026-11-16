@@ -634,11 +634,16 @@ Profile presets (quick / standard / strict / custom) only change the
   with-block and never closed (blocking, like the other reliability
   defects), and a class attribute born a list/dict/set literal that
   every instance shares (advisory; `ClassVar` is the declared
-  intentional exit). The rating prices the dimension's findings with
-  the debt engine's registry minutes over the same SQALE denominator
-  and grades SonarQube's bands - A to 3% of dev cost, B to 5%, C to
-  10%, D to 20%, E past that - one advisory finding, off the A band
-  only, anchored at the most expensive reliability finding. **Hotspot
+  intentional exit). The rating is severity-based as of v2.18 (audit
+  finding C): the dimension's blocking defects weigh 100 and advisory
+  judgment calls weigh 2 (Master CI's own two-grade taxonomy, not
+  borrowed SonarQube weights), and the A-E bands encode exact counts -
+  A clean, B up to 5 advisory flags, C up to 2 blocking defects, D up
+  to 4, E five or more. The priced-minutes-over-dev-cost share stays
+  in the message as informational context only; the remediation-cost
+  ratio as a maintainability grade remains the debt engine's
+  (slop_debt), where the SQALE math belongs. One advisory finding, off
+  the A band only, anchored at the most expensive reliability finding. **Hotspot
   (`hotspot-risk`):** churn x complexity x defect history x dependents
   over the one measured corpus and graph - `risk = (churn + 3 x fixes)
   x ccn x (1 + fan_in / 10)` from git history read in the scan root

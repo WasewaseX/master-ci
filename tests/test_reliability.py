@@ -6,8 +6,10 @@ abandoned flags; a with-block anywhere or a .close() call anywhere
 clears it; inline consumption is a call chain, not a held handle),
 shared-mutable-state (class-level containers flag, ClassVar clears,
 instance attributes and immutable defaults stay silent), and the
-rating (registry pricing over the dimension's checks only, SonarQube's
-A-E bands, one advisory finding off the A band only, the corpus floor).
+rating (severity-based as of v2.18: blocking x 100 + advisory x 2,
+Master CI's own bands, one advisory finding off the A band only, the
+corpus floor; priced minutes stay in the message as informational
+share, not the grade).
 
 Registration is wired by the orchestrator and is not asserted here -
 behavior tests only.
@@ -163,9 +165,22 @@ class Config:
 
 
 def test_reliability_grade_bands():
-    bands = [(0.0, "A"), (3.0, "A"), (3.1, "B"), (5.1, "C"), (10.1, "D"), (20.1, "E")]
-    for ratio, grade in bands:
-        assert reliability_grade(ratio) == grade
+    # v2.18 severity bands: blocking x 100 + advisory x 2. The edges
+    # encode the canonical shapes - A clean, B up to 5 advisory flags,
+    # C up to 2 blocking, D up to 4, E five or more.
+    cases = [
+        (0, 0, "A"),  # clean
+        (0, 5, "B"),  # 5 advisory flags = 10, the B edge
+        (0, 6, "C"),  # past the B edge, still no blocking defect
+        (1, 0, "C"),  # one blocking defect = 100
+        (2, 5, "C"),  # 210, the C edge exactly
+        (2, 6, "D"),  # 212, past the C edge
+        (4, 5, "D"),  # 410, inside D
+        (4, 11, "E"),  # 422, past the D edge
+        (5, 0, "E"),  # five blocking defects = 500
+    ]
+    for blocking, advisory, grade in cases:
+        assert reliability_grade(blocking, advisory) == grade, (blocking, advisory)
 
 
 def test_reliability_minutes_prices_only_the_dimension():
@@ -188,14 +203,23 @@ def test_rating_silent_under_corpus_floor():
 
 
 def test_rating_silent_at_grade_a():
+    # No dimension finding at all: grade A, silent. The design finding
+    # prices minutes but is not the dimension's to grade.
+    findings = [Finding(path="z.py", line=1, check="import-cycle", message="m", weight=3)]
+    assert check_reliability_rating(plain_facts(500), findings) == []
+
+
+def test_rating_grades_advisory_flags_below_a():
+    # v2.18 severity semantics: advisory reliability flags are real
+    # signal, so four judgment calls grade B and the finding speaks.
+    # Under the pre-v2.18 ratio math this corpus was grade A and silent.
     findings = [
         Finding(path=f"a{i}.py", line=1, check="mutable-default", message="m", weight=1)
         for i in range(4)
     ]
-    # 4 x 10 priced minutes over 500 x 3 dev minutes is 2.7%: grade A.
-    # The design finding prices 120 but is not the dimension's to price.
-    findings.append(Finding(path="z.py", line=1, check="import-cycle", message="m", weight=3))
-    assert check_reliability_rating(plain_facts(500), findings) == []
+    hits = check_reliability_rating(plain_facts(500), findings)
+    assert len(hits) == 1
+    assert "reliability rating B (0 blocking + 4 advisory, weighted 8;" in hits[0].message
 
 
 def test_rating_emits_one_advisory_finding_at_grade_b():
@@ -209,9 +233,9 @@ def test_rating_emits_one_advisory_finding_at_grade_b():
     assert hit.check == "reliability-rating"
     assert hit.advisory and hit.weight == 2
     assert hit.path == "a.py"  # tie on price: alphabetically first path
-    assert "reliability rating B" in hit.message
+    assert "reliability rating C (2 blocking + 0 advisory, weighted 200;" in hit.message
     ratio = 100 * (2 * mod.BLOCKING_MINUTES) / (300 * mod.DEV_MIN_PER_LINE)
-    assert f"({ratio:.1f}% of dev cost, budget 3% for A)" in hit.message
+    assert f"remediation share {ratio:.1f}% of dev cost" in hit.message
     assert "40m across 2 reliability findings over 300 executable lines" in hit.message
     assert "worst: bare-except at z.py, swallowed-exception at a.py" in hit.message
 
@@ -240,7 +264,8 @@ def test_rating_names_at_most_three_worst_checks():
     hit = hits[0]
     # The registry prices 6 blocking defects at 20 minutes and 6
     # judgment calls at 10 - unclosed-resource blocks with the family.
-    assert "reliability rating B (4.0% of dev cost, budget 3% for A)" in hit.message
+    # Severity grading: 6 blocking + 6 advisory weighs 612, grade E.
+    assert "reliability rating E (6 blocking + 6 advisory, weighted 612;" in hit.message
     assert "3h 00m across 12 reliability findings over 1500 executable lines" in hit.message
     assert (
         "worst: bare-except at p_bare.py, empty-catch at p_catch.py, "

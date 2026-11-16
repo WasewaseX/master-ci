@@ -78,12 +78,19 @@ def test_density_and_hotspot_and_fan_out_parse() -> None:
 
 
 def test_reliability_grade_and_score_travel_together() -> None:
-    """The band letter and the percent it was graded from are one finding."""
+    """The band letter and the weighted severity score are one finding."""
     metrics = sx.extract(
-        _sarif(_result("reliability-rating", "reliability rating A (0.0% of dev cost", False))
+        _sarif(
+            _result(
+                "reliability-rating",
+                "reliability rating B (0 blocking + 4 advisory, weighted 8; "
+                "remediation share 0.5% of dev cost",
+                False,
+            )
+        )
     )
-    assert metrics["reliability-grade"] == "A"
-    assert metrics["reliability-score"] == 0.0
+    assert metrics["reliability-grade"] == "B"
+    assert metrics["reliability-score"] == 8.0
 
 
 def test_no_finding_means_omitted_never_zero() -> None:

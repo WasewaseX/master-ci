@@ -26,8 +26,11 @@ When the engine reported no finding the metric is OMITTED, never
 zero-filled - SARIF cannot distinguish "measured clean" from "not
 measured", and a zero would read as a measurement that never happened.
 - ``reliability-grade`` comes from the rating message's band letter;
-``reliability-score`` is the same finding's percent-of-dev-cost, the
-number the band was graded from. One finding, both fields.
+``reliability-score`` is the same finding's weighted severity score,
+the number the band was graded from (v2.18: the grade is severity-
+based, audit finding C; the message's percent-of-dev-cost is
+informational remediation share, not the score). One finding, both
+fields.
 - Blocking/advisory classification reads the SARIF properties the
 writer already stamped (``security-severity`` 8.0 = blocking), which
 are derived from the model's blocking registry at write time - the
@@ -71,7 +74,10 @@ MESSAGE_PATTERNS: dict[str, tuple[str, re.Pattern[str]]] = {
     "high-coupling": ("max-fan-out", re.compile(r"coupling fan-out (\d+)")),
     "reliability-rating": (
         "reliability-grade",
-        re.compile(r"reliability rating ([A-E]) \((\d+(?:\.\d+)?)% of dev cost"),
+        re.compile(
+            r"reliability rating ([A-E]) \((\d+) blocking \+ (\d+) advisory, "
+            r"weighted (\d+)"
+        ),
     ),
 }
 
@@ -124,7 +130,7 @@ def _message_metrics(results: list[dict]) -> dict[str, float | str]:
             continue
         if key == "reliability-grade":
             found["reliability-grade"] = str(match.group(1))
-            found["reliability-score"] = float(match.group(2))
+            found["reliability-score"] = float(match.group(4))
         else:
             found[key] = float(match.group(1))
     return found

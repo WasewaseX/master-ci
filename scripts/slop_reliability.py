@@ -18,11 +18,26 @@ two new AST-backed defect checks filling the named gaps:
     all. ClassVar is the one exclusion (the sharing is declared
     intentional); enums and dataclasses legitimately flag.
 
-The rating prices the reliability-relevant findings with the debt
-engine's registry minutes - no second taxonomy - over the same SQALE
-denominator: DEV_MIN_PER_LINE per executable line of the densities'
-measured corpus, handed over by the pipeline. Bands are SonarQube's:
-A to 3% of dev cost, B to 5%, C to 10%, D to 20%, E past that.
+Metric definitions (v2.18, audit finding C - precise, not borrowed):
+
+- reliability rating - severity-based, over the reliability-relevant
+    findings the scan emits. Master CI's severity taxonomy is
+    two-grade (the registry knows blocking and advisory), so the
+    weights are those grades' standing: a blocking defect weighs 100,
+    an advisory judgment call 2. The A-E bands are Master CI's own;
+    the exact counts each edge encodes are documented at RATING_BANDS.
+    SonarQube grades reliability by issue severity as well, with its
+    own weights and rule-level severities; this is the same shape of
+    metric, not a re-implementation of their numbers and not a claim
+    of equivalence.
+- remediation share (message evidence, informational) - priced
+    reliability minutes over the SQALE-style dev-cost denominator. The
+    per-class minutes in slop_debt are engineering estimates for
+    prioritization, NOT measured repair times; the share contextualizes
+    the grade and is not its input.
+- the remediation-cost ratio as a maintainability grade lives in
+    slop_debt (debt-ratio), where SonarQube's SQALE math belongs; this
+    module no longer divides minutes by dev cost to grade reliability.
 
 Advisory, one finding per scan, off the A band only - a CLEAN scan
 stays CLEAN. The finding anchors at the most expensive reliability
@@ -48,17 +63,29 @@ swallowed-exception unclosed-resource unwrap-density
 """
 RELIABILITY_CHECKS = frozenset(_RELIABILITY_IDS.split())
 
-# SonarQube's reliability-rating bands: priced reliability minutes as
-# a percent of the corpus's reconstruction cost. A is the healthy
-# grade the scan stays silent under; past D's 20% line the rating is E.
-RATING_BANDS = ((3.0, "A"), (5.0, "B"), (10.0, "C"), (20.0, "D"))
-RATING_BUDGET = RATING_BANDS[0][0]  # the grade-A line, quoted in the message
+# The severity weights are Master CI's own two-grade taxonomy (the
+# registry knows blocking and advisory): a blocking defect weighs 100,
+# an advisory judgment call 2. These are not SonarQube's numbers -
+# Sonar weights five severities with its own published values.
+BLOCKING_WEIGHT = 100
+ADVISORY_WEIGHT = 2
+
+# Severity bands over the weighted score. Each edge encodes an exact
+# count, so the grade reads back into evidence a reviewer can check:
+#   A  0      - clean, the scan stays silent
+#   B  <=10   - up to 5 advisory judgment calls, no blocking defect
+#   C  <=210  - up to 2 blocking defects (possibly alongside advisories)
+#   D  <=420  - up to 4 blocking defects
+#   E  beyond - 5 or more blocking defects
+RATING_BANDS = ((0, "A"), (10, "B"), (210, "C"), (420, "D"))
 RATING_SELF = "reliability-rating"  # the engine's own check, never priced
 
-# Calibrated at adoption against this codebase's own self-scan: the
-# error-handling family prices zero minutes over ~12.2k executable
-# lines (grade A), unclosed-resource flags nothing, and the one
-# shared-mutable-state flag is a read-only dispatch-table constant.
+# Calibrated against this codebase's own self-scan (verified v2.18):
+# the template holds zero reliability-dimension findings over ~12.2k
+# executable lines, so the self-scan grades A and stays silent. Under
+# the severity bands one advisory judgment call would grade B - the
+# rating says what the dimension actually holds, not what its minutes
+# cost; the finding stays advisory, a CLEAN exit stays 0.
 MAX_WORST_RENDER = 3  # worst checks named before the render cuts off
 
 
@@ -202,10 +229,16 @@ def reliability_minutes(findings: list[Finding]) -> int:
     return sum(remediation_minutes(finding) for finding in _dimension_findings(findings))
 
 
-def reliability_grade(ratio: float) -> str:
-    """SonarQube's A-E bands over remediation as a percent of dev cost."""
-    for line, grade in RATING_BANDS:
-        if ratio <= line:
+def weighted_score(blocking: int, advisory: int) -> int:
+    """The severity score the grade reads: counts x their grade's weight."""
+    return blocking * BLOCKING_WEIGHT + advisory * ADVISORY_WEIGHT
+
+
+def reliability_grade(blocking: int, advisory: int) -> str:
+    """A-E over the weighted severity score; bands at RATING_BANDS."""
+    score = weighted_score(blocking, advisory)
+    for edge, grade in RATING_BANDS:
+        if score <= edge:
             return grade
     return "E"
 
@@ -229,16 +262,23 @@ def _worst_checks(rated: list[Finding]) -> list[tuple[str, str]]:
 
 
 def _rating_finding(
-    facts: DensityFacts, rated: list[Finding], minutes: int, ratio: float, grade: str
+    facts: DensityFacts,
+    rated: list[Finding],
+    grade: str,
+    blocking: int,
+    advisory: int,
+    minutes: int,
+    share: float,
 ) -> Finding:
-    """Grade, totals and worst checks as evidence; anchored at the top price."""
+    """Grade, counts, weighted score and worst checks as evidence."""
     anchor = "."
     if rated:
         anchor = max(sorted(rated, key=lambda f: f.path), key=remediation_minutes).path
     worst = ", ".join(f"{check} at {path}" for check, path in _worst_checks(rated))
     message = (
-        f"reliability rating {grade} ({ratio:.1f}% of dev cost, "
-        f"budget {RATING_BUDGET:g}% for A): "
+        f"reliability rating {grade} ({blocking} blocking + {advisory} advisory, "
+        f"weighted {weighted_score(blocking, advisory)}; remediation share "
+        f"{share:.1f}% of dev cost): "
         f"{_render_minutes(minutes)} across {len(rated)} reliability findings "
         f"over {facts.exec_lines} executable lines; worst: {worst}"
     )
@@ -253,17 +293,21 @@ def _rating_finding(
 
 
 def check_reliability_rating(facts: DensityFacts, findings: list[Finding]) -> list[Finding]:
-    """The reliability grade: advisory, one finding, off the A band only.
+    """The reliability grade: severity-based, advisory, one finding, off A only.
 
-    `facts` is the densities' measured corpus, shared with the debt
-    ratio, so both divide by exactly the same denominator.
+    `facts` is the densities' measured corpus; it bounds the rating to
+    projects with a real corpus and prices the informational remediation
+    share. The grade itself reads only the dimension's severity counts,
+    per the v2.18 definitions in the module docstring.
     """
     if facts.exec_lines < MIN_CORPUS_LINES:
         return []
     rated = _dimension_findings(findings)
-    minutes = reliability_minutes(findings)
-    ratio = 100 * minutes / (facts.exec_lines * DEV_MIN_PER_LINE)
-    grade = reliability_grade(ratio)
+    blocking = sum(1 for finding in rated if not finding.advisory)
+    advisory = len(rated) - blocking
+    grade = reliability_grade(blocking, advisory)
     if grade == "A":
         return []
-    return [_rating_finding(facts, rated, minutes, ratio, grade)]
+    minutes = reliability_minutes(findings)
+    share = 100 * minutes / (facts.exec_lines * DEV_MIN_PER_LINE)
+    return [_rating_finding(facts, rated, grade, blocking, advisory, minutes, share)]
