@@ -67,6 +67,7 @@ from slop_arch import ArchConfigError
 from slop_cognitive import tree_sitter_available
 from slop_files import load_phrases
 from slop_lizard import lizard_available
+from slop_metrics_doc import write_document
 from slop_model import enforce_structural_budget
 from slop_profiles import apply_profile_stage, profile_from_args
 from slop_ratchet import (
@@ -143,6 +144,19 @@ def _add_gate_args(parser: argparse.ArgumentParser) -> None:
         help=(
             "Report advisory provenance markers (ai-provenance) and the "
             "repository test inventory (missing-tests); default on"
+        ),
+    )
+    parser.add_argument(
+        "--metrics-json",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help=(
+            "Write the structured metrics document (metrics-v1): actual "
+            "metric values incl. healthy below-threshold measurements, "
+            "per-metric measured/not-measured states, and the corpus's "
+            "analysis-coverage states. The snapshot store prefers this "
+            "over SARIF message scraping (audit finding G)"
         ),
     )
     parser.add_argument(
@@ -321,6 +335,7 @@ def main(argv: list[str] | None = None) -> int:
     from ai_slop_detector import scan
 
     phrases = load_phrases()
+    metrics_bundle: dict = {}
     try:
         findings = scan(
             args.root,
@@ -328,6 +343,7 @@ def main(argv: list[str] | None = None) -> int:
             extra_globs=args.ignore,
             provenance=args.provenance,
             budgets=profile.budgets or None,
+            metrics_out=metrics_bundle if args.metrics_json else None,
         )
     except ArchConfigError as exc:
         # Fail closed: a declared rule set that cannot be honored must
@@ -335,6 +351,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ai-integrity: architecture config rejected: {exc}", file=sys.stderr)
         return 2
     findings, _ = apply_profile_stage(findings, profile)
+    if args.metrics_json:
+        try:
+            write_document(args.metrics_json, findings, metrics_bundle)
+        except OSError as exc:
+            print(f"ai-integrity: metrics document rejected: {exc}", file=sys.stderr)
+            return 2
     ratchet_exit = _quality_ratchet(args, findings)
     if ratchet_exit == 2 or (args.write_quality_baseline and ratchet_exit == 0):
         return ratchet_exit

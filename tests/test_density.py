@@ -386,8 +386,8 @@ def test_registration_of_the_two_new_checks():
         assert check in mod.CHECK_CATEGORIES
         assert mod.CHECK_CATEGORIES[check] == "maintainability"
         assert check in mod.REMEDIES
-    from slop_profiles import SHIPPED_BUDGETS, shipped_budget
     from slop_density import DUP_BLOCK_DENSITY_BUDGET
+    from slop_profiles import SHIPPED_BUDGETS, shipped_budget
 
     assert SHIPPED_BUDGETS["dup-block-density"] == DUP_BLOCK_DENSITY_BUDGET
     assert shipped_budget("dup-block-density") == DUP_BLOCK_DENSITY_BUDGET
