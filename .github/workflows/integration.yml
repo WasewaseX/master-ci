@@ -71,9 +71,28 @@ jobs:
           CANARY_REPO: WasewaseX/ci-canary
         run: |
           set -euo pipefail
-          pinned=$(curl -fsSL \
-            "https://raw.githubusercontent.com/${CANARY_REPO}/main/.github/workflows/ci.yml" \
-            | grep -o 'master-ci\.yml@[^[:space:]]*' | head -1 | cut -d@ -f2)
+          canary_ci=$(curl -fsSL \
+            "https://raw.githubusercontent.com/${CANARY_REPO}/main/.github/workflows/ci.yml")
+          # The pin is whatever ref the canary calls any master-ci reusable
+          # workflow at - required-quality.yml since v2.8.0, master-ci.yml
+          # before - with template_ref as the secondary witness. The old
+          # single-pattern grep matched neither the aggregate call nor a
+          # re-pinned canary, and under pipefail its exit 1 failed this
+          # step for two days (runs #10/#11) while the consumer was green.
+          pinned=$(printf '%s\n' "$canary_ci" \
+            | grep -oE 'master-ci/\.github/workflows/[A-Za-z0-9._-]+\.yml@[^[:space:]]+' \
+            | head -1 | cut -d@ -f2 || true)
+          if [ -z "$pinned" ]; then
+            pinned=$(printf '%s\n' "$canary_ci" \
+              | grep -oE 'template_ref:[[:space:]]*[^[:space:]]+' \
+              | head -1 | sed 's/^template_ref:[[:space:]]*//' || true)
+          fi
+          if [ -z "$pinned" ]; then
+            echo "::error::no pinned template call found in the canary's ci.yml"
+            echo "looked for master-ci/.github/workflows/*.yml@<ref> and template_ref: <ref>."
+            echo "If the canary's layout changed, update this parser - do not treat the consumer as broken."
+            exit 1
+          fi
           newest=$(gh api "repos/${GITHUB_REPOSITORY}/tags?per_page=100" --jq '.[0].name')
           echo "canary_pin=$pinned" >> "$GITHUB_ENV"
           echo "newest_tag=$newest" >> "$GITHUB_ENV"
