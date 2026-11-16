@@ -70,6 +70,10 @@ MESSAGE_PATTERNS: dict[str, tuple[str, re.Pattern[str]]] = {
         "duplication-density-pct",
         re.compile(r"duplication density (\d+(?:\.\d+)?)%"),
     ),
+    "dup-block-density": (
+        "dup-block-density-pct",
+        re.compile(r"duplication blocks (\d+(?:\.\d+)?)%"),
+    ),
     "hotspot-risk": ("hotspot-top-risk", re.compile(r"hotspot risk (\d+(?:\.\d+)?)")),
     "high-coupling": ("max-fan-out", re.compile(r"coupling fan-out (\d+)")),
     "reliability-rating": (

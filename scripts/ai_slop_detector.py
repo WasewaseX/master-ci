@@ -64,8 +64,10 @@ from slop_debt import (  # noqa: F401
 from slop_density import (  # noqa: F401
     COMPLEXITY_DENSITY_BUDGET,
     DUP_DENSITY_BUDGET,
+    check_analysis_coverage,
     density_findings,
     measure,
+    measure_corpus,
 )
 from slop_deps import check_unused_dependencies  # noqa: F401
 from slop_duplicates import (  # noqa: F401
@@ -352,6 +354,7 @@ def _repo_level_findings(
     globs: list[str],
     provenance: bool,
     budgets: Mapping[str, float] | None = None,
+    metrics_out: dict | None = None,
 ) -> list[Finding]:
     """Whole-repo views: duplication, dependency and architecture checks.
 
@@ -359,8 +362,13 @@ def _repo_level_findings(
     the density verdicts judge against the profile's lines, not the
     shipped constants; None keeps the shipped budgets byte-identical.
     v2.18 (audit finding B): the coupling and hotspot verdicts take the
-    same overrides - every budget a profile accepts is functional, and
-    the shipped verdicts reproduce byte for byte when budgets is None.
+    same overrides - every budget a profile accepts is functional.
+    v2.18 (audit finding E): the corpus's coverage states ride with the
+    facts and speak through the analysis-coverage check - a parse
+    failure or an unsupported language can no longer vanish into an
+    apparently clean ratio. `metrics_out`, when a dict, receives the
+    measured bundle (density facts, coverage, coupling, churn) for the
+    structured metrics document; it never changes the findings.
     """
     findings: list[Finding] = []
     findings.extend(scan_duplicates(files, root, globs))
@@ -369,15 +377,24 @@ def _repo_level_findings(
     findings.extend(check_orphan_modules(root, files, globs))
     findings.extend(check_import_cycles(root, files, globs))
     findings.extend(check_class_cohesion(root, files, globs))
-    facts = measure(root, files, globs)
+    facts, coverage = measure_corpus(root, files, globs)
+    findings.extend(check_analysis_coverage(coverage))
     coupling = measure_coupling(root, files, globs)
     findings.extend(check_coupling_metrics(root, files, globs, facts=coupling, budgets=budgets))
+    churn: dict[str, int] = {}
+    defects: dict[str, int] = {}
     if facts is not None:
         # The hotspot shares the one measured corpus and graph: churn
         # reads git once, complexity and dependents arrive pre-computed.
         churn, defects = churn_map(root)
         findings.extend(check_hotspot_metrics(facts, coupling, churn, defects, budgets=budgets))
         findings.extend(density_findings(facts, budgets=budgets))
+    if metrics_out is not None:
+        metrics_out["density"] = facts
+        metrics_out["coverage"] = coverage
+        metrics_out["coupling"] = coupling
+        metrics_out["churn"] = churn
+        metrics_out["defects"] = defects
     findings.extend(check_architecture_rules(root, files, globs))
     findings.extend(check_unknown_directives(root, files, globs))
     if provenance:
@@ -408,8 +425,15 @@ def scan(
     extra_globs: list[str] | None = None,
     provenance: bool = True,
     budgets: Mapping[str, float] | None = None,
+    metrics_out: dict | None = None,
 ) -> list[Finding]:
-    """One full scan; `budgets` is the analyzer profile's overrides."""
+    """One full scan; `budgets` is the analyzer profile's overrides.
+
+    `metrics_out`, when a dict, is filled with the measured bundle the
+    structured metrics document (audit finding G) is rendered from:
+    density facts, corpus coverage, coupling facts, churn and defects.
+    Passing it changes no findings.
+    """
     files = iter_files(root)
     globs, disabled, scoped = load_ignore_rules(root)
     globs = globs + list(extra_globs or [])
@@ -421,7 +445,7 @@ def scan(
         provenance,
     )
     findings = _file_findings(root, files, globs, ctx)
-    findings.extend(_repo_level_findings(root, files, globs, provenance, budgets))
+    findings.extend(_repo_level_findings(root, files, globs, provenance, budgets, metrics_out))
     return _apply_suppression(findings, disabled, scoped)
 
 

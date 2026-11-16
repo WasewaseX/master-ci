@@ -182,6 +182,12 @@ REMEDIES = {
     "duplication-density": (
         "Extract the repeated lines into shared helpers; the density is the trend the ratchet holds"
     ),
+    "dup-block-density": (
+        "Extract the copied block into one shared function; contiguous clones drift apart silently"
+    ),
+    "analysis-coverage": (
+        "Fix the parse failures or document the unsupported languages; unmeasured code is not clean code"
+    ),
     "debt-ratio": "Pay down the worst check first; it is the pile the next release inherits",
     "high-coupling": "Split the importer by responsibility; each import is a change set it owns",
     "unstable-hub": "Freeze the hub's interface or push its churn down; dependents share it",

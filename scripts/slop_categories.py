@@ -116,6 +116,10 @@ CHECK_CATEGORIES: dict[str, str] = {
     # not a defect to fix mechanically - maintainability, advisory.
     "complexity-density": "maintainability",
     "duplication-density": "maintainability",
+    # v2.18: the clone-block ratio and the corpus coverage states -
+    # measurement texture, maintainability, advisory.
+    "dup-block-density": "maintainability",
+    "analysis-coverage": "maintainability",
     # v2.14: remediation debt (the priced scan) and module coupling
     # (fan-out, instability). Ratios and texture, not defects -
     # design conversations, maintainability, advisory.

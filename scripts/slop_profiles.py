@@ -44,7 +44,11 @@ from types import MappingProxyType
 from path_filters import FilterSet, UnsupportedPatternError
 from slop_categories import CHECK_CATEGORIES
 from slop_coupling import COUPLING_FAN_OUT_BUDGET
-from slop_density import COMPLEXITY_DENSITY_BUDGET, DUP_DENSITY_BUDGET
+from slop_density import (
+    COMPLEXITY_DENSITY_BUDGET,
+    DUP_BLOCK_DENSITY_BUDGET,
+    DUP_DENSITY_BUDGET,
+)
 from slop_hotspot import HOTSPOT_RISK_BUDGET
 from slop_model import Finding
 
@@ -60,6 +64,7 @@ SHIPPED_BUDGETS: Mapping[str, float] = MappingProxyType(
     {
         "complexity-density": COMPLEXITY_DENSITY_BUDGET,
         "duplication-density": DUP_DENSITY_BUDGET,
+        "dup-block-density": DUP_BLOCK_DENSITY_BUDGET,
         "high-coupling": COUPLING_FAN_OUT_BUDGET,
         "hotspot-risk": HOTSPOT_RISK_BUDGET,
     }

@@ -56,6 +56,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from slop_analysis_coverage import EXCLUDED_EXTS
 from slop_files import is_ignored, is_test_path, read_text_lax
 from slop_lizard import LIZARD_EXTS, parse_file_facts
 from slop_model import Finding
@@ -66,16 +67,49 @@ from slop_patterns import DUP_LINE_MIN_LEN
 # above the engine's own numbers, advisory evidence, never a gate.
 COMPLEXITY_DENSITY_BUDGET = 300  # decision points per 1000 executable lines
 DUP_DENSITY_BUDGET = 5.0  # duplicated executable lines, percent of corpus
+DUP_BLOCK_DENSITY_BUDGET = 2.0  # block-clone lines, percent of corpus (v2.18)
 MIN_CORPUS_LINES = 250  # under this the corpus is a snippet, not a project
+
+# v2.18 block clones (audit finding D): a block is a contiguous run of
+# at least this many normalized identical lines appearing at a second
+# location - the shape Qlty and SonarQube count as duplicated blocks,
+# distinct from the repeated-line density the old metric reports. Six
+# normalized lines is deliberately tighter than SonarQube's ten-
+# statement default: line normalization (not tokenization) is the
+# engine's contract, and the budget carries the sensitivity.
+MIN_BLOCK_LINES = 6
+MAX_BUCKET_PAIRS = 200  # anchor comparisons per identical-line bucket, bounded
 
 MAX_LANGS_RENDER = 4
 MAX_FILES_RENDER = 4
 MAX_LINE_RENDER = 60
+MAX_COVERAGE_NAMES = 8  # parse-failed/unsupported names named before cutoff
 
 # Generated-code policy: name-matched generated files leave the corpus.
 GENERATED_NAME = re.compile(
     r"(?:_pb2\.py|_pb2\.go|_gen\.go|\.g\.go|_generated\.py|\.generated\.[a-z]+)$"
 )
+
+
+@dataclass(frozen=True)
+class DensityCoverage:
+    """What the corpus actually covered (v2.18, audit finding E).
+
+    The five-state taxonomy the new-code gate renders, carried to the
+    repo-wide scan: a file the lexer rejects or a language with no
+    lexer must never vanish into an apparently clean ratio. Counts
+    always speak; the names are bounded render material.
+    """
+
+    eligible: int = 0  # source files the corpus tried to measure
+    measured: int = 0  # parsed and priced
+    parse_failed: tuple[str, ...] = ()  # eligible but the lexer rejected them
+    excluded_test: int = 0  # documented exclusion: test paths
+    excluded_generated: int = 0  # documented exclusion: generated names
+    excluded_ignored: int = 0  # documented exclusion: ignore globs
+    excluded_nonsource: int = 0  # documented exclusion: docs/configs/assets
+    unsupported: int = 0  # no lexer for the extension
+    unsupported_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -89,22 +123,55 @@ class DensityFacts:
     per_lang: dict[str, tuple[int, int]]  # lang -> (exec lines, complexity)
     worst_files: tuple[tuple[str, int], ...]  # (rel path, complexity), desc
     worst_line: tuple[str, int, str] | None  # (path, line, text) most repeated
+    # v2.18 block clones (audit finding D): lines inside a contiguous
+    # repeated run, distinct from the repeated-line count above.
+    dup_block_lines: int = 0
+    worst_block: tuple[int, str, int] | None = None  # (run length, path, line)
 
 
-def _eligible(root: Path, files: list[Path], globs: list[str]) -> list[tuple[Path, str]]:
-    """The measured corpus: lexer-backed sources, no tests, no generated."""
-    out: list[tuple[Path, str]] = []
-    for path in files:
-        if path.suffix.lower() not in LIZARD_EXTS:
+def _block_clones(
+    seqs: list[tuple[str, list[tuple[int, str]]]],
+) -> tuple[int, tuple[int, str, int] | None]:
+    """Lines inside contiguous repeated runs, and the longest run's location.
+
+    Every normalized line indexes into a bucket of positions; each
+    later position extends the bucket's anchor into a run while the two
+    sequences agree. Runs of MIN_BLOCK_LINES or more mark every line
+    they cover on both sides. Pairing against the bucket's first
+    position keeps the work bounded (MAX_BUCKET_PAIRS extensions per
+    bucket) and deterministic; it is a documented bound, not a full
+    clone-pair enumeration - token-level or AST-level clone detection
+    is the language-native roadmap row, not this metric.
+    """
+    buckets: dict[str, list[tuple[int, int]]] = {}
+    for file_idx, (_rel, lines) in enumerate(seqs):
+        for seq_idx, (_lineno, norm) in enumerate(lines):
+            buckets.setdefault(norm, []).append((file_idx, seq_idx))
+    covered: set[tuple[int, int]] = set()
+    worst: tuple[int, str, int] | None = None  # (run length, rel, start lineno)
+    for bucket in buckets.values():
+        if len(bucket) < 2:
             continue
-        try:
-            rel = path.relative_to(root).as_posix() if root.is_dir() else path.name
-        except ValueError:
-            rel = path.as_posix()
-        if is_ignored(rel, globs) or is_test_path(rel) or GENERATED_NAME.search(path.name):
-            continue
-        out.append((path, rel))
-    return sorted(out, key=lambda pair: pair[1])
+        anchor = bucket[0]
+        a_file, a_idx = anchor
+        for other in bucket[1 : MAX_BUCKET_PAIRS + 1]:
+            b_file, b_idx = other
+            if (a_file, a_idx) == (b_file, b_idx):
+                continue
+            run = 0
+            while (
+                a_idx + run < len(seqs[a_file][1])
+                and b_idx + run < len(seqs[b_file][1])
+                and seqs[a_file][1][a_idx + run][1] == seqs[b_file][1][b_idx + run][1]
+            ):
+                run += 1
+            if run >= MIN_BLOCK_LINES:
+                for k in range(run):
+                    covered.add((a_file, a_idx + k))
+                    covered.add((b_file, b_idx + k))
+                if worst is None or run > worst[0]:
+                    worst = (run, seqs[a_file][0], seqs[a_file][1][a_idx][0])
+    return len(covered), worst
 
 
 def _dup_lines(text: str) -> list[tuple[int, str]]:
@@ -123,51 +190,124 @@ def _dup_lines(text: str) -> list[tuple[int, str]]:
     return out
 
 
-def measure(root: Path, files: list[Path], globs: list[str]) -> DensityFacts | None:
-    """Both densities over one corpus; None when nothing measurable stands.
+def measure_corpus(
+    root: Path, files: list[Path], globs: list[str]
+) -> tuple[DensityFacts | None, DensityCoverage]:
+    """Both densities plus the corpus's coverage states (v2.18, finding E).
 
-    An empty corpus, a corpus the lexer cannot read, and a corpus under
-    MIN_CORPUS_LINES all return None: no verdict, not a guessed one.
+    Every discovered file lands in exactly one named state - measured,
+    parse-failed, excluded by a documented rule, or unsupported
+    language - so a degraded corpus can never read as a clean one:
+    the coverage rides with the facts, and the verdicts' callers render
+    it. Returns (facts, coverage); facts is None when nothing
+    measurable stands (empty corpus, or under MIN_CORPUS_LINES).
     """
+    failed: list[str] = []
+    unsupported: list[str] = []
+    coverage = {
+        "eligible": 0,
+        "measured": 0,
+        "excluded_test": 0,
+        "excluded_generated": 0,
+        "excluded_ignored": 0,
+        "excluded_nonsource": 0,
+        "unsupported": 0,
+    }
     counter: Counter[str] = Counter()
     first_seen: dict[str, tuple[str, int]] = {}
     per_lang: dict[str, tuple[int, int]] = {}
     worst: list[tuple[str, int]] = []
-    exec_lines = complexity = n_files = 0
-    for path, rel in _eligible(root, files, globs):
+    seqs: list[tuple[str, list[tuple[int, str]]]] = []
+    exec_lines = complexity = 0
+    for path in files:
+        ext = path.suffix.lower()
+        try:
+            rel = path.relative_to(root).as_posix() if root.is_dir() else path.name
+        except ValueError:
+            rel = path.as_posix()
+        if not ext or ext in EXCLUDED_EXTS:
+            coverage["excluded_nonsource"] += 1
+            continue
+        if is_ignored(rel, globs):
+            coverage["excluded_ignored"] += 1
+            continue
+        if is_test_path(rel):
+            coverage["excluded_test"] += 1
+            continue
+        if GENERATED_NAME.search(path.name):
+            coverage["excluded_generated"] += 1
+            continue
+        if ext not in LIZARD_EXTS:
+            coverage["unsupported"] += 1
+            if len(unsupported) < MAX_COVERAGE_NAMES:
+                unsupported.append(rel)
+            continue
+        coverage["eligible"] += 1
         text = read_text_lax(path)
         facts = parse_file_facts(str(path), text)
         if facts is None:
+            if len(failed) < MAX_COVERAGE_NAMES:
+                failed.append(rel)
             continue  # no parse: the file leaves both sides of the ratio
-        n_files += 1
+        coverage["measured"] += 1
         exec_lines += facts.nloc
         complexity += facts.ccn
-        lang = path.suffix.lower().lstrip(".")
+        lang = ext.lstrip(".")
         seen_n, seen_c = per_lang.get(lang, (0, 0))
         per_lang[lang] = (seen_n + facts.nloc, seen_c + facts.ccn)
         if facts.ccn:
             worst.append((rel, facts.ccn))
-        for lineno, line in _dup_lines(text):
+        seq = _dup_lines(text)
+        seqs.append((rel, seq))
+        for lineno, line in seq:
             counter[line] += 1
             first_seen.setdefault(line, (rel, lineno))
+    report = DensityCoverage(
+        eligible=coverage["eligible"],
+        measured=coverage["measured"],
+        parse_failed=tuple(failed),
+        excluded_test=coverage["excluded_test"],
+        excluded_generated=coverage["excluded_generated"],
+        excluded_ignored=coverage["excluded_ignored"],
+        excluded_nonsource=coverage["excluded_nonsource"],
+        unsupported=coverage["unsupported"],
+        unsupported_names=tuple(unsupported),
+    )
     if not exec_lines or exec_lines < MIN_CORPUS_LINES:
-        return None
+        return None, report
     duplicated = sum(n for n in counter.values() if n >= 2)
+    block_lines, worst_run = _block_clones(seqs)
     worst_line: tuple[str, int, str] | None = None
     if counter:
         top, top_count = max(counter.items(), key=lambda kv: kv[1])
         if top_count >= 2:
             seen_rel, seen_lineno = first_seen[top]
             worst_line = (seen_rel, seen_lineno, top)
-    return DensityFacts(
-        files=n_files,
-        exec_lines=exec_lines,
-        complexity=complexity,
-        duplicated=duplicated,
-        per_lang=per_lang,
-        worst_files=tuple(sorted(worst, key=lambda item: -item[1])),
-        worst_line=worst_line,
+    return (
+        DensityFacts(
+            files=coverage["measured"],
+            exec_lines=exec_lines,
+            complexity=complexity,
+            duplicated=duplicated,
+            per_lang=per_lang,
+            worst_files=tuple(sorted(worst, key=lambda item: -item[1])),
+            worst_line=worst_line,
+            dup_block_lines=block_lines,
+            worst_block=worst_run,
+        ),
+        report,
     )
+
+
+def measure(root: Path, files: list[Path], globs: list[str]) -> DensityFacts | None:
+    """Both densities over one corpus; None when nothing measurable stands.
+
+    An empty corpus, a corpus the lexer cannot read, and a corpus under
+    MIN_CORPUS_LINES all return None: no verdict, not a guessed one.
+    Callers that need the coverage states (audit finding E) call
+    measure_corpus directly and render them.
+    """
+    return measure_corpus(root, files, globs)[0]
 
 
 def _render_langs(per_lang: dict[str, tuple[int, int]]) -> str:
@@ -240,10 +380,35 @@ def _duplication_finding(facts: DensityFacts, budget: float) -> Finding:
     )
 
 
+def _dup_block_finding(facts: DensityFacts, budget: float) -> Finding:
+    """The block-clone verdict: the contiguous-runs metric, evidence anchored."""
+    pct = 100 * facts.dup_block_lines / facts.exec_lines
+    evidence = ""
+    anchor_path, anchor_line = ".", 1
+    if facts.worst_block:
+        run, seen_rel, seen_lineno = facts.worst_block
+        evidence = f"; largest run: {seen_rel}:{seen_lineno} ({run} lines)"
+        anchor_path, anchor_line = seen_rel, seen_lineno
+    message = (
+        f"duplication blocks {pct:.1f}% (budget {budget:g}%, contiguous runs of "
+        f"{MIN_BLOCK_LINES}+ identical lines): {facts.dup_block_lines} "
+        f"block-duplicated lines of {facts.exec_lines}"
+        f"{evidence}"
+    )
+    return Finding(
+        path=anchor_path,
+        line=anchor_line,
+        check="dup-block-density",
+        message=message,
+        weight=2,
+        advisory=True,
+    )
+
+
 def density_findings(
     facts: DensityFacts, budgets: Mapping[str, float] | None = None
 ) -> list[Finding]:
-    """The two density findings for a measured corpus, over budget only.
+    """The three density findings for a measured corpus, over budget only.
 
     Takes the measured facts rather than a root: the pipeline computes
     the corpus once and shares it with the debt ratio, so every ratio
@@ -251,12 +416,64 @@ def density_findings(
     per-check replacement thresholds keyed by check id (the analyzer
     profiles' budget overrides); None keeps the module constants, so
     the shipped verdict and message are reproduced byte for byte.
+    The three metrics are deliberately distinct (audit finding D):
+    complexity-density judges decision-point pressure, duplication-
+    density counts repeated LINES (the trend metric, unchanged), and
+    dup-block-density counts lines inside contiguous repeated runs -
+    the clone-shaped measure - so a repeated one-liner cannot read as
+    a copied block.
     """
     complexity_budget = _budget(budgets, "complexity-density", COMPLEXITY_DENSITY_BUDGET)
     dup_budget = _budget(budgets, "duplication-density", DUP_DENSITY_BUDGET)
+    block_budget = _budget(budgets, "dup-block-density", DUP_BLOCK_DENSITY_BUDGET)
     findings: list[Finding] = []
     if 1000 * facts.complexity / facts.exec_lines > complexity_budget:
         findings.append(_complexity_finding(facts, complexity_budget))
     if 100 * facts.duplicated / facts.exec_lines > dup_budget:
         findings.append(_duplication_finding(facts, dup_budget))
+    if 100 * facts.dup_block_lines / facts.exec_lines > block_budget:
+        findings.append(_dup_block_finding(facts, block_budget))
     return findings
+
+
+def _coverage_finding(coverage: DensityCoverage) -> Finding | None:
+    """The corpus's states, advisory, whenever analysis coverage is not total.
+
+    Audit finding E: a parser failure or an unsupported language must
+    never vanish into an apparently clean ratio. The finding names the
+    failed and unsupported files (bounded) and counts every documented
+    exclusion; a fully measured corpus stays silent.
+    """
+    if not coverage.parse_failed and not coverage.unsupported:
+        return None
+    parts = [f"{coverage.measured} measured"]
+    if coverage.parse_failed:
+        named = ", ".join(f"`{name}`" for name in coverage.parse_failed[:MAX_COVERAGE_NAMES])
+        parts.append(f"{len(coverage.parse_failed)} parse-failed ({named})")
+    if coverage.unsupported:
+        named = ", ".join(f"`{name}`" for name in coverage.unsupported_names[:MAX_COVERAGE_NAMES])
+        more = "" if len(coverage.unsupported_names) < MAX_COVERAGE_NAMES else "..."
+        parts.append(f"{coverage.unsupported} unsupported language ({named}{more})")
+    excluded = (
+        coverage.excluded_test
+        + coverage.excluded_generated
+        + coverage.excluded_ignored
+        + coverage.excluded_nonsource
+    )
+    if excluded:
+        parts.append(f"{excluded} excluded by rule (tests/generated/ignore/non-source)")
+    anchor = coverage.parse_failed[0] if coverage.parse_failed else "."
+    return Finding(
+        path=anchor,
+        line=1,
+        check="analysis-coverage",
+        message="corpus analysis coverage: " + "; ".join(parts),
+        weight=2,
+        advisory=True,
+    )
+
+
+def check_analysis_coverage(coverage: DensityCoverage) -> list[Finding]:
+    """The one-shot coverage verdict: silent when every eligible file measured."""
+    finding = _coverage_finding(coverage)
+    return [finding] if finding else []

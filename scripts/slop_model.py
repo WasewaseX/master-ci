@@ -159,6 +159,14 @@ ADVISORY_ONLY_CHECKS = frozenset(
         # refactor conversation, advisory like the other budgets.
         "complexity-density",
         "duplication-density",
+        # v2.18 (audit finding D): the clone-shaped duplication metric,
+        # contiguous runs of 6+ identical lines - a distinct ratio from
+        # the repeated-line density, advisory like the other budgets.
+        "dup-block-density",
+        # v2.18 (audit finding E): the corpus's analysis-coverage
+        # states - parse-failed and unsupported files named, never a
+        # silently shrunken corpus reading as a clean ratio.
+        "analysis-coverage",
         # v2.14: remediation debt and module coupling - priced and
         # textured design evidence, advisory like the other budgets.
         "debt-ratio",

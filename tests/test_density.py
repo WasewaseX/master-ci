@@ -21,12 +21,12 @@ sys.path.insert(0, str(_HERE))
 from detector_module import detector as mod  # noqa: E402
 
 
-def scan(tmp_path, files=None, extra_globs=None):
+def scan(tmp_path, files=None, extra_globs=None, **kwargs):
     for name, text in (files or {}).items():
         target = tmp_path / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text, encoding="utf-8")
-    return mod.scan(tmp_path, mod.load_phrases(), extra_globs=extra_globs)
+    return mod.scan(tmp_path, mod.load_phrases(), extra_globs=extra_globs, **kwargs)
 
 
 def density_hits(findings):
@@ -250,3 +250,144 @@ def decide(state):
     found = [f for f in scan(tmp_path, files) if f.check == "complexity-density"]
     assert len(found) == 1
     assert "complexity density" in found[0].message
+
+
+# --- v2.18: block clones and the coverage states (audit findings D, E) -----
+
+
+# an 8-line contiguous run, every line over the duplication length floor,
+# identical in two files: the block-clone shape the line-density metric
+# cannot see (the repeated-LINE metric counts these too, but a single
+# repeated one-liner must never read as a copied block).
+CLONE_RUN = """
+    total = reconcile(invoices, ledger, threshold=OVERDUE_DAYS, dry_run=False)
+    report = summarize(total, currency="USD", group_by="account", kind="aging")
+    notify = pick_recipients(report, channels=["email", "slack"], batch=BATCH)
+    dispatch.send(notify, template="aging", priority=2, retry=RETRY_POLICY)
+    ledger.mark(aged=total.overdue, note="aging-run", actor=actor_id)
+    audit_log.write(event="aging.dispatch", count=len(notify), actor=actor_id)
+    if report.overdue > ESCALATE_AT:
+        escalate(report, to="finance", urgency=1, note="aging-threshold")
+"""
+
+
+def aging_module(i: int) -> str:
+    """One clone carrier: unique filler functions plus the shared run."""
+    return (
+        f"THRESHOLD{i} = {10 + i}\n"
+        + "\n"
+        + f"def prepare{i}(rows):\n"
+        + f"    kept = [r for r in rows if r.ok and r.due < THRESHOLD{i}]\n"
+        + "    staged = sorted(kept, key=lambda r: r.due)\n"
+        + "    return staged\n"
+        + "\n"
+        + f"def age{i}(rows, actor_id):\n"
+        + "    staged = prepare{i}(rows)\n".format(i=i)
+        + CLONE_RUN
+        + "    return total\n"
+    )
+
+
+def block_corpus() -> dict[str, str]:
+    # 51 flat modules plus the two clone carriers: the 16 covered lines
+    # sit at ~1.9% of ~860 executable lines, under the shipped 2.0%
+    # budget, so the tight-profile flip is the only thing that fires.
+    files = flat_modules(51)
+    files["aging_a.py"] = aging_module(1)
+    files["aging_b.py"] = aging_module(2)
+    return files
+
+
+def test_block_clones_are_counted_contiguous(tmp_path):
+    from slop_density import measure_corpus
+
+    scan(tmp_path, block_corpus())
+    facts, coverage = measure_corpus(tmp_path, sorted(tmp_path.rglob("*.py")), [])
+    assert facts is not None
+    # The 8-line run appears in two files: all 16 occurrences covered.
+    assert facts.dup_block_lines == 16
+    assert facts.worst_block is not None
+    run, rel, lineno = facts.worst_block
+    assert run == 8 and rel in ("aging_a.py", "aging_b.py")
+
+
+def test_repeated_one_liners_never_read_as_blocks(tmp_path):
+    # The v2.13 fixture shares 5 identical lines per file: repeated-line
+    # density fires, but a 5-line run is under the 6-line block floor.
+    from slop_density import measure_corpus
+
+    scan(tmp_path, {**dup_modules(4), **flat_modules(14)})
+    facts, _ = measure_corpus(tmp_path, sorted(tmp_path.rglob("*.py")), [])
+    assert facts is not None
+    assert facts.duplicated > 0  # the line metric sees the repeats
+    assert facts.dup_block_lines == 0  # the block metric does not
+
+
+def test_block_density_budget_flips_the_verdict(tmp_path):
+    scan(tmp_path, block_corpus())
+    shipped = scan(tmp_path)
+    assert not [f for f in shipped if f.check == "dup-block-density"]
+    tight = scan(tmp_path, budgets={"dup-block-density": 0.01})
+    hits = [f for f in tight if f.check == "dup-block-density"]
+    assert hits
+    assert "contiguous runs of 6+" in hits[0].message
+    assert f"budget {0.01:g}%" in hits[0].message
+
+
+def test_coverage_finds_parse_failures(tmp_path, monkeypatch):
+    # lizard the lexer is rejection-tolerant, so the reachable
+    # parse-failed state is the analyzer-missing one (the pinned
+    # analyzers not installed - the exact scenario the tool-versions
+    # gate names). Simulate it: one eligible file the lexer cannot
+    # measure must be named, never vanish into a clean ratio.
+    import slop_density
+
+    files = flat_modules(14)
+    files["mystery.py"] = flat_modules(1)["flat0.py"]
+    real = slop_density.parse_file_facts
+
+    def rejecting(filename, text):
+        if filename.endswith("mystery.py"):
+            return None  # analyzer missing / lexer rejects
+        return real(filename, text)
+
+    monkeypatch.setattr(slop_density, "parse_file_facts", rejecting)
+    findings = scan(tmp_path, files)
+    hits = [f for f in findings if f.check == "analysis-coverage"]
+    assert len(hits) == 1
+    assert "1 parse-failed (`mystery.py`)" in hits[0].message
+    assert "14 measured" in hits[0].message
+    assert hits[0].path == "mystery.py"  # anchored at the failure
+
+
+def test_coverage_counts_unsupported_and_excluded_by_rule(tmp_path):
+    files = flat_modules(14)
+    # The observable unsupported population: extensions iter_files
+    # discovers (CODE_EXTS family) that no lexer covers and no
+    # documented exclusion names - .sh is the live example.
+    files["helper.sh"] = "#!/bin/sh\necho go\n"
+    files["README.md"] = "# docs\n"
+    files["test_widget.py"] = "def test_x():\n    assert go\n"
+    findings = scan(tmp_path, files)
+    hits = [f for f in findings if f.check == "analysis-coverage"]
+    assert len(hits) == 1
+    assert "1 unsupported language (`helper.sh`)" in hits[0].message
+    assert "excluded by rule" in hits[0].message
+
+
+def test_coverage_stays_silent_when_every_eligible_file_measured(tmp_path):
+    findings = scan(tmp_path, flat_modules(14))
+    assert not [f for f in findings if f.check == "analysis-coverage"]
+
+
+def test_registration_of_the_two_new_checks():
+    # dup-block-density: advisory, maintainability, remedy, budget.
+    for check in ("dup-block-density", "analysis-coverage"):
+        assert check in mod.CHECK_CATEGORIES
+        assert mod.CHECK_CATEGORIES[check] == "maintainability"
+        assert check in mod.REMEDIES
+    from slop_profiles import SHIPPED_BUDGETS, shipped_budget
+    from slop_density import DUP_BLOCK_DENSITY_BUDGET
+
+    assert SHIPPED_BUDGETS["dup-block-density"] == DUP_BLOCK_DENSITY_BUDGET
+    assert shipped_budget("dup-block-density") == DUP_BLOCK_DENSITY_BUDGET
