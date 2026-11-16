@@ -286,3 +286,27 @@ Not accepted as written: nothing. Two items needed the corrections
 recorded above (scheduled-run evidence, fingerprint baseline) and the
 threshold table gained two undocumented details; everything else
 checked out exactly as the audit stated it.
+
+
+## v2.18 - the trustworthiness round (audit-driven, 2026-11-17)
+
+An external audit inspected the implementation and named eight
+findings; six shipped, each reproduced against source before the fix:
+
+| # | Finding | Verdict | Fix | Commit |
+| - | ------- | ------- | --- | ------ |
+| A | JS phantom-import checks the package name, not bindings | Confirmed: 8/10 repro cases wrong | binding-aware import analysis, 7 regression tests | e72f3d0 |
+| B | profile budgets accepted for coupling/hotspot, never wired | Confirmed: engines had no budget input | both engines take budgets; byte-identical no-op | 15ba396 |
+| C | reliability rating is SQALE math on SonarQube's reliability label | Confirmed | severity-based grade, own documented weights; minutes become informational share | 0844980 |
+| D | duplication density is repeated-line counting, presented as clone detection | Confirmed | dup-block-density: contiguous 6+-line runs, own budget, calibrated 2.0% | ad13944 |
+| E | repo-wide metrics silently lose parse-failed/unsupported files | Confirmed | measure_corpus five-state coverage + analysis-coverage verdict | ad13944 |
+| G | snapshots scrape SARIF messages; healthy values lost | Confirmed | metrics-v1 structured document, extractor prefers it; SARIF blocking count was latent-zero, fixed | bc83864, cdb081b |
+| H | fixture benchmark proves outcomes, not accuracy | Confirmed by the docstrings themselves | accuracy harness + labeled corpus + clean controls + promotion rule | 761c310 |
+| - | watchdog pin grep misses the v2.8+ call shape | Confirmed: hosted #10/#11 failed, consumer green | parser accepts any master-ci pin + template_ref | b57e868 |
+
+Remaining rows (evidence-driven, in the audit's P2/P3 order):
+language-native symbol resolution (TypeScript compiler API, Roslyn,
+clang tooling) replaces the name-search heuristics as each language's
+accuracy evidence justifies it; corpus widening per
+benchmarks/accuracy/README.md; CI modularity and caching after the
+measurements are trusted.

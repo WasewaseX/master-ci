@@ -1460,3 +1460,73 @@ that publish their own template copy.
 
 Run it before pushing a workflow change, in any job, or as a repo
 hygiene step: `python scripts/doctor.py` (add `--json` for CI use).
+
+
+## v2.18 - the trustworthiness round: the audit's measurement fixes
+
+An external audit (2026-11-17) inspected the implementation, not the
+README, and named eight findings. Every one was reproduced against the
+source before the fix; six shipped in v2.18, each as its own reviewable
+commit with regression tests.
+
+- **Binding-aware phantom imports (`phantom-import`, js family):** the
+  old check deleted the import statement and searched for the package
+  name, so every shape that used the binding without spelling the
+  package string false-positived - 8 of 10 repro cases, including
+  side-effect imports, which bind nothing and are intentional. The
+  check now parses named lists (multi-line, trailing comma, alias,
+  `type` specifier), default and namespace clauses, CommonJS const and
+  destructured require, and TS import-equals; an import is a phantom
+  only when NONE of the bindings it binds appears outside the import
+  statements, and a shape the parser cannot trust is never flagged.
+- **Functional profile budgets (`high-coupling`, `hotspot-risk`):** the
+  profile layer accepted both budgets while the pipeline passed
+  overrides only to the density verdicts. Both engines take the same
+  optional budgets mapping; `budgets=None` and `{}` keep the shipped
+  verdicts byte for byte.
+- **Severity-based reliability rating (`reliability-rating`):** the
+  grade was remediation minutes over dev cost while carrying
+  SonarQube's reliability terminology - that math is a maintainability
+  rating. The grade now reads the dimension's severity counts
+  (blocking x 100 + advisory x 2, Master CI's own two-grade taxonomy,
+  bands documented as exact counts), and the priced minutes stay in the
+  message as informational remediation share. The debt ratio remains
+  the maintainability metric, where the SQALE math belongs.
+- **Block-clone density (`dup-block-density`):** duplication density
+  counted repeated lines and presented them as clone detection's
+  equivalent. A second, distinct ratio counts lines inside contiguous
+  runs of 6+ identical normalized lines, with its own budget (2.0%,
+  calibrated above the engine's own 0.80% self-scan value), profile
+  override and snapshot field. Bounded anchor pairing per identical-
+  line bucket; token/AST clone detection stays the language-native
+  roadmap row.
+- **Analysis coverage (`analysis-coverage`):** the new-code gate's
+  five-state taxonomy now rides with the whole-repo corpus.
+  `measure_corpus` classifies every file - measured, parse-failed
+  (named), unsupported language (named), excluded by rule (counted) -
+  and the verdict speaks whenever analysis was not total. The
+  template's own scan names its one unsupported file out loud.
+- **The structured metrics document (`--metrics-json`, schema
+  `metrics-v1`):** the snapshot bridge parsed values from SARIF finding
+  messages, so a metric below its threshold - a healthy measurement -
+  never reached the store. The document carries actual values with
+  measured/not-measured states plus the coverage section; the extractor
+  prefers it, SARIF stays the fallback. Same-run comparison also fixed
+  a latent bug: the bridge counted ZERO blocking findings from SARIF
+  since it shipped, because the writer stamps severity on the rule
+  descriptor, not on results.
+- **The accuracy benchmark (`scripts/accuracy_benchmark.py`):** 903
+  tests and 12/12 fixtures prove outcomes, not accuracy. The harness
+  judges labeled positives (the fixture manifests) and clean
+  negative-control projects (complete code with consumers - any
+  quality-dimension finding is a false positive), reports per-check
+  precision/recall, and states the promotion verdict out loud: every
+  check is advisory-only at this corpus size. Corpus-declared known FPs
+  stay visible with their reasons. Widening protocol:
+  `benchmarks/accuracy/README.md`.
+- **The canary watchdog's pin parser:** hosted watchdog runs #10/#11
+  (Nov 15-16) failed in Report pin lag while the consumer was green -
+  the grep matched only the pre-v2.8.0 call shape and pipefail turned
+  the miss into a step failure. The parser accepts any master-ci
+  reusable-workflow pin plus `template_ref`, and fails loudly with a
+  diagnostic that points at the parser, not the consumer.
