@@ -52,7 +52,8 @@ jobs:
       - name: Scan the template
         run: |
           rc=0
-          python3 scripts/ai_slop_detector.py . --require-parsers --sarif ai_integrity.sarif || rc=$?
+          python3 scripts/ai_slop_detector.py . --require-parsers \
+            --sarif ai_integrity.sarif --metrics-json metrics.json || rc=$?
           # exit 1 = the blocking gate tripped: the row still records -
           # a metric store that only kept good days would be a liar.
           # exit 2 = the scan could not run at all: fail closed.
@@ -70,7 +71,15 @@ jobs:
             # First run: the store branch is born empty, one orphan commit.
             git worktree add --orphan -b quality-store store
           fi
-          metrics=$(python3 scripts/slop_snapshot_extract.py --sarif ai_integrity.sarif)
+          # The structured document is the preferred source (v2.18,
+          # audit finding G): healthy below-threshold values reach the
+          # store instead of vanishing with the finding they never
+          # produced. The SARIF path stays as the fallback.
+          if [ -f metrics.json ]; then
+            metrics=$(python3 scripts/slop_snapshot_extract.py --metrics metrics.json)
+          else
+            metrics=$(python3 scripts/slop_snapshot_extract.py --sarif ai_integrity.sarif)
+          fi
           python3 scripts/slop_snapshots.py record --file store/snapshots.jsonl \
             --sha "$GITHUB_SHA" --ref "$GITHUB_REF_NAME" --project . --metrics "$metrics"
           python3 scripts/slop_snapshots.py trend --file store/snapshots.jsonl --last 10 \

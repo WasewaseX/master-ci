@@ -971,6 +971,7 @@ jobs:
             --require-parsers \
             --report-file ai_report.md \
             --sarif ai_integrity.sarif \
+            --metrics-json metrics.json \
             --annotate
           rc=$?
           if [ -f ai_report.md ]; then
@@ -996,12 +997,17 @@ jobs:
           category: ai-integrity
       - name: Upload AI-integrity SARIF artifact
         # The metric-snapshots job reads this artifact; the Security-tab
-        # upload above does not hand the file to other jobs.
+        # upload above does not hand the file to other jobs. The
+        # structured metrics document travels beside the SARIF (v2.18,
+        # audit finding G): it carries the healthy below-threshold
+        # values the SARIF messages cannot.
         if: always() && hashFiles('ai_integrity.sarif') != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ai-integrity-sarif
-          path: ai_integrity.sarif
+          path: |
+            ai_integrity.sarif
+            metrics.json
           if-no-files-found: ignore
 
   # ---------------------------------------------------------------------------
@@ -1285,7 +1291,11 @@ jobs:
       - name: Record the metric snapshot
         run: |
           metrics="{}"
-          if compgen -G 'sarif/*.sarif' >/dev/null; then
+          # The structured document is the preferred source (v2.18,
+          # audit finding G); SARIF stays the fallback.
+          if [ -f sarif/metrics.json ]; then
+            metrics=$(python3 _ci/scripts/slop_snapshot_extract.py --metrics sarif/metrics.json)
+          elif compgen -G 'sarif/*.sarif' >/dev/null; then
             metrics=$(python3 _ci/scripts/slop_snapshot_extract.py --sarif sarif/ai_integrity.sarif)
           fi
           python3 _ci/scripts/slop_snapshots.py record --file quality-store/snapshots.jsonl \
