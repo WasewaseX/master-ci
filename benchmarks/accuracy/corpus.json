@@ -1,0 +1,11 @@
+{
+  "schema": "accuracy-v1",
+  "description": "The accuracy corpus manifest: labeled positives live in fixtures/bench manifests; the clean_* directories are negative controls judged by scripts/accuracy_benchmark.py. known_fps records the false positives the controls deliberately carry - each with its reason, each visible in every report.",
+  "known_fps": [
+    {
+      "check": "debug-print",
+      "fixture": "clean_go",
+      "reason": "fmt.Println is a CLI's legitimate stdout report; the textual check cannot model output intent, so the rule stays advisory and is not promotion-ready until intent-aware evidence exists"
+    }
+  ]
+}

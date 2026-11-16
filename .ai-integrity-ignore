@@ -2,6 +2,11 @@
 # emoji padding - they exist to exercise the detector in CI. Do not scan.
 fixtures/
 #
+# The accuracy corpus (v2.18) is data for the accuracy harness, not code
+# under quality review: clean negative controls plus deliberately flawed
+# positives, judged by scripts/accuracy_benchmark.py. Do not scan.
+benchmarks/accuracy/
+#
 # The engine's own modules are split under the same budgets every consumer
 # gets (no scope-offs): scripts/ is a package of slop_*/mcp_*/fix_* modules,
 # each inside the 400-line file budget.

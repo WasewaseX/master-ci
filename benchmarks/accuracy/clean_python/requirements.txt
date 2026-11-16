@@ -1,0 +1,1 @@
+# no third-party dependencies; the standard library covers the domain
