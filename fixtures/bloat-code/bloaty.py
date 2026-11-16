@@ -522,4 +522,3 @@ def pad_helper_22(v):
     # return the same value
     return v
 # step 22b: nothing else happens here
-
