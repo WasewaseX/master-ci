@@ -358,6 +358,9 @@ def _repo_level_findings(
     `budgets` carries an analyzer profile's budget overrides (v2.17) so
     the density verdicts judge against the profile's lines, not the
     shipped constants; None keeps the shipped budgets byte-identical.
+    v2.18 (audit finding B): the coupling and hotspot verdicts take the
+    same overrides - every budget a profile accepts is functional, and
+    the shipped verdicts reproduce byte for byte when budgets is None.
     """
     findings: list[Finding] = []
     findings.extend(scan_duplicates(files, root, globs))
@@ -368,12 +371,12 @@ def _repo_level_findings(
     findings.extend(check_class_cohesion(root, files, globs))
     facts = measure(root, files, globs)
     coupling = measure_coupling(root, files, globs)
-    findings.extend(check_coupling_metrics(root, files, globs, facts=coupling))
+    findings.extend(check_coupling_metrics(root, files, globs, facts=coupling, budgets=budgets))
     if facts is not None:
         # The hotspot shares the one measured corpus and graph: churn
         # reads git once, complexity and dependents arrive pre-computed.
         churn, defects = churn_map(root)
-        findings.extend(check_hotspot_metrics(facts, coupling, churn, defects))
+        findings.extend(check_hotspot_metrics(facts, coupling, churn, defects, budgets=budgets))
         findings.extend(density_findings(facts, budgets=budgets))
     findings.extend(check_architecture_rules(root, files, globs))
     findings.extend(check_unknown_directives(root, files, globs))

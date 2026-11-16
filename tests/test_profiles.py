@@ -308,3 +308,91 @@ def test_scan_passes_profile_budgets_through_to_the_density_verdict(tmp_path):
     assert not [f for f in base if f.check == "complexity-density"]
     tight = scan(tmp_path, phrases, provenance=False, budgets={"complexity-density": 1})
     assert [f for f in tight if f.check == "complexity-density"]
+
+
+# --- v2.18, audit finding B: every accepted budget is functional ---------
+
+HUB_IMPORTS = "\n".join(f"import leaf{i}" for i in range(7))
+
+
+def _hub_repo(tmp_path: Path) -> None:
+    """Seven leaves plus a hub: 8 graph nodes, hub fan-out 7.
+
+    Under the shipped budget 30 the hub is silent; under a profile's 3
+    it must report - the profile budget the v2.17 engines ignored.
+    """
+    for i in range(7):
+        (tmp_path / f"leaf{i}.py").write_text(f"VALUE = {i}\n", encoding="utf-8")
+    (tmp_path / "hub.py").write_text(HUB_IMPORTS + "\n\nVALUE = 0\n", encoding="utf-8")
+
+
+def test_scan_passes_profile_budgets_through_to_the_coupling_verdict(tmp_path):
+    """The high-coupling budget is no longer accepted-then-ignored."""
+    from ai_slop_detector import scan
+    from slop_files import load_phrases
+
+    _hub_repo(tmp_path)
+    phrases = load_phrases()
+    base = scan(tmp_path, phrases, provenance=False)
+    assert not [f for f in base if f.check == "high-coupling"]
+    tight = scan(tmp_path, phrases, provenance=False, budgets={"high-coupling": 3})
+    hits = [f for f in tight if f.check == "high-coupling"]
+    assert hits and "budget 3" in hits[0].message
+
+
+def test_profile_budgets_flow_through_the_loaded_profile_document(tmp_path):
+    """End to end: a real profile JSON flips the coupling verdict."""
+    from ai_slop_detector import scan
+    from slop_files import load_phrases
+    from slop_profiles import load_profile
+
+    _hub_repo(tmp_path)
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text('{"name": "tight", "budgets": {"high-coupling": 3}}', encoding="utf-8")
+    profile = load_profile(profile_path)
+    phrases = load_phrases()
+    tight = scan(tmp_path, phrases, provenance=False, budgets=dict(profile.budgets))
+    hits = [f for f in tight if f.check == "high-coupling"]
+    assert hits and "budget 3" in hits[0].message
+
+
+def test_hotspot_engine_honors_the_profile_budget(tmp_path):
+    """The hotspot-risk budget is no longer accepted-then-ignored."""
+    from slop_coupling import measure_coupling
+    from slop_density import measure
+    from slop_hotspot import check_hotspot_metrics
+
+    assignments = "\n".join(f"VALUE{i} = {i}" for i in range(130))
+    body = "def pick(a, b):\n    if a > b:\n        return a\n    return b\n"
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    for name in ("m0.py", "m1.py"):
+        (pkg / name).write_text(assignments + "\n" + body, encoding="utf-8")
+    files = sorted(tmp_path.rglob("*.py"))
+    facts = measure(tmp_path, files, [])
+    coupling = measure_coupling(tmp_path, files, [])
+    churn = {"pkg/m0.py": 1}
+    base = check_hotspot_metrics(facts, coupling, churn, {})
+    assert base == []  # risk 2 sits far under the shipped 1200
+    tight = check_hotspot_metrics(facts, coupling, churn, {}, budgets={"hotspot-risk": 1})
+    assert tight and "budget 1" in tight[0].message
+    assert tight[0].message != ""
+
+
+def test_none_and_empty_budgets_keep_shipped_verdicts_byte_identical(tmp_path):
+    """Finding B's no-behavior-change guarantee for profile-less callers."""
+    from ai_slop_detector import scan
+    from slop_coupling import check_coupling_metrics, measure_coupling
+    from slop_files import load_phrases
+
+    _hub_repo(tmp_path)
+    files = sorted(tmp_path.rglob("*.py"))
+    coupling = measure_coupling(tmp_path, files, [])
+    phrases = load_phrases()
+    no_arg = check_coupling_metrics(tmp_path, files, [], facts=coupling)
+    none_budgets = check_coupling_metrics(tmp_path, files, [], facts=coupling, budgets=None)
+    empty_budgets = check_coupling_metrics(tmp_path, files, [], facts=coupling, budgets={})
+    assert [f.message for f in no_arg] == [f.message for f in none_budgets]
+    assert [f.message for f in no_arg] == [f.message for f in empty_budgets]
+    # The shipped budget number, not a profile's, renders in the message.
+    assert not [f for f in scan(tmp_path, phrases, provenance=False) if f.check == "high-coupling"]

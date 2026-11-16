@@ -41,6 +41,7 @@ the report is stable run to run.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -147,12 +148,14 @@ def _bounded(offenders: list[str]) -> str:
     return head
 
 
-def _high_coupling_finding(over: list[tuple[str, int]]) -> Finding:
+def _high_coupling_finding(
+    over: list[tuple[str, int]], budget: float = COUPLING_FAN_OUT_BUDGET
+) -> Finding:
     """One finding for the whole scan: worst fan-out offender, ranked proof."""
     worst_path, worst_out = over[0]
     ranked = [f"{path} {count}" for path, count in over]
     message = (
-        f"coupling fan-out {worst_out} (budget {COUPLING_FAN_OUT_BUDGET}): "
+        f"coupling fan-out {worst_out} (budget {budget:g}): "
         f"{worst_path} imports {worst_out} in-repo modules; "
         f"worst offenders: {_bounded(ranked)}"
     )
@@ -186,13 +189,21 @@ def _hub_finding(facts: CouplingFacts, hubs: list[tuple[str, int, float]]) -> Fi
 
 
 def check_coupling_metrics(
-    root: Path, files: list[Path], globs: list[str], facts: CouplingFacts | None = None
+    root: Path,
+    files: list[Path],
+    globs: list[str],
+    facts: CouplingFacts | None = None,
+    budgets: Mapping[str, float] | None = None,
 ) -> list[Finding]:
     """The two coupling verdicts: advisory, one finding each, over budget only.
 
     `facts` is the pipeline's one measured graph, computed once and
     shared with the hotspot ranking; when it is not handed over the
     graph is built here, so direct callers keep the old signature.
+    `budgets` carries an analyzer profile's budget overrides (v2.18,
+    audit finding B: the profile layer accepted a high-coupling budget
+    the engine silently ignored); None keeps the shipped constant, so
+    the shipped verdict and message are reproduced byte for byte.
     """
     if not root.is_dir():
         return []
@@ -200,7 +211,12 @@ def check_coupling_metrics(
         facts = measure_coupling(root, files, globs)
     if facts is None:
         return []
-    over = [item for item in facts.worst_fan_out if item[1] > COUPLING_FAN_OUT_BUDGET]
+    budget = (
+        COUPLING_FAN_OUT_BUDGET
+        if budgets is None
+        else budgets.get("high-coupling", COUPLING_FAN_OUT_BUDGET)
+    )
+    over = [item for item in facts.worst_fan_out if item[1] > budget]
     hubs = [
         item
         for item in facts.hubs
@@ -208,7 +224,7 @@ def check_coupling_metrics(
     ]
     findings: list[Finding] = []
     if over:
-        findings.append(_high_coupling_finding(over))
+        findings.append(_high_coupling_finding(over, budget))
     if hubs:
         findings.append(_hub_finding(facts, hubs))
     return findings

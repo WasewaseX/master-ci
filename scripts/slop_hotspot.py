@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -190,11 +191,11 @@ def _render_hotspots(scored: tuple[Row, ...]) -> str:
     return head
 
 
-def _hotspot_finding(hotspot: HotspotFacts) -> Finding:
+def _hotspot_finding(hotspot: HotspotFacts, budget: float = HOTSPOT_RISK_BUDGET) -> Finding:
     """One finding for the whole scan: hottest file, ranked proof."""
     rel, risk, touches, fixes, ccn, fan_in = hotspot.scored[0]
     message = (
-        f"hotspot risk {risk:g} (budget {HOTSPOT_RISK_BUDGET}): "
+        f"hotspot risk {risk:g} (budget {budget:g}): "
         f"{rel} - {touches} commits ({fixes} fix commits) "
         f"x complexity {ccn} x {fan_in} dependents; "
         f"hottest: {_render_hotspots(hotspot.scored)}"
@@ -214,16 +215,24 @@ def check_hotspot_metrics(
     coupling: CouplingFacts | None,
     churn: dict[str, int],
     defects: dict[str, int],
+    budgets: Mapping[str, float] | None = None,
 ) -> list[Finding]:
     """The hotspot verdict: advisory, one finding, over budget only.
 
     `facts` and `coupling` come from the pipeline's one measured corpus
     and import graph; `churn` and `defects` come from churn_map over
-    the same root, so every term prices the same files.
+    the same root, so every term prices the same files. `budgets`
+    carries an analyzer profile's budget overrides (v2.18, audit
+    finding B: the profile layer accepted a hotspot-risk budget the
+    engine silently ignored); None keeps the shipped constant, so the
+    shipped verdict and message are reproduced byte for byte.
     """
     if facts.exec_lines < MIN_CORPUS_LINES:
         return []
+    budget = (
+        HOTSPOT_RISK_BUDGET if budgets is None else budgets.get("hotspot-risk", HOTSPOT_RISK_BUDGET)
+    )
     hotspot = measure_hotspot(facts, coupling, churn, defects)
-    if not hotspot.scored or hotspot.max_risk <= HOTSPOT_RISK_BUDGET:
+    if not hotspot.scored or hotspot.max_risk <= budget:
         return []
-    return [_hotspot_finding(hotspot)]
+    return [_hotspot_finding(hotspot, budget)]
