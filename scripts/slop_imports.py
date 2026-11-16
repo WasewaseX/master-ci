@@ -15,6 +15,42 @@ from slop_patterns import NODE_BUILTINS, PY_IMPORT_ALIASES, SKIP_DIRS, STD_LIB_N
 # Scoped suppression on an import line (ruff/flake8 F401 convention).
 _NOQA_RE = re.compile(r"#\s*noqa\b")
 
+# --- JavaScript/TypeScript binding-aware import shapes -------------------
+#
+# The phantom-import question for the js family is binding-aware: an
+# import is unused only when NONE of the names it binds is referenced
+# outside the import statements. The pre-v2.18 version deleted the
+# import statement and searched for the PACKAGE NAME in the rest of the
+# file, so `import { calculate } from "math-library"` followed by
+# `calculate(10)` was flagged - the binding was used, the package
+# string was not. Audit finding A (2026-11-17): 8 of 10 usage shapes
+# false-positived, including side-effect imports, which have no
+# bindings at all and are intentional by definition.
+
+# ES module import with a binding clause. The clause is everything
+# between `import` and `from`; [^'"] spans newlines for multi-line
+# named-import lists. `import type` (TS) carries the same bindings.
+_JS_IMPORT_RE = re.compile(
+    r"\bimport\s+(?:type\s+)?([^'\"]*?)\s*from\s*[\"']([^\"']+)[\"']", re.DOTALL
+)
+# Side-effect import - no bindings, never a phantom candidate.
+_JS_SIDE_EFFECT_RE = re.compile(r"\bimport\s+[\"']([^\"']+)[\"']")
+# CommonJS binding: const x = require("spec") (await tolerated).
+_JS_REQUIRE_RE = re.compile(
+    r"\b(?:const|let|var)\s+([^=]+?)\s*=\s*(?:await\s+)?"
+    r"require\s*\(\s*[\"']([^\"']+)[\"']\s*\)"
+)
+# TypeScript's import-equals form: import x = require("spec").
+_JS_TS_REQUIRE_RE = re.compile(
+    r"\bimport\s+([A-Za-z_$][\w$]*)\s*=\s*require\s*\(\s*[\"']([^\"']+)[\"']\s*\)"
+)
+
+_IDENTIFIER = r"[A-Za-z_$][\w$]*"
+_IDENTIFIER_RE = re.compile(rf"{_IDENTIFIER}")
+_DEFAULT_AS_RE = re.compile(rf"({_IDENTIFIER})\s+as\s+({_IDENTIFIER})")
+_STRING_AS_RE = re.compile(rf"[\"']([^\"']+)[\"']\s+as\s+({_IDENTIFIER})")
+_NAMESPACE_RE = re.compile(rf"\*\s*as\s+({_IDENTIFIER})")
+
 
 def check_phantom_imports(path: Path, text: str, family: str) -> list[Finding]:
     """Imports that are never used in the file (advisory)."""
@@ -84,33 +120,153 @@ def _py_phantom_imports(path: Path, text: str) -> list[Finding]:
     return _py_unused_import_findings(path, body, imported, lines)
 
 
+def _named_bindings(inner: str) -> list[str] | None:
+    """Bindings of a named-import list, or None when it is not understood.
+
+    A shape this module cannot parse confidently yields None: the import
+    is then never flagged (a false negative is a quieter failure than
+    the false positive this check just had its named audit fix).
+    """
+    items = inner.split(",")
+    if items and items[-1].strip() == "":
+        items = items[:-1]  # a trailing comma is legal JS, not a hole
+    out: list[str] = []
+    for item in items:
+        piece = item.strip()
+        if piece.startswith("type "):  # TS inline type specifier
+            piece = piece[5:].strip()
+        if _IDENTIFIER_RE.fullmatch(piece):
+            out.append(piece)
+            continue
+        default_as = _DEFAULT_AS_RE.fullmatch(piece)
+        if default_as:
+            out.append(default_as.group(2))
+            continue
+        string_as = _STRING_AS_RE.fullmatch(piece)
+        if string_as:
+            out.append(string_as.group(2))
+            continue
+        return None
+    return out or None
+
+
+def _clause_bindings(clause: str) -> list[str] | None:
+    """Bound names of one ES import clause, or None when not understood.
+
+    Handles the default binding, the named list, the namespace clause
+    and their combinations (`Default, { a as b }`, `Default, * as ns`).
+    """
+    clause = clause.strip()
+    if not clause:
+        return None
+    if clause.startswith("type "):  # import type { X } from "spec"
+        clause = clause[5:].strip()
+    bindings: list[str] = []
+    brace = re.search(r"\{([^}]*)\}", clause, re.DOTALL)
+    if brace is not None:
+        named = _named_bindings(brace.group(1))
+        if named is None:
+            return None
+        bindings.extend(named)
+        head = clause[: brace.start()].strip().rstrip(",").strip()
+        tail = clause[brace.end() :].strip()
+        if tail:
+            return None
+    else:
+        head = clause
+    for piece in (p.strip() for p in head.split(",")):
+        if not piece:
+            continue
+        namespace = _NAMESPACE_RE.fullmatch(piece)
+        if namespace:
+            bindings.append(namespace.group(1))
+            continue
+        if piece.startswith("*"):
+            return None
+        if _IDENTIFIER_RE.fullmatch(piece):
+            bindings.append(piece)
+            continue
+        return None
+    return bindings or None
+
+
+def _require_bindings(pattern: str) -> list[str] | None:
+    """Bound names of a require() destructuring pattern, or None."""
+    pattern = pattern.strip()
+    if pattern.startswith("{"):
+        return _named_bindings(pattern.strip("{}"))
+    if pattern.startswith("["):
+        inner = pattern.strip("[]").strip("{}")
+        out: list[str] = []
+        for item in inner.split(","):
+            piece = item.strip()
+            if not piece:
+                continue  # array holes are legal
+            if _IDENTIFIER_RE.fullmatch(piece):
+                out.append(piece)
+                continue
+            return None
+        return out or None
+    if _IDENTIFIER_RE.fullmatch(pattern):
+        return [pattern]
+    return None
+
+
+def _js_import_matches(text: str) -> list[tuple[re.Match[str], list[str] | None, str]]:
+    """Every import/require statement with its bindings and module spec.
+
+    The bindings list is None for side-effect imports (intentionally
+    binding-free) and for shapes the parser does not trust (never
+    flagged, per the conservative contract above).
+    """
+    matches: list[tuple[re.Match[str], list[str] | None, str]] = []
+    for match in _JS_IMPORT_RE.finditer(text):
+        matches.append((match, _clause_bindings(match.group(1)), match.group(2)))
+    for match in _JS_SIDE_EFFECT_RE.finditer(text):
+        matches.append((match, None, match.group(1)))
+    for match in _JS_REQUIRE_RE.finditer(text):
+        matches.append((match, _require_bindings(match.group(1)), match.group(2)))
+    for match in _JS_TS_REQUIRE_RE.finditer(text):
+        matches.append((match, [match.group(1)], match.group(2)))
+    return matches
+
+
 def _js_phantom_imports(path: Path, text: str) -> list[Finding]:
-    import_pattern = r"(?:import\s+[^'\"]*?from\s+|import\s+|require\s*\(\s*)[\"']([^\"']+)[\"']"
+    """Imports whose bindings are never referenced (advisory).
+
+    Binding-aware, per audit finding A: an import is flagged only when
+    NONE of the names it binds appears outside the file's import and
+    require statements. Relative, absolute and node: specs stay exempt
+    (the unused-dependency and dead-declaration checks own those); the
+    check remains file-scoped textual analysis - symbol resolution for
+    JS/TS is the language-native P2 roadmap row, not this check.
+    """
+    matches = _js_import_matches(text)
+    if not matches:
+        return []
+    body = text
+    for match, _bindings, _spec in matches:
+        body = body.replace(match.group(0), "")
     findings: list[Finding] = []
     seen_specs: set[str] = set()
-    for match in re.finditer(import_pattern, text):
-        spec = match.group(1)
-        if spec.startswith((".", "/", "node:")) or spec in seen_specs:
+    for match, bindings, spec in matches:
+        if bindings is None or spec.startswith((".", "/", "node:")) or spec in seen_specs:
             continue
         seen_specs.add(spec)
-        cleaned = re.sub(
-            r"(?:import\s+[^'\"]*?from\s+|import\s+|require\s*\(\s*)[\"']"
-            + re.escape(spec)
-            + r"[\"']",
-            "",
-            text,
-        )
-        if not re.search(rf"[\"']{re.escape(spec)}[\"']", cleaned) and spec not in cleaned:
-            findings.append(
-                _finding(
-                    path,
-                    text,
-                    match.start(),
-                    "phantom-import",
-                    f"import {spec!r} is never referenced",
-                    1,
-                )
+        if any(re.search(rf"\b{re.escape(b)}\b", body) for b in bindings):
+            continue
+        names = ", ".join(bindings[:4]) + ("..." if len(bindings) > 4 else "")
+        findings.append(
+            _finding(
+                path,
+                text,
+                match.start(),
+                "phantom-import",
+                f"import {spec!r} is never used: no binding ({names}) "
+                "appears outside the import statements",
+                1,
             )
+        )
     return findings[:5]
 
 
