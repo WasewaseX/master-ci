@@ -1,7 +1,7 @@
 """Regression tests for audit finding A (2026-11-17): binding-aware JS phantom imports.
 
 The pre-v2.18 check deleted the import statement and searched for the
-PACKAGE NAME in the rest of the file, so every shape that uses the
+PACKAGE NAME in the file's remaining text, so every shape that uses the
 imported binding but never spells the package string false-positived -
 8 of the 10 repro cases were wrong, including side-effect imports,
 which bind nothing and are intentional by definition. The contract

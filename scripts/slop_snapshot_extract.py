@@ -87,6 +87,23 @@ class ExtractError(Exception):
     """The SARIF cannot be read - maps to exit 2."""
 
 
+def _run_rule_severities(run: dict) -> dict[str, str]:
+    """One run's ruleId -> security-severity map from its rule table."""
+    tool = run.get("tool")
+    driver = tool.get("driver") if isinstance(tool, dict) else None
+    rules = driver.get("rules") if isinstance(driver, dict) else None
+    if not isinstance(rules, list):
+        return {}
+    severities: dict[str, str] = {}
+    for rule in rules:
+        if not isinstance(rule, dict) or not isinstance(rule.get("id"), str):
+            continue
+        properties = rule.get("properties")
+        if isinstance(properties, dict) and "security-severity" in properties:
+            severities[rule["id"]] = str(properties["security-severity"])
+    return severities
+
+
 def _rule_severities(sarif: dict) -> dict[str, str]:
     """ruleId -> security-severity, from the writer's rule metadata stamp.
 
@@ -98,19 +115,8 @@ def _rule_severities(sarif: dict) -> dict[str, str]:
     """
     severities: dict[str, str] = {}
     for run in sarif.get("runs") or []:
-        if not isinstance(run, dict):
-            continue
-        tool = run.get("tool")
-        driver = tool.get("driver") if isinstance(tool, dict) else None
-        rules = driver.get("rules") if isinstance(driver, dict) else None
-        if not isinstance(rules, list):
-            continue
-        for rule in rules:
-            if not isinstance(rule, dict) or not isinstance(rule.get("id"), str):
-                continue
-            properties = rule.get("properties")
-            if isinstance(properties, dict) and "security-severity" in properties:
-                severities[rule["id"]] = str(properties["security-severity"])
+        if isinstance(run, dict):
+            severities.update(_run_rule_severities(run))
     return severities
 
 

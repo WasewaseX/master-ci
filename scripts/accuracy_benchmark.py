@@ -289,44 +289,59 @@ def build_report(
     }
 
 
-def _render_table(report: dict[str, object]) -> str:
-    checks: dict[str, dict[str, object]] = report["checks"]  # type: ignore[assignment]
-    violations: list[dict[str, str]] = report["violations"]  # type: ignore[assignment]
-    corpus: dict[str, object] = report["corpus"]  # type: ignore[assignment]
-    negatives: list[str] = corpus["negative_controls"]  # type: ignore[assignment]
-    positives: str = str(corpus["positives"])
-    known_fps: list[dict[str, object]] = []
+def _collect_known_fps(checks: dict[str, dict[str, object]]) -> list[dict[str, object]]:
+    """The corpus-declared false positives, every check's details flattened."""
+    known: list[dict[str, object]] = []
     for cell in checks.values():
         raw = cell["false_positives"]
         if isinstance(raw, list):
             for item in raw:
                 if isinstance(item, dict) and item["known"]:
-                    known_fps.append(item)
+                    known.append(item)
+    return known
+
+
+def _stats_rows(checks: dict[str, dict[str, object]]) -> list[str]:
+    """One markdown row per check, precision and recall rendered."""
+    rows: list[str] = []
+    for check, cell in sorted(checks.items()):
+        precision = "n/a" if cell["precision"] is None else f"{cell['precision']:.2f}"
+        recall = "n/a" if cell["recall"] is None else f"{cell['recall']:.2f}"
+        rows.append(
+            f"| {check} | {cell['judged']} | {cell['tp']} | {cell['fp']} | {cell['tn']} | "
+            f"{cell['known_fp']} | {cell['fn']} | {precision} | {recall} | {cell['promotion']} |"
+        )
+    return rows
+
+
+def _render_table(report: dict[str, object]) -> str:
+    checks: dict[str, dict[str, object]] = report["checks"]  # type: ignore[assignment]
+    violations: list[dict[str, str]] = report["violations"]  # type: ignore[assignment]
+    corpus: dict[str, object] = report["corpus"]  # type: ignore[assignment]
+    negatives: list[str] = corpus["negative_controls"]  # type: ignore[assignment]
     lines = [
         "## Accuracy benchmark (audit finding H)",
         "",
         f"- dataset/engine version: {report['dataset_version']}",
-        f"- positives: {positives} (labeled manifests)",
+        f"- positives: {corpus['positives']} (labeled manifests)",
         "- negative controls: " + ", ".join(Path(p).name for p in negatives),
         "",
         "| check | judged | TP | FP | TN | known FP | FN | precision | recall | promotion verdict |",
         "|---|---|---|---|---|---|---|---|---|---|",
     ]
-    for check, cell in sorted(checks.items()):
-        precision = "n/a" if cell["precision"] is None else f"{cell['precision']:.2f}"
-        recall = "n/a" if cell["recall"] is None else f"{cell['recall']:.2f}"
-        lines.append(
-            f"| {check} | {cell['judged']} | {cell['tp']} | {cell['fp']} | {cell['tn']} | "
-            f"{cell['known_fp']} | {cell['fn']} | {precision} | {recall} | {cell['promotion']} |"
-        )
+    lines += _stats_rows(checks)
     if violations:
         lines += ["", "### Violations", ""]
         for item in violations:
             lines.append(f"- {item['check']} @ {item['fixture']}: {item['detail']}")
+    known_fps = _collect_known_fps(checks)
     if known_fps:
         lines += ["", "### Known false positives (visible, corpus-declared)", ""]
-        for item in known_fps:
-            lines.append(f"- {item['fixture']}: {item['message'][:110]} - {item['reason']}")
+    for known in known_fps:
+        fixture = str(known["fixture"])
+        message = str(known["message"])
+        reason = str(known["reason"])
+        lines.append(f"- {fixture}: {message[:110]} - {reason}")
     lines.append("")
     return "\n".join(lines)
 

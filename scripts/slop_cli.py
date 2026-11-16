@@ -60,7 +60,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
 
 from coverage_gate import coverage_gate_stage
 from slop_arch import ArchConfigError
@@ -69,7 +68,7 @@ from slop_files import load_phrases
 from slop_lizard import lizard_available
 from slop_metrics_doc import write_document
 from slop_model import enforce_structural_budget
-from slop_profiles import apply_profile_stage, profile_from_args
+from slop_profiles import ProfileSpec, apply_profile_stage, profile_from_args
 from slop_ratchet import (
     RatchetError,
     compare,
@@ -89,203 +88,6 @@ from slop_reporting import (
     write_report,
     write_sarif,
 )
-
-
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("root", type=Path, help="Repo path to scan")
-    _add_gate_args(parser)
-    _add_baseline_args(parser)
-    _add_profile_args(parser)
-    _add_coverage_args(parser)
-    return parser.parse_args(argv)
-
-
-def _add_gate_args(parser: argparse.ArgumentParser) -> None:
-    """The enforcement knobs: score caps, bloat escalation, provenance."""
-    parser.add_argument(
-        "--max-score",
-        type=float,
-        default=8,
-        help="Fail when the blocking score exceeds this value",
-    )
-    parser.add_argument(
-        "--max-slop-score",
-        type=float,
-        default=100.0,
-        help=(
-            "Fail when the AI-integrity dimension score (0=clean, 100=awful) "
-            "exceeds this ceiling; the scanaislop-style PR gate. Code-quality "
-            "dimensions are reported separately and never feed this gate. "
-            "Default 100 = off"
-        ),
-    )
-    parser.add_argument(
-        "--annotate",
-        action="store_true",
-        help="Emit GitHub ::warning annotations on stdout",
-    )
-    parser.add_argument(
-        "--enforce-bloat",
-        action="store_true",
-        help=(
-            "Escalate the structural-budget family (bloat-long-file, "
-            "bloat-param-count, bloat-comment-ratio, bloat-banner-comments, "
-            "god-function, deep-nesting, chained-dict-get) from advisory to "
-            "blocking: these findings feed the blocking score and fail the "
-            "build above --max-score. The PR gate for file-size, parameter, "
-            "comment-ratio and nesting budgets"
-        ),
-    )
-    parser.add_argument(
-        "--provenance",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help=(
-            "Report advisory provenance markers (ai-provenance) and the "
-            "repository test inventory (missing-tests); default on"
-        ),
-    )
-    parser.add_argument(
-        "--metrics-json",
-        type=Path,
-        default=None,
-        metavar="PATH",
-        help=(
-            "Write the structured metrics document (metrics-v1): actual "
-            "metric values incl. healthy below-threshold measurements, "
-            "per-metric measured/not-measured states, and the corpus's "
-            "analysis-coverage states. The snapshot store prefers this "
-            "over SARIF message scraping (audit finding G)"
-        ),
-    )
-    parser.add_argument(
-        "--require-parsers",
-        action="store_true",
-        help=(
-            "Fail closed (exit 2) when the lizard / tree-sitter analyzers "
-            "are not importable. CI jobs that promise parser-backed "
-            "dimensions install the pinned analyzers and demand them: a "
-            "parser-backed scan must never silently degrade to line "
-            "heuristics"
-        ),
-    )
-
-
-def _add_baseline_args(parser: argparse.ArgumentParser) -> None:
-    """The two baselines: fingerprint suppression and the quality ratchet."""
-    parser.add_argument(
-        "--ignore",
-        action="append",
-        default=[],
-        metavar="GLOB",
-        help="Skip files matching this glob (repeatable, also via .ai-integrity-ignore)",
-    )
-    parser.add_argument(
-        "--baseline",
-        default="",
-        help="Suppress findings recorded in this baseline file",
-    )
-    parser.add_argument(
-        "--write-baseline",
-        default="",
-        help="Record current findings as the new baseline and exit 0",
-    )
-    parser.add_argument(
-        "--quality-baseline",
-        default="",
-        metavar="PATH",
-        help=(
-            "Enforce the quality ratchet against this committed baseline: "
-            "per-project per-check finding counts and the finding "
-            "identities (schema v2); any per-project increase fails "
-            "(exit 1), a baseline that cannot be interpreted fails closed "
-            "(exit 2). Counts what the scan reports, before --baseline "
-            "suppression"
-        ),
-    )
-    parser.add_argument(
-        "--write-quality-baseline",
-        default="",
-        metavar="PATH",
-        help=(
-            "Record current per-project counts and identities as the new "
-            "quality-ratchet floor and exit 0 - the reviewed escape hatch "
-            "after paying debt or adopting a new check catalog (v1 "
-            "baselines are rejected; re-record)"
-        ),
-    )
-
-
-def _add_profile_args(parser: argparse.ArgumentParser) -> None:
-    """The analyzer profile: downgrade-only severities, scopes, budgets."""
-    parser.add_argument(
-        "--profile",
-        type=Path,
-        default=None,
-        metavar="PATH",
-        help=(
-            "Analyzer profile (JSON or YAML): downgrade-only per-check "
-            "severities, scope exclusions and budget overrides. Applied "
-            "before baselines, ratchets and gates; every silenced finding "
-            "is reported with its reason; a profile that cannot be "
-            "honored fails closed (exit 2)"
-        ),
-    )
-
-
-def _add_coverage_args(parser: argparse.ArgumentParser) -> None:
-    """The measured-coverage gates: floors, diff window, report paths."""
-    parser.add_argument(
-        "--report-file",
-        default="",
-        help="Write a markdown report to this path",
-    )
-    parser.add_argument(
-        "--sarif",
-        default="",
-        help="Write SARIF 2.1.0 results to this path (for the Security tab)",
-    )
-    parser.add_argument(
-        "--min-coverage",
-        type=float,
-        default=0.0,
-        help=(
-            "Fail (exit 1) when measured coverage in a coverage.json / "
-            "coverage.xml / cover.out report is below this percent. With "
-            "no report found the gate cannot be evaluated and the run "
-            "fails closed (exit 2). Default 0 = off"
-        ),
-    )
-    parser.add_argument(
-        "--min-new-coverage",
-        type=float,
-        default=0.0,
-        help=(
-            "Fail (exit 1) when coverage over the lines added vs "
-            "--diff-base is below this percent; per-file breaches are "
-            "reported as low-new-coverage findings. Default 0 = off"
-        ),
-    )
-    parser.add_argument(
-        "--diff-base",
-        default="",
-        metavar="REF",
-        help=(
-            "Git ref defining the new-code window (merge-base diff, e.g. "
-            "origin/main); required when --min-new-coverage is set"
-        ),
-    )
-    parser.add_argument(
-        "--coverage-report",
-        action="append",
-        default=[],
-        metavar="PATH",
-        help=(
-            "Coverage report to consume (repeatable); default: "
-            "auto-discover coverage.json, coverage.xml, cover.out at the root"
-        ),
-    )
 
 
 def _parser_guarantee(args: argparse.Namespace) -> int:
@@ -317,46 +119,75 @@ def _parser_guarantee(args: argparse.Namespace) -> int:
     return 2
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
+def _validate_request(args: argparse.Namespace) -> tuple[int, ProfileSpec | None]:
+    """Parser guarantee plus the profile gate; (exit, profile) out."""
     parser_exit = _parser_guarantee(args)
     if parser_exit:
-        return parser_exit
+        return parser_exit, None
     profile = profile_from_args(args)
     if profile is None:
-        return 2
+        return 2, None
     if args.enforce_bloat:
         # Registry mutation must precede the scan: Finding.__post_init__
         # resolves severity from the enforced set at construction time.
         enforce_structural_budget()
+    return 0, profile
+
+
+def _scan_stage(args: argparse.Namespace, profile: ProfileSpec) -> tuple[list, dict]:
+    """One scan with the profile's budgets; ArchConfigError propagates."""
     # Imported here, not at module top: ai_slop_detector re-exports main
     # from this module at its own import time, so a top-level import would
     # be a circular import. By the time main() runs, both modules are loaded.
     from ai_slop_detector import scan
 
-    phrases = load_phrases()
     metrics_bundle: dict = {}
+    findings = scan(
+        args.root,
+        load_phrases(),
+        extra_globs=args.ignore,
+        provenance=args.provenance,
+        budgets=profile.budgets or None,
+        metrics_out=metrics_bundle if args.metrics_json else None,
+    )
+    return findings, metrics_bundle
+
+
+def _metrics_stage(args: argparse.Namespace, findings: list, bundle: dict) -> bool:
+    """Write the structured metrics document; returns False on failure.
+
+    OSError fails closed at the caller: a requested metrics document
+    that cannot be written is a configuration error, never a silent
+    gap in the store.
+    """
+    if not args.metrics_json:
+        return True
     try:
-        findings = scan(
-            args.root,
-            phrases,
-            extra_globs=args.ignore,
-            provenance=args.provenance,
-            budgets=profile.budgets or None,
-            metrics_out=metrics_bundle if args.metrics_json else None,
-        )
+        write_document(args.metrics_json, findings, bundle)
+    except OSError as exc:
+        print(f"ai-integrity: metrics document rejected: {exc}", file=sys.stderr)
+        return False
+    return True
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    parser_exit, profile = _validate_request(args)
+    if parser_exit:
+        return parser_exit
+    if profile is None:
+        return 2
+    try:
+        findings, metrics_bundle = _scan_stage(args, profile)
     except ArchConfigError as exc:
         # Fail closed: a declared rule set that cannot be honored must
         # fail the run, not silently pass. Exit 2 = configuration error.
         print(f"ai-integrity: architecture config rejected: {exc}", file=sys.stderr)
         return 2
+
     findings, _ = apply_profile_stage(findings, profile)
-    if args.metrics_json:
-        try:
-            write_document(args.metrics_json, findings, metrics_bundle)
-        except OSError as exc:
-            print(f"ai-integrity: metrics document rejected: {exc}", file=sys.stderr)
-            return 2
+    if not _metrics_stage(args, findings, metrics_bundle):
+        return 2
     ratchet_exit = _quality_ratchet(args, findings)
     if ratchet_exit == 2 or (args.write_quality_baseline and ratchet_exit == 0):
         return ratchet_exit
@@ -450,3 +281,8 @@ def _quality_ratchet(args: argparse.Namespace, findings: list) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+# The argument surface lives in slop_cli_args (v2.18 budget split);
+# parse_args stays the single entry point, re-exported here.
+from slop_cli_args import parse_args  # noqa: E402,F401

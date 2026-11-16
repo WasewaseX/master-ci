@@ -48,6 +48,7 @@ stable run to run.
 from __future__ import annotations
 
 import ast
+from dataclasses import dataclass
 from pathlib import Path
 
 from slop_debt import DEV_MIN_PER_LINE, remediation_minutes
@@ -261,25 +262,32 @@ def _worst_checks(rated: list[Finding]) -> list[tuple[str, str]]:
     return [(check, where[check]) for check, _spent in ranked[:MAX_WORST_RENDER]]
 
 
-def _rating_finding(
-    facts: DensityFacts,
-    rated: list[Finding],
-    grade: str,
-    blocking: int,
-    advisory: int,
-    minutes: int,
-    share: float,
-) -> Finding:
+@dataclass(frozen=True)
+class RatingVerdict:
+    """The grade and everything the finding message renders as evidence."""
+
+    grade: str
+    blocking: int
+    advisory: int
+    minutes: int
+    share: float
+
+    @property
+    def score(self) -> int:
+        return weighted_score(self.blocking, self.advisory)
+
+
+def _rating_finding(facts: DensityFacts, rated: list[Finding], verdict: RatingVerdict) -> Finding:
     """Grade, counts, weighted score and worst checks as evidence."""
     anchor = "."
     if rated:
         anchor = max(sorted(rated, key=lambda f: f.path), key=remediation_minutes).path
     worst = ", ".join(f"{check} at {path}" for check, path in _worst_checks(rated))
     message = (
-        f"reliability rating {grade} ({blocking} blocking + {advisory} advisory, "
-        f"weighted {weighted_score(blocking, advisory)}; remediation share "
-        f"{share:.1f}% of dev cost): "
-        f"{_render_minutes(minutes)} across {len(rated)} reliability findings "
+        f"reliability rating {verdict.grade} ({verdict.blocking} blocking + "
+        f"{verdict.advisory} advisory, weighted {verdict.score}; remediation share "
+        f"{verdict.share:.1f}% of dev cost): "
+        f"{_render_minutes(verdict.minutes)} across {len(rated)} reliability findings "
         f"over {facts.exec_lines} executable lines; worst: {worst}"
     )
     return Finding(
@@ -310,4 +318,5 @@ def check_reliability_rating(facts: DensityFacts, findings: list[Finding]) -> li
         return []
     minutes = reliability_minutes(findings)
     share = 100 * minutes / (facts.exec_lines * DEV_MIN_PER_LINE)
-    return [_rating_finding(facts, rated, grade, blocking, advisory, minutes, share)]
+    verdict = RatingVerdict(grade, blocking, advisory, minutes, share)
+    return [_rating_finding(facts, rated, verdict)]

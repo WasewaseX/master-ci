@@ -340,18 +340,18 @@ def test_coverage_finds_parse_failures(tmp_path, monkeypatch):
     # analyzers not installed - the exact scenario the tool-versions
     # gate names). Simulate it: one eligible file the lexer cannot
     # measure must be named, never vanish into a clean ratio.
-    import slop_density
+    import slop_corpus
 
     files = flat_modules(14)
     files["mystery.py"] = flat_modules(1)["flat0.py"]
-    real = slop_density.parse_file_facts
+    real = slop_corpus.parse_file_facts
 
     def rejecting(filename, text):
         if filename.endswith("mystery.py"):
             return None  # analyzer missing / lexer rejects
         return real(filename, text)
 
-    monkeypatch.setattr(slop_density, "parse_file_facts", rejecting)
+    monkeypatch.setattr(slop_corpus, "parse_file_facts", rejecting)
     findings = scan(tmp_path, files)
     hits = [f for f in findings if f.check == "analysis-coverage"]
     assert len(hits) == 1
