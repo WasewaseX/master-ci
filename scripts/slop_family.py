@@ -36,9 +36,7 @@ JVM_IMPORT = re.compile(r"^\s*import\s+(?:static\s+)?([\w.]+)\s*;", re.MULTILINE
 # unwrap (the density verdict keeps its own aggregate) and the Scala
 # broad-catch clause.
 GO_PANIC = re.compile(r"\bpanic\s*\(")
-SCALA_BROAD_CATCH = re.compile(
-    r"case\s+(?:_\s*:|\w+\s*:)\s*(?:[\w.]+\.)?(?:Exception|Throwable)\b"
-)
+SCALA_BROAD_CATCH = re.compile(r"case\s+(?:_\s*:|\w+\s*:)\s*(?:[\w.]+\.)?(?:Exception|Throwable)\b")
 
 
 def check_jvm_slop(path: Path, text: str, family: str, rel: str) -> list[Finding]:
@@ -56,11 +54,16 @@ def check_jvm_slop(path: Path, text: str, family: str, rel: str) -> list[Finding
     if suffix == ".java":
         prints = len(JVM_DEBUG_PRINT.findall(text))
         if prints:
-            findings.append(Finding(
-                path=str(path), line=1, check="debug-print",
-                message=f"System.out debug output ({prints}x)",
-                weight=1, advisory=True,
-            ))
+            findings.append(
+                Finding(
+                    path=str(path),
+                    line=1,
+                    check="debug-print",
+                    message=f"System.out debug output ({prints}x)",
+                    weight=1,
+                    advisory=True,
+                )
+            )
         for match in JVM_BROAD_THROWS.finditer(text):
             findings.append(
                 _finding(
@@ -80,15 +83,14 @@ def check_jvm_slop(path: Path, text: str, family: str, rel: str) -> list[Finding
 def _scala_broad_catch(path: Path, text: str) -> list[Finding]:
     """Scala catch clauses handling Exception/Throwable wholesale.
 
-    Immediately-rethrowing clauses are exempt (recovery-neutral, the same
-    exemption redundant-try-catch grants). Advisory: the oracle reads one
-    clause line beyond the ``=>``, no more.
+    Rethrowing clauses are exempt (recovery-neutral, as redundant-try-catch
+    grants); the oracle reads one clause line beyond the ``=>``, no more.
     """
     if not path.suffix.lower() == ".scala":
         return []
     findings: list[Finding] = []
     for match in SCALA_BROAD_CATCH.finditer(text):
-        tail = text[match.end():match.end() + 80]
+        tail = text[match.end() : match.end() + 80]
         clause = tail.split("=>", 1)[-1].split("\n")[0] if "=>" in tail else ""
         if "throw" not in clause:
             findings.append(
@@ -241,7 +243,7 @@ def _go_library_panic(path: Path, text: str) -> list[Finding]:
         return []
     for match in GO_PANIC.finditer(text):
         line_start = text.rfind("\n", 0, match.start()) + 1
-        if text[line_start:match.start()].strip().startswith("//"):
+        if text[line_start : match.start()].strip().startswith("//"):
             continue
         return [
             _finding(

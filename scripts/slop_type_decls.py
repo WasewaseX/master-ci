@@ -18,9 +18,7 @@ from slop_files import is_ignored, read_text_lax
 from slop_model import Finding
 
 TS_TYPE_EXTS = {".ts", ".tsx", ".mts", ".cts"}
-EXPORTED_TYPE = re.compile(
-    r"\bexport\s+(?:interface\s+(\w+)\s*\{|type\s+(\w+)\s*=\s*)"
-)
+EXPORTED_TYPE = re.compile(r"\bexport\s+(?:interface\s+(\w+)\s*\{|type\s+(\w+)\s*=\s*)")
 NORMALIZE_WS = re.compile(r"\s+")
 STRIP_COMMENT = re.compile(r"//.*$|/\*.*?\*/", re.MULTILINE | re.DOTALL)
 
@@ -39,7 +37,7 @@ def _decl_body(text: str, start: int) -> str:
         elif text[idx] == "}":
             depth -= 1
             if depth == 0:
-                return text[start:idx + 1]
+                return text[start : idx + 1]
     return ""
 
 
@@ -78,23 +76,23 @@ def _dup_type_findings(groups: dict[tuple[str, str], list[str]]) -> list[Finding
             continue
         others = ", ".join(f"`{r}`" for r in distinct[1:4])
         more = "" if len(distinct) <= 4 else f" and {len(distinct) - 4} more"
-        findings.append(Finding(
-            path=distinct[0],
-            line=1,
-            check="duplicate-type-declaration",
-            message=(
-                f"exported type {name!r} declared with the same shape in "
-                f"{len(distinct)} files ({others}{more}) - one source of truth"
-            ),
-            weight=1,
-        ))
+        findings.append(
+            Finding(
+                path=distinct[0],
+                line=1,
+                check="duplicate-type-declaration",
+                message=(
+                    f"exported type {name!r} declared with the same shape in "
+                    f"{len(distinct)} files ({others}{more}) - one source of truth"
+                ),
+                weight=1,
+            )
+        )
         if len(findings) >= MAX_FINDINGS:
             break
     return findings
 
 
-def check_duplicate_type_decls(
-    root: Path, files: list[Path], globs: list[str]
-) -> list[Finding]:
+def check_duplicate_type_decls(root: Path, files: list[Path], globs: list[str]) -> list[Finding]:
     """Exported type/interface shapes held by two or more files."""
     return _dup_type_findings(_type_groups(root, files, globs))

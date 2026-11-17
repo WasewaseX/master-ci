@@ -43,9 +43,7 @@ CS_INDEX_LOOP = re.compile(
 CS_IF_COMPARE = re.compile(r"\b(?:if|else\s+if)\s*\(\s*(\w+)\s*==\s*[^)]+\)")
 CS_NOT_IMPLEMENTED = re.compile(r"\bthrow\s+new\s+NotImplementedException\s*\(")
 CS_NULL_FORGIVING = re.compile(r"(?<=[\w\)])!(?=[.\[\)\],;\s])")
-CS_SYNC_OVER_ASYNC = re.compile(
-    r"\.(?:Result\b|Wait\(\)|GetAwaiter\(\)\.GetResult\(\))"
-)
+CS_SYNC_OVER_ASYNC = re.compile(r"\.(?:Result\b|Wait\(\)|GetAwaiter\(\)\.GetResult\(\))")
 CS_PRAGMA_DISABLE = re.compile(r"^\s*#pragma\s+warning\s+disable\b(.*)$", re.MULTILINE)
 CS_SUPPRESS_MESSAGE = re.compile(r"\[SuppressMessage\(")
 CS_DOC_SUMMARY = re.compile(
@@ -89,13 +87,11 @@ def _catch_body(text: str, open_brace: int) -> str:
         elif ch == "}":
             depth -= 1
             if depth == 0:
-                return text[open_brace + 1:idx]
+                return text[open_brace + 1 : idx]
     return ""
 
 
-def check_csharp_slop(
-    path: Path, text: str, family: str, rel: str
-) -> list[Finding]:
+def check_csharp_slop(path: Path, text: str, family: str, rel: str) -> list[Finding]:
     """The C# column: one finder per rule, every finding advisory."""
     if family != "csharp":
         return []
@@ -123,16 +119,21 @@ def _cap(findings: list[Finding]) -> list[Finding]:
 
 
 def _async_void(path: Path, text: str) -> list[Finding]:
-    hits = [
-        m for m in CS_ASYNC_VOID.finditer(text)
-        if not m.group(1).startswith("On")
-    ]
-    return _cap([
-        _finding(path, text, m.start(), "csharp-async-void",
-                 f"async void {m.group(1)!r} - callers cannot await it and its "
-                 "exceptions crash the process", 1)
-        for m in hits
-    ])
+    hits = [m for m in CS_ASYNC_VOID.finditer(text) if not m.group(1).startswith("On")]
+    return _cap(
+        [
+            _finding(
+                path,
+                text,
+                m.start(),
+                "csharp-async-void",
+                f"async void {m.group(1)!r} - callers cannot await it and its "
+                "exceptions crash the process",
+                1,
+            )
+            for m in hits
+        ]
+    )
 
 
 def _broad_catch(path: Path, text: str) -> list[Finding]:
@@ -146,22 +147,34 @@ def _broad_catch(path: Path, text: str) -> list[Finding]:
         bare_rethrow = re.fullmatch(r"\s*(?:throw\s*;?\s*)", stripped or " ")
         if uses or bare_rethrow or not stripped.strip():
             continue
-        findings.append(_finding(
-            path, text, m.start(), "csharp-broad-catch",
-            "catch (Exception) handles every failure and never reads the "
-            "caught exception - handle the specific type it can recover from",
-            1,
-        ))
+        findings.append(
+            _finding(
+                path,
+                text,
+                m.start(),
+                "csharp-broad-catch",
+                "catch (Exception) handles every failure and never reads the "
+                "caught exception - handle the specific type it can recover from",
+                1,
+            )
+        )
     return _cap(findings)
 
 
 def _catch_rethrow_only(path: Path, code: str) -> list[Finding]:
-    return _cap([
-        _finding(path, code, m.start(), "csharp-empty-catch-rethrow",
-                 "catch block only rethrows - the handler changes nothing "
-                 "and adds nesting", 1)
-        for m in CS_CATCH_RETHROW_ONLY.finditer(code)
-    ])
+    return _cap(
+        [
+            _finding(
+                path,
+                code,
+                m.start(),
+                "csharp-empty-catch-rethrow",
+                "catch block only rethrows - the handler changes nothing and adds nesting",
+                1,
+            )
+            for m in CS_CATCH_RETHROW_ONLY.finditer(code)
+        ]
+    )
 
 
 def _console_leftover(path: Path, text: str, is_test: bool) -> list[Finding]:
@@ -171,55 +184,87 @@ def _console_leftover(path: Path, text: str, is_test: bool) -> list[Finding]:
     if not hits:
         return []
     first = CS_CONSOLE.search(text)
-    return [_finding(
-        path, text, first.start(), "csharp-console-leftover",
-        f"Console/Debug/Trace output ({len(hits)}x) in library code", 1,
-    )]
+    return [
+        _finding(
+            path,
+            text,
+            first.start(),
+            "csharp-console-leftover",
+            f"Console/Debug/Trace output ({len(hits)}x) in library code",
+            1,
+        )
+    ]
 
 
 def _linq_count(path: Path, code: str) -> list[Finding]:
-    return _cap([
-        _finding(path, code, m.start(), "csharp-linq-count",
-                 ".Count() walks the whole sequence to answer a yes/no "
-                 "question - use .Any() or the Count property", 1)
-        for m in CS_LINQ_COUNT.finditer(code)
-    ])
+    return _cap(
+        [
+            _finding(
+                path,
+                code,
+                m.start(),
+                "csharp-linq-count",
+                ".Count() walks the whole sequence to answer a yes/no "
+                "question - use .Any() or the Count property",
+                1,
+            )
+            for m in CS_LINQ_COUNT.finditer(code)
+        ]
+    )
 
 
 def _index_loop(path: Path, code: str) -> list[Finding]:
-    return _cap([
-        _finding(path, code, m.start(), "csharp-index-loop",
-                 f"index for-loop over .Length/.Count ({m.group(1)}) - a "
-                 "foreach reads more clearly when the index is bookkeeping",
-                 1)
-        for m in CS_INDEX_LOOP.finditer(code)
-    ])
+    return _cap(
+        [
+            _finding(
+                path,
+                code,
+                m.start(),
+                "csharp-index-loop",
+                f"index for-loop over .Length/.Count ({m.group(1)}) - a "
+                "foreach reads more clearly when the index is bookkeeping",
+                1,
+            )
+            for m in CS_INDEX_LOOP.finditer(code)
+        ]
+    )
 
 
 def _if_ladder(path: Path, code: str) -> list[Finding]:
     chains: dict[str, int] = {}
     for m in CS_IF_COMPARE.finditer(code):
         chains[m.group(1)] = chains.get(m.group(1), 0) + 1
-    return _cap([
-        _finding(path, code, code.find(f"{subject} =="),
-                 "csharp-if-ladder",
-                 f"{count} if/else-if branches compare {subject!r} against "
-                 "constants - a switch or dispatch table written longhand", 1)
-        for subject, count in sorted(chains.items(), key=lambda kv: -kv[1])
-        if count >= 4
-    ])
+    return _cap(
+        [
+            _finding(
+                path,
+                code,
+                code.find(f"{subject} =="),
+                "csharp-if-ladder",
+                f"{count} if/else-if branches compare {subject!r} against "
+                "constants - a switch or dispatch table written longhand",
+                1,
+            )
+            for subject, count in sorted(chains.items(), key=lambda kv: -kv[1])
+            if count >= 4
+        ]
+    )
 
 
 def _drop_comments(code: str) -> str:
     """Comment text blanked, newlines kept - line numbers stay true."""
-    return re.sub(r"//[^\n]*", lambda m: " " * len(m.group(0)), re.sub(
-        r"/\*[\s\S]*?\*/", lambda m: re.sub(r"[^\n]", " ", m.group(0)), code,
-    ))
+    return re.sub(
+        r"//[^\n]*",
+        lambda m: " " * len(m.group(0)),
+        re.sub(
+            r"/\*[\s\S]*?\*/",
+            lambda m: re.sub(r"[^\n]", " ", m.group(0)),
+            code,
+        ),
+    )
 
 
-CONCAT_TOKEN = re.compile(
-    r"\{|\}|\b(?:for|foreach|while)\s*\(|\b(\w+)\s*\+=\s*(?:\$?)\""
-)
+CONCAT_TOKEN = re.compile(r"\{|\}|\b(?:for|foreach|while)\s*\(|\b(\w+)\s*\+=\s*(?:\$?)\"")
 
 
 def _step_scope(token: str, depth: int, loop_bodies: list[int]) -> tuple[int, list[int]]:
@@ -248,58 +293,98 @@ def _concat_in_loop(path: Path, text: str) -> list[Finding]:
     for m in CONCAT_TOKEN.finditer(clean):
         depth, loop_bodies = _step_scope(m.group(0), depth, loop_bodies)
         if m.group(1) and loop_bodies and loop_bodies[-1] <= depth:
-            findings.append(_finding(
-                path, clean, m.start(), "csharp-string-concat-in-loop",
-                f"string built with += inside a loop ({m.group(1)!r}) - "
-                "quadratic reallocation; use StringBuilder", 1,
-            ))
+            findings.append(
+                _finding(
+                    path,
+                    clean,
+                    m.start(),
+                    "csharp-string-concat-in-loop",
+                    f"string built with += inside a loop ({m.group(1)!r}) - "
+                    "quadratic reallocation; use StringBuilder",
+                    1,
+                )
+            )
     return _cap(findings)
 
 
 def _not_implemented(path: Path, text: str) -> list[Finding]:
-    return _cap([
-        _finding(path, text, m.start(), "csharp-not-implemented",
-                 "NotImplementedException stub - compiles, fails at runtime", 1)
-        for m in CS_NOT_IMPLEMENTED.finditer(text)
-    ])
+    return _cap(
+        [
+            _finding(
+                path,
+                text,
+                m.start(),
+                "csharp-not-implemented",
+                "NotImplementedException stub - compiles, fails at runtime",
+                1,
+            )
+            for m in CS_NOT_IMPLEMENTED.finditer(text)
+        ]
+    )
 
 
 def _null_forgiving(path: Path, code: str) -> list[Finding]:
-    return _cap([
-        _finding(path, code, m.start(), "csharp-null-forgiving",
-                 "null-forgiving ! silences the nullable warning without "
-                 "checking anything", 1)
-        for m in CS_NULL_FORGIVING.finditer(code)
-    ])
+    return _cap(
+        [
+            _finding(
+                path,
+                code,
+                m.start(),
+                "csharp-null-forgiving",
+                "null-forgiving ! silences the nullable warning without checking anything",
+                1,
+            )
+            for m in CS_NULL_FORGIVING.finditer(code)
+        ]
+    )
 
 
 def _sync_over_async(path: Path, text: str) -> list[Finding]:
-    return _cap([
-        _finding(path, text, m.start(), "csharp-sync-over-async",
-                 "blocking on a Task - ties up the thread and can deadlock "
-                 "under a synchronization context", 1)
-        for m in CS_SYNC_OVER_ASYNC.finditer(text)
-    ])
+    return _cap(
+        [
+            _finding(
+                path,
+                text,
+                m.start(),
+                "csharp-sync-over-async",
+                "blocking on a Task - ties up the thread and can deadlock "
+                "under a synchronization context",
+                1,
+            )
+            for m in CS_SYNC_OVER_ASYNC.finditer(text)
+        ]
+    )
 
 
 def _suppressed_warning(path: Path, text: str) -> list[Finding]:
     findings: list[Finding] = []
     for m in CS_PRAGMA_DISABLE.finditer(text):
         if not re.search(r"//\s*\S", m.group(1)):
-            findings.append(_finding(
-                path, text, m.start(), "csharp-suppressed-warning",
-                "warning suppression without a reason comment - the finding "
-                "is hidden and nobody knows why", 1,
-            ))
+            findings.append(
+                _finding(
+                    path,
+                    text,
+                    m.start(),
+                    "csharp-suppressed-warning",
+                    "warning suppression without a reason comment - the finding "
+                    "is hidden and nobody knows why",
+                    1,
+                )
+            )
     for m in CS_SUPPRESS_MESSAGE.finditer(text):
         close = text.find(")]", m.start())
-        scope = text[m.start():close if close != -1 else m.start() + 200]
+        scope = text[m.start() : close if close != -1 else m.start() + 200]
         if "Justification" not in scope:
-            findings.append(_finding(
-                path, text, m.start(), "csharp-suppressed-warning",
-                "[SuppressMessage] without a Justification - the analyzer "
-                "finding is hidden", 1,
-            ))
+            findings.append(
+                _finding(
+                    path,
+                    text,
+                    m.start(),
+                    "csharp-suppressed-warning",
+                    "[SuppressMessage] without a Justification - the analyzer finding is hidden",
+                    1,
+                )
+            )
     return _cap(findings)
 
 
@@ -309,12 +394,18 @@ def _redundant_doc_comment(path: Path, text: str) -> list[Finding]:
         phrase = m.group(1).lower()
         if not phrase.startswith(DOC_RESTATE_PHRASES):
             continue
-        tail = text[m.end():m.end() + 400]
+        tail = text[m.end() : m.end() + 400]
         decl = CS_MEMBER_DECL.search(tail)
         if decl:
-            findings.append(_finding(
-                path, text, m.start(), "csharp-redundant-doc-comment",
-                f"XML summary restates the member ({m.group(1)!r}) - it "
-                "documents nothing the signature does not already say", 1,
-            ))
+            findings.append(
+                _finding(
+                    path,
+                    text,
+                    m.start(),
+                    "csharp-redundant-doc-comment",
+                    f"XML summary restates the member ({m.group(1)!r}) - it "
+                    "documents nothing the signature does not already say",
+                    1,
+                )
+            )
     return _cap(findings)

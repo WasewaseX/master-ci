@@ -58,9 +58,9 @@ def test_csharp_async_void_flagged_task_and_handler_exempt(tmp_path):
 def test_csharp_broad_catch_flagged_when_exception_unused(tmp_path):
     code = (
         "try { Run(); }\n"
-        "catch (Exception ex) { Console.WriteLine(\"failed\"); }\n"
+        'catch (Exception ex) { Console.WriteLine("failed"); }\n'
         "try { Run(); }\n"
-        "catch (Exception ex) { logger.LogError(ex, \"failed\"); }\n"
+        'catch (Exception ex) { logger.LogError(ex, "failed"); }\n'
     )
     findings = scan(tmp_path, {"Svc.cs": code})
     hits = _hits(findings, "csharp-broad-catch")
@@ -73,7 +73,7 @@ def test_csharp_catch_rethrow_only_flagged(tmp_path):
 
 
 def test_csharp_console_leftover_not_in_tests(tmp_path):
-    code = "Console.WriteLine(\"hi\");\nDebug.WriteLine(\"hi\");\n"
+    code = 'Console.WriteLine("hi");\nDebug.WriteLine("hi");\n'
     findings = scan(tmp_path, {"Svc.cs": code}, sub="prod")
     assert _hits(findings, "csharp-console-leftover")
     tests = scan(tmp_path, {"tests/SvcTests.cs": code}, sub="tst")
@@ -105,8 +105,8 @@ def test_csharp_if_ladder_needs_four_branches(tmp_path):
 
 
 def test_csharp_string_concat_in_loop(tmp_path):
-    in_loop = "foreach (var p in parts) { html += \"<li>\"; }\n"
-    outside = "html += \"<li>\";\n"
+    in_loop = 'foreach (var p in parts) { html += "<li>"; }\n'
+    outside = 'html += "<li>";\n'
     assert _hits(scan(tmp_path, {"Svc.cs": in_loop}, sub="in"), "csharp-string-concat-in-loop")
     assert not _hits(scan(tmp_path, {"Svc.cs": outside}, sub="out"), "csharp-string-concat-in-loop")
 
@@ -115,9 +115,11 @@ def test_csharp_suppressed_warning_needs_a_reason(tmp_path):
     bare = "#pragma warning disable CS4014\nvar x = 1;\n"
     reasoned = "#pragma warning disable CS4014 // startup fire-and-forget\nvar x = 1;\n"
     assert _hits(scan(tmp_path, {"Svc.cs": bare}, sub="bare"), "csharp-suppressed-warning")
-    assert not _hits(scan(tmp_path, {"Svc.cs": reasoned}, sub="reasoned"), "csharp-suppressed-warning")
-    attr = "[SuppressMessage(\"Usage\", \"x:Y\")]\npublic void M() { }\n"
-    justified = "[SuppressMessage(\"Usage\", \"x:Y\", Justification = \"legacy\")]\npublic void M() { }\n"
+    assert not _hits(
+        scan(tmp_path, {"Svc.cs": reasoned}, sub="reasoned"), "csharp-suppressed-warning"
+    )
+    attr = '[SuppressMessage("Usage", "x:Y")]\npublic void M() { }\n'
+    justified = '[SuppressMessage("Usage", "x:Y", Justification = "legacy")]\npublic void M() { }\n'
     assert _hits(scan(tmp_path, {"Svc.cs": attr}, sub="attr"), "csharp-suppressed-warning")
     assert not _hits(scan(tmp_path, {"Svc.cs": justified}, sub="just"), "csharp-suppressed-warning")
 
@@ -163,7 +165,9 @@ def test_cpp_c_style_cast_only_in_cpp_files(tmp_path):
     cast = "int n = (int)total;\n"
     assert _hits(scan(tmp_path, {"x.cpp": cast}, sub="cpp"), "cpp-c-style-cast")
     assert not _hits(scan(tmp_path, {"x.c": cast}, sub="c"), "cpp-c-style-cast")
-    assert not _hits(scan(tmp_path, {"x.cpp": "static_cast<int>(total);"}, sub="named"), "cpp-c-style-cast")
+    assert not _hits(
+        scan(tmp_path, {"x.cpp": "static_cast<int>(total);"}, sub="named"), "cpp-c-style-cast"
+    )
 
 
 def test_cpp_define_constant_object_like_only(tmp_path):
@@ -195,13 +199,17 @@ def test_cpp_not_implemented_stub(tmp_path):
 def test_cpp_null_literal_only_in_cpp(tmp_path):
     assert _hits(scan(tmp_path, {"x.cpp": "Node* p = NULL;\n"}, sub="cpp"), "cpp-null-literal")
     assert not _hits(scan(tmp_path, {"x.h": "Node* p = NULL;\n"}, sub="h"), "cpp-null-literal")
-    assert not _hits(scan(tmp_path, {"x.cpp": "#define NULL ((void*)0)\n"}, sub="def"), "cpp-null-literal")
+    assert not _hits(
+        scan(tmp_path, {"x.cpp": "#define NULL ((void*)0)\n"}, sub="def"), "cpp-null-literal"
+    )
 
 
 def test_cpp_using_namespace_std_only_in_headers(tmp_path):
     line = "using namespace std;\n"
     assert _hits(scan(tmp_path, {"x.hpp": line}, sub="hpp"), "cpp-using-namespace-std-in-header")
-    assert not _hits(scan(tmp_path, {"x.cpp": line}, sub="cpp"), "cpp-using-namespace-std-in-header")
+    assert not _hits(
+        scan(tmp_path, {"x.cpp": line}, sub="cpp"), "cpp-using-namespace-std-in-header"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -252,11 +260,11 @@ def test_same_name_different_shape_not_flagged(tmp_path):
 
 
 def test_go_library_panic(tmp_path):
-    lib = "package store\n\nfunc Reset() { panic(\"nope\") }\n"
+    lib = 'package store\n\nfunc Reset() { panic("nope") }\n'
     assert _hits(scan(tmp_path, {"store.go": lib}, sub="lib"), "go-library-panic")
-    main = "package main\n\nfunc main() { panic(\"boom\") }\n"
+    main = 'package main\n\nfunc main() { panic("boom") }\n'
     assert not _hits(scan(tmp_path, {"main.go": main}, sub="main"), "go-library-panic")
-    test = "package store\n\nfunc TestX(t *T) { panic(\"x\") }\n"
+    test = 'package store\n\nfunc TestX(t *T) { panic("x") }\n'
     assert not _hits(scan(tmp_path, {"store_test.go": test}, sub="test"), "go-library-panic")
 
 
@@ -289,16 +297,33 @@ def test_round7_checks_are_advisory_and_categorized():
     from slop_categories import CHECK_CATEGORIES
 
     round7 = [
-        "csharp-async-void", "csharp-broad-catch", "csharp-console-leftover",
-        "csharp-empty-catch-rethrow", "csharp-if-ladder", "csharp-index-loop",
-        "csharp-linq-count", "csharp-not-implemented", "csharp-null-forgiving",
-        "csharp-redundant-doc-comment", "csharp-string-concat-in-loop",
-        "csharp-suppressed-warning", "csharp-sync-over-async",
-        "cpp-c-style-cast", "cpp-define-constant", "cpp-endl-in-stream",
-        "cpp-iostream-leftover", "cpp-manual-delete", "cpp-not-implemented",
-        "cpp-null-literal", "cpp-using-namespace-std-in-header",
-        "redundant-type-coercion", "hidden-fallback", "duplicate-type-declaration",
-        "go-library-panic", "rust-unwrap", "scala-broad-catch",
+        "csharp-async-void",
+        "csharp-broad-catch",
+        "csharp-console-leftover",
+        "csharp-empty-catch-rethrow",
+        "csharp-if-ladder",
+        "csharp-index-loop",
+        "csharp-linq-count",
+        "csharp-not-implemented",
+        "csharp-null-forgiving",
+        "csharp-redundant-doc-comment",
+        "csharp-string-concat-in-loop",
+        "csharp-suppressed-warning",
+        "csharp-sync-over-async",
+        "cpp-c-style-cast",
+        "cpp-define-constant",
+        "cpp-endl-in-stream",
+        "cpp-iostream-leftover",
+        "cpp-manual-delete",
+        "cpp-not-implemented",
+        "cpp-null-literal",
+        "cpp-using-namespace-std-in-header",
+        "redundant-type-coercion",
+        "hidden-fallback",
+        "duplicate-type-declaration",
+        "go-library-panic",
+        "rust-unwrap",
+        "scala-broad-catch",
     ]
     for check in round7:
         assert check in mod.ADVISORY_ONLY_CHECKS, check
@@ -309,7 +334,12 @@ def test_round7_checks_are_advisory_and_categorized():
 
 def test_new_modules_inside_the_own_budget_law():
     scripts = Path(__file__).resolve().parents[1] / "scripts"
-    for name in ("slop_csharp.py", "slop_cpp.py", "slop_ts_checks.py",
-                 "slop_type_decls.py", "slop_family.py"):
+    for name in (
+        "slop_csharp.py",
+        "slop_cpp.py",
+        "slop_ts_checks.py",
+        "slop_type_decls.py",
+        "slop_family.py",
+    ):
         non_blank = len([ln for ln in (scripts / name).read_text().splitlines() if ln.strip()])
         assert non_blank <= 400, f"{name}: {non_blank} non-blank lines"

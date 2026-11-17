@@ -240,9 +240,7 @@ REMEDIES = {
         "pattern exists so readers can rely on it"
     ),
     # scanaislop round-8 adoption: the C# column.
-    "csharp-async-void": (
-        "Return Task instead of async void; only event handlers may stay void"
-    ),
+    "csharp-async-void": ("Return Task instead of async void; only event handlers may stay void"),
     "csharp-broad-catch": (
         "Catch the specific exception type the code can recover from and "
         "use the caught exception when logging"
@@ -256,9 +254,7 @@ REMEDIES = {
     "csharp-if-ladder": (
         "Convert the constant-comparison ladder into a switch expression or dispatch table"
     ),
-    "csharp-index-loop": (
-        "Use foreach; keep the indexed for only when the index does real work"
-    ),
+    "csharp-index-loop": ("Use foreach; keep the indexed for only when the index does real work"),
     "csharp-linq-count": (
         "Use .Any() for existence; use the Count property, not .Count(), for sizes"
     ),
@@ -288,9 +284,7 @@ REMEDIES = {
     "cpp-define-constant": (
         "Use constexpr or const so the constant has type, scope and a debugger name"
     ),
-    "cpp-endl-in-stream": (
-        "Use '\\n'; flush explicitly only when the reader genuinely needs it"
-    ),
+    "cpp-endl-in-stream": ("Use '\\n'; flush explicitly only when the reader genuinely needs it"),
     "cpp-iostream-leftover": (
         "Remove the debug stream output or route it through the project's logger"
     ),
@@ -300,9 +294,7 @@ REMEDIES = {
     "cpp-not-implemented": (
         "Implement the path or remove it; the stub fails at runtime, not compile time"
     ),
-    "cpp-null-literal": (
-        "Use nullptr; NULL is an integer constant in disguise and mis-overloads"
-    ),
+    "cpp-null-literal": ("Use nullptr; NULL is an integer constant in disguise and mis-overloads"),
     "cpp-using-namespace-std-in-header": (
         "Qualify std:: names in the header or move the using into a translation unit"
     ),
@@ -320,10 +312,6 @@ REMEDIES = {
     "go-library-panic": (
         "Return an error; panic is for programmer error in main, not library failures"
     ),
-    "rust-unwrap": (
-        "Handle the Err/None or use expect with the invariant stated; unwrap panics"
-    ),
-    "scala-broad-catch": (
-        "Catch the specific exception type the recover clause can handle"
-    ),
+    "rust-unwrap": ("Handle the Err/None or use expect with the invariant stated; unwrap panics"),
+    "scala-broad-catch": ("Catch the specific exception type the recover clause can handle"),
 }

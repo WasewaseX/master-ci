@@ -1784,7 +1784,7 @@ jobs:
           while IFS= read -r dir; do
             [ -f "$dir/deny.toml" ] || cp _ci/configs/deny.toml "$dir/deny.toml"
           done < "$RUNNER_TEMP/rust-projects.txt"
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable (branch pin; no version tags published) # zizmor: ignore[ref-version-mismatch]
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable (branch pin; no version tags published) # zizmor: ignore[ref-version-mismatch]
         if: steps.detect.outputs.manifest == 'true'
         with:
           toolchain: ${{ inputs.rust_toolchain }}

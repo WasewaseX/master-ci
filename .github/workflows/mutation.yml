@@ -245,7 +245,7 @@ jobs:
         if: always() && contains(fromJSON(steps.detect.outputs.tools || '[]'), 'stryker')
         with:
           node-version: '22'
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable (branch pin; no version tags published) # zizmor: ignore[ref-version-mismatch]
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable (branch pin; no version tags published) # zizmor: ignore[ref-version-mismatch]
         if: always() && contains(fromJSON(steps.detect.outputs.tools || '[]'), 'cargo-mutants')
         with:
           toolchain: stable

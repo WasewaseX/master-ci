@@ -23,7 +23,7 @@ blocking promotion; the verdict column says which.
 
 ## Reproduce
 
-```
+```bash
 python3 scripts/accuracy_benchmark.py --json accuracy-report.json
 ```
 

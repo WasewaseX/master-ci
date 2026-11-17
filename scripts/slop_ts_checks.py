@@ -51,9 +51,15 @@ MAX_FINDINGS_PER_CHECK = 5
 
 def _drop_comments(text: str) -> str:
     """Comment text blanked, newlines kept - line numbers stay true."""
-    return re.sub(r"//[^\n]*", lambda m: " " * len(m.group(0)), re.sub(
-        r"/\*[\s\S]*?\*/", lambda m: re.sub(r"[^\n]", " ", m.group(0)), text,
-    ))
+    return re.sub(
+        r"//[^\n]*",
+        lambda m: " " * len(m.group(0)),
+        re.sub(
+            r"/\*[\s\S]*?\*/",
+            lambda m: re.sub(r"[^\n]", " ", m.group(0)),
+            text,
+        ),
+    )
 
 
 def check_ts_slop(path: Path, text: str, family: str, rel: str) -> list[Finding]:
@@ -94,12 +100,18 @@ def _coercions_for_param(
         if key in seen:
             continue
         seen.add(key)
-        out.append(_finding(
-            path, code, pos, "redundant-type-coercion",
-            f"String/Number/Boolean conversion repeats what the "
-            f"signature guarantees ({param}) - the type system already "
-            "guarantees it", 1,
-        ))
+        out.append(
+            _finding(
+                path,
+                code,
+                pos,
+                "redundant-type-coercion",
+                f"String/Number/Boolean conversion repeats what the "
+                f"signature guarantees ({param}) - the type system already "
+                "guarantees it",
+                1,
+            )
+        )
     return out
 
 
@@ -112,9 +124,7 @@ def _redundant_type_coercion(path: Path, text: str) -> list[Finding]:
     findings: list[Finding] = []
     seen: set = set()
     for lineno, param, primitive in _typed_params(code.splitlines()):
-        findings.extend(
-            _coercions_for_param(path, code, coercions[primitive], param, lineno, seen)
-        )
+        findings.extend(_coercions_for_param(path, code, coercions[primitive], param, lineno, seen))
     return findings[:MAX_FINDINGS_PER_CHECK]
 
 
@@ -142,9 +152,15 @@ def _hidden_fallback(path: Path, text: str) -> list[Finding]:
         if not hit and SAFE_DEFAULT_ASSIGN.fullmatch(body.strip()):
             hit = SAFE_DEFAULT_ASSIGN.search(body)
         if hit:
-            findings.append(_finding(
-                path, code, m.start(), "hidden-fallback",
-                "catch block answers a failed call with a safe-looking "
-                "default - the loud error becomes a quiet wrong answer", 1,
-            ))
+            findings.append(
+                _finding(
+                    path,
+                    code,
+                    m.start(),
+                    "hidden-fallback",
+                    "catch block answers a failed call with a safe-looking "
+                    "default - the loud error becomes a quiet wrong answer",
+                    1,
+                )
+            )
     return findings[:MAX_FINDINGS_PER_CHECK]
