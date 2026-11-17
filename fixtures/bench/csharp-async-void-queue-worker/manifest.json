@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "fire-and-forget queue drain: callers cannot await it and its exceptions crash the process",
+  "rule": "csharp-async-void",
+  "slug": "csharp-async-void-queue-worker"
+}

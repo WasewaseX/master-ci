@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "clean",
+  "reason": "nearest negative: expect() with a documented reason, not unwrap(), so the rule stays silent",
+  "rule": "rust-unwrap",
+  "slug": "rust-unwrap-expect-clean"
+}

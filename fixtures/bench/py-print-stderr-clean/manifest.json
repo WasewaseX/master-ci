@@ -1,0 +1,7 @@
+{
+  "engine": "slop_py_family",
+  "expected": "clean",
+  "reason": "nearest negative: sys.stderr.write, not print(), so the debug-print oracle stays silent",
+  "rule": "debug-print",
+  "slug": "py-print-stderr-clean"
+}

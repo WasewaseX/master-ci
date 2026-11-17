@@ -1,0 +1,7 @@
+{
+  "engine": "slop_py_family",
+  "expected": "detected",
+  "reason": "print() debug output inside a production helper module",
+  "rule": "debug-print",
+  "slug": "py-print-nested-helper"
+}

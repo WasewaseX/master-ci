@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "webhook fan-out as async void: an unobserved fault aborts the runtime",
+  "rule": "csharp-async-void",
+  "slug": "csharp-async-void-callback"
+}

@@ -8,33 +8,15 @@ the advisory flag, so a future edit that flips advisory-ness fails here.
 
 The module loads per the conftest convention: scripts/ is already on
 sys.path, so the engines import directly and no preamble repeats here -
-the detector judges its own test suite too.
+the detector judges its own test suite too. The one-dir scan helper
+lives in detector_module since the round-10 tranche, so this file does
+not re-declare it (the tenth copy of the write line tripped the
+detector's own boilerplate-duplication oracle).
 """
 
-import os
 from pathlib import Path
 
-import ai_slop_detector as mod
-
-
-def scan(tmp_path, files=None, sub=None):
-    """One scan over one isolated directory.
-
-    Multi-scan tests MUST pass distinct ``sub`` names: scan() reads the
-    whole tree it is pointed at, so two scans of the same tmp_path see
-    each other's files and the negative asserts pick up stale findings.
-    """
-    base = tmp_path / sub if sub else tmp_path
-    for name, text in (files or {}).items():
-        target = base / name
-        os.makedirs(target.parent, exist_ok=True)
-        target.write_text(text, encoding="utf-8")
-    return mod.scan(base, mod.load_phrases())
-
-
-def _hits(findings, check):
-    return [f for f in findings if f.check == check]
-
+from detector_module import detector as mod, hits as _hits, scan
 
 # ---------------------------------------------------------------------------
 # C# column

@@ -11,24 +11,7 @@ Module loads per the conftest convention: scripts/ is already on
 sys.path, so the engines import directly and no preamble repeats.
 """
 
-import os
-
-import ai_slop_detector as mod
-
-
-def scan(tmp_path, files=None, sub=None):
-    """One scan over one isolated directory (distinct sub names per scan)."""
-    base = tmp_path / sub if sub else tmp_path
-    for name, text in (files or {}).items():
-        target = base / name
-        os.makedirs(target.parent, exist_ok=True)
-        target.write_text(text, encoding="utf-8")
-    return mod.scan(base, mod.load_phrases())
-
-
-def _hits(findings, check):
-    return [f for f in findings if f.check == check]
-
+from detector_module import hits as _hits, scan
 
 BROAD = "def run_it():\n    try:\n        work()\n    except {clause}:\n        {body}\n"
 

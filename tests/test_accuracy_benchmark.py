@@ -81,10 +81,16 @@ def test_full_run_exit_zero_and_report_shape(tmp_path):
     assert checks["unused-declaration"]["tp"] >= 1
     assert checks["debug-print"]["known_fp"] == 1
     assert checks["debug-print"]["fp"] == 0
-    # The honesty rule: the seed corpus proves outcomes, not accuracy -
-    # no check may claim promotion evidence at this corpus size.
-    for cell in checks.values():
-        assert cell["promotion"].startswith("advisory-only"), cell
+    # The honesty rule: the corpus proves accuracy per check, not per
+    # project - exactly the columns the corpus has grown to five judged
+    # rows (the round-10 tranche) may claim promotion evidence, and no
+    # thinner column may. The pin is exact so silent drift fails here.
+    PROMOTION_FOUR = {"csharp-async-void", "csharp-broad-catch", "rust-unwrap", "debug-print"}
+    for check_id, cell in checks.items():
+        if check_id in PROMOTION_FOUR:
+            assert cell["promotion"] == "promotion-ready evidence", cell
+        else:
+            assert cell["promotion"].startswith("advisory-only"), cell
     # The table renders the verdict column and the known-FP section.
     assert "advisory-only" in output
     assert "Known false positives" in output

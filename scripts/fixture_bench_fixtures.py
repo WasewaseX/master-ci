@@ -197,3 +197,64 @@ def build_git_fixture(repo: Path) -> bool:
         if not (_git(repo, "add", "-A") and _git(repo, "commit", "--quiet", "-m", subject)):
             return False
     return True
+
+
+# --- shared per-fixture probes ----------------------------------------------
+# Moved here from fixture_benchmark.py when the round-10 wiring pushed the
+# runner over its own 400-line bloat budget: the runner keeps the
+# lizard-backed and family probes, the single-engine probes live here.
+
+from slop_abstraction import check_abstraction  # noqa: E402
+from slop_cycles import check_import_cycles  # noqa: E402
+from slop_dead import check_unused_declarations  # noqa: E402
+from slop_deps import check_unused_dependencies  # noqa: E402
+from slop_files import read_text_lax  # noqa: E402
+from slop_lcom4 import check_class_cohesion  # noqa: E402
+from slop_model import Finding  # noqa: E402
+from slop_test_redundancy import check_test_redundancy  # noqa: E402
+from slop_type_decls import check_duplicate_type_decls  # noqa: E402
+
+
+def py_pairs(root: Path, files: list[Path]) -> list[tuple[Path, str]]:
+    """(path, rel) for the fixture's Python sources, sorted by rel path."""
+    return [
+        (path, path.relative_to(root).as_posix()) for path in sorted(files) if path.suffix == ".py"
+    ]
+
+
+def probe_lcom4(root: Path, files: list[Path]) -> list[Finding]:
+    return check_class_cohesion(root, files, [])
+
+
+def probe_dead(root: Path, files: list[Path]) -> list[Finding]:
+    return check_unused_declarations(root, files, [])
+
+
+def probe_type_decls(root: Path, files: list[Path]) -> list[Finding]:
+    """The cross-file duplicate-type oracle over the fixture tree."""
+    return check_duplicate_type_decls(root, files, [])
+
+
+def probe_deps(root: Path, files: list[Path]) -> list[Finding]:
+    return check_unused_dependencies(root, files, [])
+
+
+def probe_cycles(root: Path, files: list[Path]) -> list[Finding]:
+    return check_import_cycles(root, files, [])
+
+
+def probe_abstraction(root: Path, files: list[Path]) -> list[Finding]:
+    """check_abstraction is per-file; aggregate over the fixture's .py files."""
+    findings: list[Finding] = []
+    for path, _rel in py_pairs(root, files):
+        findings.extend(check_abstraction(path, read_text_lax(path), "py"))
+    return findings
+
+
+def probe_test_redundancy(root: Path, files: list[Path]) -> list[Finding]:
+    """check_test_redundancy is per-file; aggregate over the fixture's .py files."""
+    findings: list[Finding] = []
+    for path, rel in py_pairs(root, files):
+        text = read_text_lax(path)
+        findings.extend(check_test_redundancy(path, text, rel))
+    return findings

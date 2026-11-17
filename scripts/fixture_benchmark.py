@@ -51,31 +51,42 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
-from fixture_bench_fixtures import build_git_fixture
+from fixture_bench_fixtures import (
+    build_git_fixture,
+    probe_abstraction,
+    probe_cycles,
+    probe_dead,
+    probe_deps,
+    probe_lcom4,
+    probe_test_redundancy,
+    probe_type_decls,
+    py_pairs,
+)
 from fixture_bench_round8 import _ROUND8_CLEAN_RULES, _ROUND8_DETECTED, _ROUND8_RENAMED
 from fixture_bench_round9 import ROUND9_CLEAN_RULES, ROUND9_DETECTED, ROUND9_RENAMED
-from slop_abstraction import check_abstraction
+from fixture_bench_round10 import (
+    ROUND10_FAMILY_CLEAN_RULES,
+    ROUND10_FAMILY_DETECTED,
+    ROUND10_FAMILY_RENAMED,
+    ROUND10_PY_CLEAN_RULES,
+    ROUND10_PY_DETECTED,
+    ROUND10_PY_RENAMED,
+)
 from slop_bloat import check_bloat
 from slop_comments import extract_comments
 from slop_cpp import check_cpp_slop
 from slop_csharp import check_csharp_slop
-from slop_cycles import check_import_cycles
-from slop_dead import check_unused_declarations
 from slop_density import measure as measure_density
-from slop_deps import check_unused_dependencies
 from slop_duplicates import scan_duplicates
 from slop_family import check_go, check_jvm_slop, check_rust
 from slop_files import read_text_lax
 from slop_hotspot import check_hotspot_metrics, churn_map
-from slop_lcom4 import check_class_cohesion
 from slop_lizard import lizard_available
 from slop_model import Finding
 from slop_patterns import FAMILY_OF_EXT
 from slop_py_checks import check_py_ast
 from slop_py_family import check_py_print_debug
-from slop_test_redundancy import check_test_redundancy
 from slop_ts_checks import check_ts_slop
-from slop_type_decls import check_duplicate_type_decls
 
 DEFAULT_FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "bench"
 MANIFEST_KEYS = {"slug", "rule", "engine", "expected", "reason"}
@@ -116,24 +127,9 @@ class RowResult:
 ProbeFn = Callable[[Path, list[Path]], list[Finding]]
 
 
-def _py_pairs(root: Path, files: list[Path]) -> list[tuple[Path, str]]:
-    """(path, rel) for the fixture's Python sources, sorted by rel path."""
-    return [
-        (path, path.relative_to(root).as_posix()) for path in sorted(files) if path.suffix == ".py"
-    ]
-
-
 def _probe_duplicates(root: Path, files: list[Path]) -> list[Finding]:
     del root  # the duplication oracle reads only the file list
     return scan_duplicates(files)
-
-
-def _probe_lcom4(root: Path, files: list[Path]) -> list[Finding]:
-    return check_class_cohesion(root, files, [])
-
-
-def _probe_dead(root: Path, files: list[Path]) -> list[Finding]:
-    return check_unused_declarations(root, files, [])
 
 
 def _probe_family_scan(root: Path, files: list[Path]) -> list[Finding]:
@@ -169,33 +165,12 @@ def _probe_family_scan(root: Path, files: list[Path]) -> list[Finding]:
     return findings
 
 
-def _probe_type_decls(root: Path, files: list[Path]) -> list[Finding]:
-    """The cross-file duplicate-type oracle over the fixture tree."""
-    return check_duplicate_type_decls(root, files, [])
-
-
-def _probe_deps(root: Path, files: list[Path]) -> list[Finding]:
-    return check_unused_dependencies(root, files, [])
-
-
-def _probe_cycles(root: Path, files: list[Path]) -> list[Finding]:
-    return check_import_cycles(root, files, [])
-
-
-def _probe_abstraction(root: Path, files: list[Path]) -> list[Finding]:
-    """check_abstraction is per-file; aggregate over the fixture's .py files."""
-    findings: list[Finding] = []
-    for path, _rel in _py_pairs(root, files):
-        findings.extend(check_abstraction(path, read_text_lax(path), "py"))
-    return findings
-
-
 def _probe_cyclomatic(root: Path, files: list[Path]) -> list[Finding]:
     """slop_bloat's budgets over the slop_lizard parse (high-cyclomatic here)."""
     if not lizard_available():
         raise Pending("lizard analyzer unavailable")
     findings: list[Finding] = []
-    for path, rel in _py_pairs(root, files):
+    for path, rel in py_pairs(root, files):
         text = read_text_lax(path)
         findings.extend(check_bloat(path, text, "py", rel, extract_comments(text, "py")))
     return findings
@@ -220,15 +195,6 @@ def _probe_hotspot(root: Path, files: list[Path]) -> list[Finding]:
         return check_hotspot_metrics(facts, None, churn, defects)
 
 
-def _probe_test_redundancy(root: Path, files: list[Path]) -> list[Finding]:
-    """check_test_redundancy is per-file; aggregate over the fixture's .py files."""
-    findings: list[Finding] = []
-    for path, rel in _py_pairs(root, files):
-        text = read_text_lax(path)
-        findings.extend(check_test_redundancy(path, text, rel))
-    return findings
-
-
 @dataclass(frozen=True)
 class Probe:
     """One fixture's engine contract: the finding engine and its check id.
@@ -246,37 +212,37 @@ class Probe:
 
 
 PROBES: dict[str, Probe] = {
-    "abstraction-chain": Probe("slop_abstraction", "forwarding-chain", _probe_abstraction),
+    "abstraction-chain": Probe("slop_abstraction", "forwarding-chain", probe_abstraction),
     "churn-hotspot": Probe("slop_hotspot", "hotspot-risk", _probe_hotspot),
-    "circular-dependencies": Probe("slop_cycles", "import-cycle", _probe_cycles),
+    "circular-dependencies": Probe("slop_cycles", "import-cycle", probe_cycles),
     "duplicate-implementation": Probe(
         "slop_duplicates", "boilerplate-duplication", _probe_duplicates
     ),
-    "dynamic-registration": Probe("slop_dead", "unused-declaration", _probe_dead),
-    "framework-wrapper": Probe("slop_abstraction", "no-behavior-class", _probe_abstraction),
+    "dynamic-registration": Probe("slop_dead", "unused-declaration", probe_dead),
+    "framework-wrapper": Probe("slop_abstraction", "no-behavior-class", probe_abstraction),
     "long-but-cohesive": Probe(
         "slop_bloat",
         "long-but-cohesive",
         _probe_cyclomatic,
         absent=("bloat-long-file",),
     ),
-    "low-cohesion": Probe("slop_lcom4", "low-cohesion", _probe_lcom4),
-    "redundant-tests": Probe("slop_test_redundancy", "redundant-test", _probe_test_redundancy),
+    "low-cohesion": Probe("slop_lcom4", "low-cohesion", probe_lcom4),
+    "redundant-tests": Probe("slop_test_redundancy", "redundant-test", probe_test_redundancy),
     "short-but-complex": Probe("slop_bloat", "high-cyclomatic", _probe_cyclomatic),
-    "unnecessary-dependency": Probe("slop_deps", "unused-dependency", _probe_deps),
-    "unused-function": Probe("slop_dead", "unused-declaration", _probe_dead),
+    "unnecessary-dependency": Probe("slop_deps", "unused-dependency", probe_deps),
+    "unused-function": Probe("slop_dead", "unused-declaration", probe_dead),
     # --- round-8 tranche: the family columns + the cross-file oracle ---
     # Data-driven: every detected slug's rule is its own name; the clean
     # rows and the cross-file oracle carry their explicit mapping.
 }
 PROBES["duplicate-type-declaration"] = Probe(
-    "slop_type_decls", "duplicate-type-declaration", _probe_type_decls
+    "slop_type_decls", "duplicate-type-declaration", probe_type_decls
 )
 for _SLUG in _ROUND8_DETECTED:
     PROBES[_SLUG] = Probe("slop_family", _ROUND8_RENAMED.get(_SLUG, _SLUG), _probe_family_scan)
 for _CLEAN_SLUG, _CLEAN_RULE in _ROUND8_CLEAN_RULES.items():
     if _CLEAN_SLUG.startswith("duplicate"):
-        PROBES[_CLEAN_SLUG] = Probe("slop_type_decls", _CLEAN_RULE, _probe_type_decls)
+        PROBES[_CLEAN_SLUG] = Probe("slop_type_decls", _CLEAN_RULE, probe_type_decls)
     else:
         PROBES[_CLEAN_SLUG] = Probe("slop_family", _CLEAN_RULE, _probe_family_scan)
 
@@ -304,6 +270,18 @@ def _probe_py_family(root: Path, files: list[Path]) -> list[Finding]:
 for _SLUG in ROUND9_DETECTED:
     PROBES[_SLUG] = Probe("slop_py_family", ROUND9_RENAMED.get(_SLUG, _SLUG), _probe_py_family)
 for _CLEAN_SLUG, _CLEAN_RULE in ROUND9_CLEAN_RULES.items():
+    PROBES[_CLEAN_SLUG] = Probe("slop_py_family", _CLEAN_RULE, _probe_py_family)
+
+# --- round-10 tranche: the accuracy corpus deepening ------------------------
+for _SLUG in ROUND10_FAMILY_DETECTED:
+    PROBES[_SLUG] = Probe(
+        "slop_family", ROUND10_FAMILY_RENAMED.get(_SLUG, _SLUG), _probe_family_scan
+    )
+for _SLUG in ROUND10_PY_DETECTED:
+    PROBES[_SLUG] = Probe("slop_py_family", ROUND10_PY_RENAMED.get(_SLUG, _SLUG), _probe_py_family)
+for _CLEAN_SLUG, _CLEAN_RULE in ROUND10_FAMILY_CLEAN_RULES.items():
+    PROBES[_CLEAN_SLUG] = Probe("slop_family", _CLEAN_RULE, _probe_family_scan)
+for _CLEAN_SLUG, _CLEAN_RULE in ROUND10_PY_CLEAN_RULES.items():
     PROBES[_CLEAN_SLUG] = Probe("slop_py_family", _CLEAN_RULE, _probe_py_family)
 
 

@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "clean",
+  "reason": "nearest negative: both handlers start with On, the UI event convention the oracle exempts",
+  "rule": "csharp-async-void",
+  "slug": "csharp-async-void-on-prefix-clean"
+}

@@ -101,7 +101,33 @@ ROUND9_SLUGS = {
     "py-print-main-guard-clean",
 }
 
-BENCH_SLUGS = SEED_SLUGS | ROUND8_SLUGS | ROUND9_SLUGS
+# Round-10 tranche: the accuracy corpus deepening - four checks pushed
+# to the five-judged-row promotion threshold, each with the
+# exemption-protecting clean row the corpus protocol asks for.
+ROUND10_SLUGS = {
+    "csharp-async-void-queue-worker",
+    "csharp-async-void-service-save",
+    "csharp-async-void-handler-pair",
+    "csharp-async-void-callback",
+    "csharp-async-void-on-prefix-clean",
+    "csharp-broad-catch-log-and-default",
+    "csharp-broad-catch-system-qualified",
+    "csharp-broad-catch-two-handlers",
+    "csharp-broad-catch-cache-fallback",
+    "csharp-broad-catch-logs-exception-clean",
+    "rust-unwrap-config-lookup",
+    "rust-unwrap-parse-result",
+    "rust-unwrap-lock-poison",
+    "rust-unwrap-before-cfg-test",
+    "rust-unwrap-expect-clean",
+    "py-print-service-module",
+    "py-print-model-module",
+    "py-print-nested-helper",
+    "py-print-multiple-sites",
+    "py-print-stderr-clean",
+}
+
+BENCH_SLUGS = SEED_SLUGS | ROUND8_SLUGS | ROUND9_SLUGS | ROUND10_SLUGS
 
 
 def run_cli(*args: str, cwd: Path = _ROOT) -> subprocess.CompletedProcess[str]:
@@ -123,10 +149,10 @@ def row_by_slug(rows: list[fb.BenchRow], slug: str) -> fb.BenchRow:
 
 
 def test_manifests_cover_the_benchmark_table():
-    """Every fixture dir declares exactly the table's slugs: seed + round-8."""
+    """Every fixture dir declares exactly the table's slugs: seed to round-10."""
     rows = fb.load_benchmark(BENCH)
     assert {row.slug for row in rows} == BENCH_SLUGS
-    assert len(rows) == 50
+    assert len(rows) == 70
     assert {row.slug for row in rows} >= SEED_SLUGS
     for row in rows:
         assert row.expected in ("detected", "clean", "pending")
@@ -208,10 +234,10 @@ def test_table_run_exits_zero_all_proven():
     assert code == 0
     assert lines[0].split() == ["slug", "rule", "expected", "observed", "verdict"]
     data_rows = lines[1:-1]
-    assert len(data_rows) == 50
+    assert len(data_rows) == 70
     slugs = [line.split()[0] for line in data_rows]
     assert slugs == sorted(slugs)
-    assert lines[-1] == "50 fixtures: 50 pass, 0 fail, 0 pending"
+    assert lines[-1] == "70 fixtures: 70 pass, 0 fail, 0 pending"
 
 
 def test_json_run_shape_and_summary():
@@ -221,8 +247,8 @@ def test_json_run_shape_and_summary():
     assert code == 0
     assert {fixture["slug"] for fixture in payload["fixtures"]} == BENCH_SLUGS
     summary = payload["summary"]
-    assert summary["total"] == 50
-    assert summary["pass"] == 50 and summary["fail"] == 0 and summary["pending"] == 0
+    assert summary["total"] == 70
+    assert summary["pass"] == 70 and summary["fail"] == 0 and summary["pending"] == 0
 
 
 def test_failed_declaration_exits_one(tmp_path):
@@ -302,7 +328,7 @@ def test_redundant_tests_row_and_its_distinct_test():
     assert result.verdict == "PASS"
     assert result.observed == "redundant-test"
     fixture_dir = BENCH / "redundant-tests"
-    findings = fb._probe_test_redundancy(fixture_dir, fb._fixture_files(fixture_dir))
+    findings = fb.probe_test_redundancy(fixture_dir, fb._fixture_files(fixture_dir))
     assert len(findings) == 1, "one finding per duplicate group"
     message = findings[0].message
     for twin in (

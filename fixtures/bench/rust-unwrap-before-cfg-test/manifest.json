@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "unwrap before the #[cfg(test)] marker is production code; the test half stays silent",
+  "rule": "rust-unwrap",
+  "slug": "rust-unwrap-before-cfg-test"
+}

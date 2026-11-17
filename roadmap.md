@@ -389,3 +389,46 @@ round began from was the sandbox missing `lizard` and
 regression - the full suite is green with the declared dependencies
 installed, and the sandbox is now provisioned to match CI.
 
+
+## Round-10 - the accuracy corpus deepening (2026-11-18)
+
+No new checks. The round the audit thesis asked for after the catalog
+closed: the promotion rule (`precision >= 0.8 across >= 5 judged rows`)
+was honest but unfalsifiable at one judged row per check - every
+verdict read `advisory-only (insufficient accuracy evidence)` because
+the corpus was a seed, and no round had grown it. Twenty labeled
+fixtures grew the corpus 46 -> 66 rows and pushed four checks to the
+threshold:
+
+| Check | Rows before | Rows after | Verdict after |
+| ----- | ----------- | ---------- | ------------- |
+| `csharp-async-void` | 1 | 5 | promotion-ready evidence |
+| `csharp-broad-catch` | 1 | 5 | promotion-ready evidence |
+| `rust-unwrap` | 1 | 5 | promotion-ready evidence |
+| `debug-print` | 1 | 5 | promotion-ready evidence |
+
+Each column gained realistic positives (the fire-and-forget queue
+worker, the log-and-default catch, the map-lookup unwrap, the service
+print) and the nearest negative its exemption logic needs protected
+(the On-prefix handler, the exception-reading catch, the documented
+`expect()`, the stderr writer). Labels were derived from the oracle
+sources before the engine ran, per the corpus protocol; all twenty
+rows passed on first judgment, so no label was rewritten to fit.
+
+The tranche tripped the engine's own laws twice - both fixed in kind:
+the round-10 wiring pushed `fixture_benchmark.py` to 415 non-blank
+lines against its 400-line bloat budget (the single-engine probes
+moved to `fixture_bench_fixtures.py`, runner back to 396), and the
+tenth copy of the contract-test scan helper crossed
+`boilerplate-duplication`'s 10-line threshold (the helper moved into
+`detector_module.py`, the one-place module the conftest docstring
+established; round-7/9/10 test files import it). The dogfood self-scan
+is back at the v2.18 baseline (blocking 0, 12 advisory findings, all
+dimensions A), the fixture benchmark reads 70/70 PASS, the suite is
+998 green, ruff clean.
+
+Left honest and open: promotion itself is a registry-law act, not an
+evidence accident - the four checks stay advisory until the
+maintainer promotes them with the corpus now able to object. The
+other 36 judged columns still sit below five rows; the next corpus
+rounds grow them the same way.

@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "clean",
+  "reason": "nearest negative: the handler reads the binding, so the broad-catch oracle stays silent",
+  "rule": "csharp-broad-catch",
+  "slug": "csharp-broad-catch-logs-exception-clean"
+}

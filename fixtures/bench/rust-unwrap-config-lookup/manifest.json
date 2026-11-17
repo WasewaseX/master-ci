@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "map lookup unwrap: a missing region key panics the process instead of an Err",
+  "rule": "rust-unwrap",
+  "slug": "rust-unwrap-config-lookup"
+}

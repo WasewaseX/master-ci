@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "lock().unwrap() turns a poisoned mutex into a panic on every waiter",
+  "rule": "rust-unwrap",
+  "slug": "rust-unwrap-lock-poison"
+}

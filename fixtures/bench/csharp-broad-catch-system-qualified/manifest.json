@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "System.Exception qualified form with the binding unused: the row type is silently swallowed",
+  "rule": "csharp-broad-catch",
+  "slug": "csharp-broad-catch-system-qualified"
+}

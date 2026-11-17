@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "the service method is async void so await cycles and fault paths escape every caller",
+  "rule": "csharp-async-void",
+  "slug": "csharp-async-void-service-save"
+}

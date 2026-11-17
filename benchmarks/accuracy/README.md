@@ -4,11 +4,16 @@ The fixture benchmark proves declared outcomes; the performance
 benchmark proves speed. Neither proves detection accuracy. This
 directory is the seed of the instrument that does:
 `scripts/accuracy_benchmark.py` judges every labeled row - the
-forty-six `fixtures/bench` manifests as positives (the v2.18 seed
-twelve plus the round-8 tranche: one labeled row per new check and,
-for the oracles whose exemption logic a future edit could break, the
-nearest negative - the named cast, the loud catch, the test-gated
-unwrap, the package-main panic, the drifted type shape), and the five
+sixty-six `fixtures/bench` manifests as positives (the v2.18 seed
+twelve, the round-8 tranche, the round-9 Python pair, and the
+round-10 deepening that pushed `csharp-async-void`,
+`csharp-broad-catch`, `rust-unwrap` and `debug-print` to the
+five-judged-row promotion threshold - one labeled row per new
+fixture and, for the oracles whose exemption logic a future edit
+could break, the nearest negative: the named cast, the loud catch,
+the test-gated unwrap, the package-main panic, the drifted type
+shape, the On-prefix handler, the exception-reading catch, the
+documented `expect()`, the stderr writer), and the five
 `clean_*` projects (python, js, go, csharp, cpp) as negative controls
 where any quality-dimension finding is a false
 positive - and reports per-check precision, recall and a promotion

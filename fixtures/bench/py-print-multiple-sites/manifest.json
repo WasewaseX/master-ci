@@ -1,0 +1,7 @@
+{
+  "engine": "slop_py_family",
+  "expected": "detected",
+  "reason": "three print() sites in one production module report as one counted finding",
+  "rule": "debug-print",
+  "slug": "py-print-multiple-sites"
+}

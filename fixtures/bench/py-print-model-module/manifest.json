@@ -1,0 +1,7 @@
+{
+  "engine": "slop_py_family",
+  "expected": "detected",
+  "reason": "print() debug output inside a production model factory",
+  "rule": "debug-print",
+  "slug": "py-print-model-module"
+}

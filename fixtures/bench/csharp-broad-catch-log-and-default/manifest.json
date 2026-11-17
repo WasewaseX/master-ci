@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "the catch names Exception, binds ex and never reads it: every failure masks as defaults",
+  "rule": "csharp-broad-catch",
+  "slug": "csharp-broad-catch-log-and-default"
+}

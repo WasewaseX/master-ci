@@ -421,6 +421,34 @@ Profile presets (quick / standard / strict / custom) only change the
   accuracy: `broad-except` and `debug-print` precision 1.00 recall 1.00
   over one judged row each, ruff clean.
 
+- **Round-10 accuracy deepening (no new checks):** the corpus, not the
+  registry, grew. The promotion rule demands five judged rows per
+  check before its verdict can read anything but `advisory-only`, and
+  every check sat at one or two. Twenty labeled fixtures
+  (`fixture_bench_round10.py`, 16 detected + 4 nearest negatives)
+  push `csharp-async-void`, `csharp-broad-catch`, `rust-unwrap` and
+  `debug-print` - the reliability-priced failure-path ids plus the
+  newest Python oracle - to that threshold: realistic rows (the queue
+  worker, the log-and-default catch, the map-lookup unwrap, the
+  service print) plus the exemption-protecting negatives (the
+  On-prefix handler, the exception-reading catch, the documented
+  `expect()`, the stderr writer). Labels were written from the oracle
+  sources before the engine ran; every row passed on first judgment,
+  so the corpus records no relabeled disagreement. Four checks now
+  read `promotion-ready evidence` (precision 1.00, recall 1.00,
+  judged 5) - the first ever - while registry law keeps every rule
+  advisory until the promotion is a deliberate act, not an accident
+  of evidence. Discipline kept: the tranche tripped the engine's own
+  laws twice and both were fixed in kind, not dodged - the round-10
+  wiring pushed `fixture_benchmark.py` past its 400-line bloat budget
+  (the single-engine probes moved to `fixture_bench_fixtures.py`) and
+  the tenth copy of the contract-test scan helper tripped
+  `boilerplate-duplication` (the helper moved to `detector_module.py`,
+  the one-place module the conftest docstring established). Evidence:
+  19 contract tests (979 -> 998), fixture benchmark 70 rows all PASS,
+  accuracy 66 labeled rows, dogfood self-scan back to the v2.18
+  baseline (blocking 0, 12 advisory, all dimensions A), ruff clean.
+
 - **v1.18 fail-closed architecture config:** a config that exists but
   cannot be honored now fails the run instead of being silently
   skipped - the CLI exits **2** (configuration error) with the reason on

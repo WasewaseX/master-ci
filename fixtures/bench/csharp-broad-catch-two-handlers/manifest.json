@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "two broad handlers in one class, both ignoring the caught exception",
+  "rule": "csharp-broad-catch",
+  "slug": "csharp-broad-catch-two-handlers"
+}

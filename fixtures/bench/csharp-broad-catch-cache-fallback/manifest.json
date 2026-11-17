@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "broad catch folds read faults and corrupt entries into one silent cache miss",
+  "rule": "csharp-broad-catch",
+  "slug": "csharp-broad-catch-cache-fallback"
+}
