@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "an assert stub - silent in release builds, dead in the field",
+  "rule": "cpp-not-implemented",
+  "slug": "cpp-notimpl-assert-stub"
+}

@@ -127,7 +127,55 @@ ROUND10_SLUGS = {
     "py-print-stderr-clean",
 }
 
-BENCH_SLUGS = SEED_SLUGS | ROUND8_SLUGS | ROUND9_SLUGS | ROUND10_SLUGS
+# Round-13 tranche: the C/C++ accuracy column deepening - the whole
+# eight-check column pushed to the five-judged-row promotion threshold,
+# each check with four diverse positives and one exemption-pinning
+# nearest-negative clean row.
+ROUND13_SLUGS = {
+    "cpp-cast-driver-cast",
+    "cpp-cast-db-pointer",
+    "cpp-cast-ratio-division",
+    "cpp-cast-byte-length",
+    "cpp-cast-named-casts-clean",
+    "cpp-define-timeout-ms",
+    "cpp-define-default-port",
+    "cpp-define-oversample",
+    "cpp-define-local-path-max",
+    "cpp-define-constexpr-clean",
+    "cpp-endl-logger-flush",
+    "cpp-endl-progress-line",
+    "cpp-endl-report-row",
+    "cpp-endl-banner-loop",
+    "cpp-endl-newline-clean",
+    "cpp-iostream-debug-trace",
+    "cpp-iostream-inspect-cout",
+    "cpp-iostream-cerr-parser",
+    "cpp-iostream-two-sites",
+    "cpp-iostream-cli-main-clean",
+    "cpp-delete-cache-raw",
+    "cpp-delete-buffer-parse",
+    "cpp-delete-plugin-release",
+    "cpp-delete-two-resources",
+    "cpp-delete-unique-ptr-clean",
+    "cpp-notimpl-interface-stub",
+    "cpp-notimpl-platform-gap",
+    "cpp-notimpl-assert-stub",
+    "cpp-notimpl-optional-cap",
+    "cpp-notimpl-real-throw-clean",
+    "cpp-null-legacy-call",
+    "cpp-null-member-init",
+    "cpp-null-handle-reset",
+    "cpp-null-default-arg",
+    "cpp-null-nullptr-clean",
+    "cpp-usingns-widget-header",
+    "cpp-usingns-util-header",
+    "cpp-usingns-logger-header",
+    "cpp-usingns-geometry-header",
+    "cpp-usingns-tu-clean",
+}
+
+
+BENCH_SLUGS = SEED_SLUGS | ROUND8_SLUGS | ROUND9_SLUGS | ROUND10_SLUGS | ROUND13_SLUGS
 
 
 def run_cli(*args: str, cwd: Path = _ROOT) -> subprocess.CompletedProcess[str]:
@@ -149,10 +197,10 @@ def row_by_slug(rows: list[fb.BenchRow], slug: str) -> fb.BenchRow:
 
 
 def test_manifests_cover_the_benchmark_table():
-    """Every fixture dir declares exactly the table's slugs: seed to round-10."""
+    """Every fixture dir declares exactly the table's slugs: seed to round-13."""
     rows = fb.load_benchmark(BENCH)
     assert {row.slug for row in rows} == BENCH_SLUGS
-    assert len(rows) == 70
+    assert len(rows) == 110
     assert {row.slug for row in rows} >= SEED_SLUGS
     for row in rows:
         assert row.expected in ("detected", "clean", "pending")
@@ -234,10 +282,10 @@ def test_table_run_exits_zero_all_proven():
     assert code == 0
     assert lines[0].split() == ["slug", "rule", "expected", "observed", "verdict"]
     data_rows = lines[1:-1]
-    assert len(data_rows) == 70
+    assert len(data_rows) == 110
     slugs = [line.split()[0] for line in data_rows]
     assert slugs == sorted(slugs)
-    assert lines[-1] == "70 fixtures: 70 pass, 0 fail, 0 pending"
+    assert lines[-1] == "110 fixtures: 110 pass, 0 fail, 0 pending"
 
 
 def test_json_run_shape_and_summary():
@@ -247,8 +295,8 @@ def test_json_run_shape_and_summary():
     assert code == 0
     assert {fixture["slug"] for fixture in payload["fixtures"]} == BENCH_SLUGS
     summary = payload["summary"]
-    assert summary["total"] == 70
-    assert summary["pass"] == 70 and summary["fail"] == 0 and summary["pending"] == 0
+    assert summary["total"] == 110
+    assert summary["pass"] == 110 and summary["fail"] == 0 and summary["pending"] == 0
 
 
 def test_failed_declaration_exits_one(tmp_path):

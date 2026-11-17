@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "clean",
+  "reason": "static, const and reinterpret conversions named explicitly - exactly what the rule asks for",
+  "rule": "cpp-c-style-cast",
+  "slug": "cpp-cast-named-casts-clean"
+}

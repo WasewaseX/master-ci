@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "an interface method that compiles and fails at runtime",
+  "rule": "cpp-not-implemented",
+  "slug": "cpp-notimpl-interface-stub"
+}

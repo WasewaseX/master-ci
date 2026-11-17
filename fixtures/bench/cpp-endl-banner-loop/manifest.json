@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "a session transcript writer flushing after every stamped line",
+  "rule": "cpp-endl-in-stream",
+  "slug": "cpp-endl-banner-loop"
+}

@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "clean",
+  "reason": "the same audit log letting the newline character ride the buffer",
+  "rule": "cpp-endl-in-stream",
+  "slug": "cpp-endl-newline-clean"
+}

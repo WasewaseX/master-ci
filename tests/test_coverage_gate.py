@@ -7,16 +7,10 @@ from __future__ import annotations
 
 import json
 import subprocess
-import sys
 from pathlib import Path
 
-import pytest
-
-SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
-if str(SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS))
-
 import coverage_gate as cg  # noqa: E402
+import pytest
 import slop_cli  # noqa: E402
 from slop_categories import category_of  # noqa: E402
 

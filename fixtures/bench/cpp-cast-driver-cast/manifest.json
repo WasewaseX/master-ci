@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "frame count truncation in a capture driver - the cast shares its syntax with every conversion",
+  "rule": "cpp-c-style-cast",
+  "slug": "cpp-cast-driver-cast"
+}

@@ -515,3 +515,89 @@ Final state: 1109 tests green (61 new facade-contract, 5 new
 dispatch/undeclared regressions), self-scan blocking 4 / advisory 12 /
 verdict CLEAN with maintainability A and zero findings attributable to
 the round, ratchet floor recorded and proven to bite.
+
+## Round-13 - the C/C++ column, the blind spot, and two defects the round itself caught (2026-11-18)
+
+The evidence-driven rows left after v2.18 named corpus widening as
+the next act; the round opened by pushing the hosted state and
+learning why it had sat unverified for two hours - the first push
+carrying rounds 11-12 red'd the hosted hygiene job's editorconfig
+step: 11 "wrong amount of left-padding spaces" errors across
+hook_gate.py, hook_install.py and slop_catalog.py. Round-11's
+docstrings and recipe templates align prose at 18, 25 and 2 spaces -
+none a multiple of the [*.py] indent_size 4 the repo's .editorconfig
+declares, and no sandbox gate sees it: ruff format never touches
+string contents, mypy never reads prose. The same blind spot had
+red'd main once before (96c6cb5); now twice. Fixed in kind: the
+continuations moved to the nearest multiple of four with the labels
+re-padded to keep the alignment, editorconfig-checker v4.0.2 exits 0
+over the tree, and the parity rule moved into the suite
+(tests/test_editorconfig_compliance.py: Python left-padding multiples,
+trailing whitespace, final newline) so the third occurrence fails in
+pytest before it fails on a runner.
+
+Running the documented reproduce command for the accuracy benchmark -
+the audit's own discipline, execute the docs - surfaced a defect the
+suite could not see: `accuracy_benchmark.py --json` crashed with
+AttributeError because main() passed the CLI's string argument where
+run_accuracy_benchmark expects a Path. The test calls the function
+directly with a Path, so the CLI contract was never exercised; fixed
+by converting at the boundary, and the documented command now runs.
+
+Writing the round's fixtures then found a second defect by the
+protocol's own route: slop_cpp.py declares .cxx and .hxx inside
+CPP_ONLY_EXTS and HEADER_EXTS, but neither CODE_EXTS nor FAMILY_OF_EXT
+carried them - a .cxx translation unit or .hxx header never reached
+the cpp scanner at all (unknown file type, family ""), so the rules
+that named those extensions could never fire on them. Both maps
+gained the two extensions, and the general contract is now pinned
+(tests/test_extension_parity.py): every extension any family rule
+names in its scope must be read by the scanner and dispatched to a
+family - a scope the scanner cannot reach is a rule that lies about
+its own coverage.
+
+The corpus tranche widened the C/C++ column: 40 new fixtures - for
+each of the eight cpp checks, four diverse real-shaped positives
+(driver cast, sqlite pointer cast, ratio promotion, size_t wire
+length; config timeout, port, DSP factor, platform-limit macro;
+ofstream logger, report builder, report writer, transcript; service
+trace, inspector dump, parser cerr, two-site store prints; raw-new
+cache, early-return parser, plugin release, two-resource teardown;
+interface stub, platform gap, assert stub, optional capability; legacy
+call, member init, handle reset, header default argument; widget,
+util, logger and geometry headers) and one nearest-negative clean row
+per check pinning the exemption logic - named casts, constexpr plus a
+function-like macro, the newline literal, the main()-owning CLI, the
+unique_ptr owner, the real error throw, the nullptr boundary call,
+the translation-unit directive. Labels were declared from the rule
+contracts before the engine ran; the engine agreed with all forty on
+the first run (110 fixtures: 110 pass, 0 fail, 0 pending) and the
+accuracy report shows the whole eight-check column at the
+five-judged-row promotion threshold with precision 1.00 and recall
+1.00 - twelve of forty checks now carry promotion-ready evidence,
+zero corpus violations, and the promotion-verdict pin in
+test_accuracy_benchmark.py grew to the exact twelve.
+
+The round also paid the engine's oldest baselined debt: the
+boilerplate-duplication finding (the two-line sys.path preamble
+repeated ten times across the grandfathered test modules - the
+twelfth copy had tripped the rule, ten more were frozen in the
+baseline). The ten migrated off the preamble; conftest is now the
+only bootstrap for every test module, the finding is gone, and the
+baseline rewrite records it in resolved_history - a reintroduction
+will be named as such, and the floor for the check is gone so one
+copy bites immediately. The self-scan moved from blocking 4 /
+advisory 12 / code-health F(86) to blocking 0 / advisory 12 /
+code-health A(0) - the round's own new comment block was caught by
+prose-block before the commit and tightened, so the round ends with
+fewer findings than it started and none of its own.
+
+Final state: 1113 tests green (2 editorconfig-parity, 2
+extension-parity, benchmark pins grown), ruff clean, mypy 138 files
+clean, editorconfig-checker exit 0, hosted CI green on the red-repair
+commit 46605c4, fixture benchmark 110/110 PASS, accuracy report
+zero violations with twelve checks promotion-ready. Left honest and open: the 28 remaining columns below
+five rows (the 13-check C# column's other eleven, TS precision, the
+family columns, the quality dimensions) grow the same way; promotion
+itself stays a maintainer act the corpus can now object to in twelve
+places.

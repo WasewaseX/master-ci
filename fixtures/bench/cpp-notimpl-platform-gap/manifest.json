@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "a platform-specific backend stubbed out with a runtime error",
+  "rule": "cpp-not-implemented",
+  "slug": "cpp-notimpl-platform-gap"
+}

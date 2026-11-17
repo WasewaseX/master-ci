@@ -368,7 +368,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     try:
-        output, code = run_accuracy_benchmark(Path(args.fixtures_dir), args.json_path)
+        output, code = run_accuracy_benchmark(
+            Path(args.fixtures_dir),
+            Path(args.json_path) if args.json_path else None,
+        )
     except ConfigError as exc:
         print(f"accuracy_benchmark: {exc}", file=sys.stderr)
         return 2

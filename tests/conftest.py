@@ -2,8 +2,10 @@
 
 Eleven test modules used to repeat the same two-line preamble; the
 twelfth copy tripped the detector's own boilerplate-duplication rule.
-New test modules import the repo's engines directly and skip the
-preamble - conftest runs before any collection, so the import works.
+Round-13 migrated the ten grandfathered carriers off it - every test
+module now imports the repo's engines directly and skips the preamble;
+conftest runs before any collection, so the import works. The paid
+debt sits in .quality-baseline.json's resolved_history.
 """
 
 import sys

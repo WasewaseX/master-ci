@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "an error path that reports through cerr instead of the module's error channel",
+  "rule": "cpp-iostream-leftover",
+  "slug": "cpp-iostream-cerr-parser"
+}

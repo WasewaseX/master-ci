@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "a typed-looking timeout with no type, no scope, invisible to the debugger",
+  "rule": "cpp-define-constant",
+  "slug": "cpp-define-timeout-ms"
+}

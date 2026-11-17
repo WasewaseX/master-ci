@@ -10,16 +10,10 @@ diff base or git failure is exit 2, never a silent pass).
 from __future__ import annotations
 
 import subprocess
-import sys
 from pathlib import Path
 
-import pytest
-
-SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
-if str(SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS))
-
 import new_code_gate as ng  # noqa: E402
+import pytest
 import slop_analysis_coverage as sac  # noqa: E402
 from slop_cognitive import _TS_OK  # noqa: E402
 from slop_lizard import _LIZARD_OK  # noqa: E402

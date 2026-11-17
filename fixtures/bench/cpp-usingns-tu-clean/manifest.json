@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "clean",
+  "reason": "the directive inside a translation unit is the caller's own choice - headers are the rule's scope",
+  "rule": "cpp-using-namespace-std-in-header",
+  "slug": "cpp-usingns-tu-clean"
+}

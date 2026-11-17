@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "signed-to-size_t conversion in a wire serializer - the cast also silences sign warnings",
+  "rule": "cpp-c-style-cast",
+  "slug": "cpp-cast-byte-length"
+}

@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "a handle reset through NULL assignment",
+  "rule": "cpp-null-literal",
+  "slug": "cpp-null-handle-reset"
+}

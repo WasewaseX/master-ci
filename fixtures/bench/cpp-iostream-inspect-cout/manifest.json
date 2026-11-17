@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "a debugging dump left inside a model inspector",
+  "rule": "cpp-iostream-leftover",
+  "slug": "cpp-iostream-inspect-cout"
+}

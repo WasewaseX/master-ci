@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "a report builder emitting one flushed line per pipeline step",
+  "rule": "cpp-endl-in-stream",
+  "slug": "cpp-endl-progress-line"
+}

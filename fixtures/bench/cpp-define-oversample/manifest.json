@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "DSP factor as a preprocessor constant in a pipeline module",
+  "rule": "cpp-define-constant",
+  "slug": "cpp-define-oversample"
+}

@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "a default argument written NULL in a C++ header - overload resolution can pick the int overload",
+  "rule": "cpp-null-literal",
+  "slug": "cpp-null-default-arg"
+}

@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "clean",
+  "reason": "a genuine error throw with a real message - no stub text, so the rule stays silent",
+  "rule": "cpp-not-implemented",
+  "slug": "cpp-notimpl-real-throw-clean"
+}

@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "two resources torn down by hand - the ordering burden the rule exists to name",
+  "rule": "cpp-manual-delete",
+  "slug": "cpp-delete-two-resources"
+}

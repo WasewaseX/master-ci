@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "a raw-new buffer released by hand - one missed call site leaks",
+  "rule": "cpp-manual-delete",
+  "slug": "cpp-delete-cache-raw"
+}

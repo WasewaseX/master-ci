@@ -12,18 +12,12 @@ exit 2, never a silent pass.
 from __future__ import annotations
 
 import json
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-import pytest
-
-SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
-if str(SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS))
-
 import flaky_detect as fd  # noqa: E402
 import flaky_quarantine as fq  # noqa: E402
+import pytest
 
 TODAY = datetime.now(timezone.utc).date().isoformat()
 BASELINE = {"version": 1, "tests": {"pkg::known": {"first_seen": "2026-01-01"}}}

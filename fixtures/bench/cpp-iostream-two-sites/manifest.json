@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "two debug prints in a repository module - the pattern a shipped leftover takes",
+  "rule": "cpp-iostream-leftover",
+  "slug": "cpp-iostream-two-sites"
+}

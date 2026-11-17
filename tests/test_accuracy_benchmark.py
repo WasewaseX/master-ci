@@ -81,13 +81,25 @@ def test_full_run_exit_zero_and_report_shape(tmp_path):
     assert checks["unused-declaration"]["tp"] >= 1
     assert checks["debug-print"]["known_fp"] == 1
     assert checks["debug-print"]["fp"] == 0
-    # The honesty rule: the corpus proves accuracy per check, not per
-    # project - exactly the columns the corpus has grown to five judged
-    # rows (the round-10 tranche) may claim promotion evidence, and no
-    # thinner column may. The pin is exact so silent drift fails here.
-    PROMOTION_FOUR = {"csharp-async-void", "csharp-broad-catch", "rust-unwrap", "debug-print"}
+    # The honesty rule: only columns the corpus has grown to five judged
+    # rows (round-10, the round-13 C/C++ column) may claim promotion
+    # evidence. The pin is exact so silent drift fails here.
+    PROMOTION_TWELVE = {
+        "csharp-async-void",
+        "csharp-broad-catch",
+        "rust-unwrap",
+        "debug-print",
+        "cpp-c-style-cast",
+        "cpp-define-constant",
+        "cpp-endl-in-stream",
+        "cpp-iostream-leftover",
+        "cpp-manual-delete",
+        "cpp-not-implemented",
+        "cpp-null-literal",
+        "cpp-using-namespace-std-in-header",
+    }
     for check_id, cell in checks.items():
-        if check_id in PROMOTION_FOUR:
+        if check_id in PROMOTION_TWELVE:
             assert cell["promotion"] == "promotion-ready evidence", cell
         else:
             assert cell["promotion"].startswith("advisory-only"), cell

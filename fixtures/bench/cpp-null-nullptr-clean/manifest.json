@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "clean",
+  "reason": "the same legacy boundary calling with nullptr - the named null the rule asks for",
+  "rule": "cpp-null-literal",
+  "slug": "cpp-null-nullptr-clean"
+}

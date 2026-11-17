@@ -8,16 +8,8 @@ closed (exit 2) instead of reporting a silent zero-test pass.
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-import pytest
-
-SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
-if str(SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS))
-
 import flaky_parsers as fp  # noqa: E402
+import pytest
 
 
 def outcomes(pairs: list[tuple[str, str, str]]) -> list[fp.Outcome]:

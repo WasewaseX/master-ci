@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "a plain header leaking the directive to every consumer",
+  "rule": "cpp-using-namespace-std-in-header",
+  "slug": "cpp-usingns-util-header"
+}

@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "const-qualified API result forced into char* through a C-style cast",
+  "rule": "cpp-c-style-cast",
+  "slug": "cpp-cast-db-pointer"
+}

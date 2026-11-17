@@ -3,16 +3,14 @@
     ".": {
       "checks": {
         "analysis-coverage": 1,
-        "boilerplate-duplication": 1,
         "high-cognitive": 1,
         "hotspot-risk": 1,
         "prose-block": 7
       },
       "identities": [
         ".|analysis-coverage|.|5a43116e3000c9e9af610eebe9faaa7f71bc0a9dabb4bc984dc4ca033e35236c",
-        ".|boilerplate-duplication|tests/test_coverage_gate.py|34ec7422f5b5f24427c9c524f4451f758eceb5fd3b5716ae99f6bed5fa439240",
         ".|high-cognitive|scripts/flaky_aggregate.py|aaa4612799b8f3e2bd98d83f2f6185d97459f922e6785be38fd563bb5d53c028",
-        ".|hotspot-risk|scripts/mcp_tools.py|1025aa608a3c8852c1fa4682497fa5a8f09a9319d5553c0d0ee1f6e21f9c8845",
+        ".|hotspot-risk|scripts/mcp_tools.py|84222450611597fa1459f61fbb0ec6788741c99ae46529db22966f73102ddeca",
         ".|prose-block|scripts/ai_slop_detector.py|f782e05121ed2a59bdd0d1a2c23c6dacf50e489f9ba3a4336b1ed32ed38c0768",
         ".|prose-block|scripts/slop_corpus.py|5d94d14ca3deadb3994186a98da8ff5c683d44cfc5da97c64f71bd01db20441e",
         ".|prose-block|scripts/slop_imports.py|7ec440d238e6e778a5e7771b3a34b568c845b4abbf3860e8454d91c7d38bdad4",
@@ -20,7 +18,11 @@
         ".|prose-block|tests/test_density.py|80978b1b82c22c8f3e4d6cfaa201f7735c36ddcfb0ce936c6b48407fa46091ad",
         ".|prose-block|tests/test_workflow_contracts.py|4adbb16a165cf24b4399a879659a9d5cbdb98dab8ada1f5fa0729835c6db5ee8"
       ],
-      "resolved_history": []
+      "resolved_history": [
+        ".|boilerplate-duplication|tests/test_coverage_gate.py|34ec7422f5b5f24427c9c524f4451f758eceb5fd3b5716ae99f6bed5fa439240",
+        ".|hotspot-risk|scripts/mcp_tools.py|1025aa608a3c8852c1fa4682497fa5a8f09a9319d5553c0d0ee1f6e21f9c8845",
+        ".|prose-block|tests/test_accuracy_benchmark.py|6fd64ef1683ae6932dc4ed1b1fa61e91abb67d573d719a922999d194b66617a4"
+      ]
     }
   },
   "version": 2

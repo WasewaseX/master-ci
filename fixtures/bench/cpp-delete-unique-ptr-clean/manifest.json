@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "clean",
+  "reason": "the same cache owning its buffer through unique_ptr - RAII instead of delete",
+  "rule": "cpp-manual-delete",
+  "slug": "cpp-delete-unique-ptr-clean"
+}

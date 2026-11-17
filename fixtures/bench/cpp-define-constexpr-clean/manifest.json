@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "clean",
+  "reason": "constexpr for the constant, a function-like macro for the log shim - both outside the rule",
+  "rule": "cpp-define-constant",
+  "slug": "cpp-define-constexpr-clean"
+}

@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "a leftover trace in a service module - no main here, so the stream shipped by accident",
+  "rule": "cpp-iostream-leftover",
+  "slug": "cpp-iostream-debug-trace"
+}

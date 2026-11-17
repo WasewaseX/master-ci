@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "port constant as a macro - every translation unit that includes it shares the name",
+  "rule": "cpp-define-constant",
+  "slug": "cpp-define-default-port"
+}

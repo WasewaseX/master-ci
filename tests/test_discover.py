@@ -12,17 +12,11 @@ with the directory-name fallback.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
-
-import pytest
-
-SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
-if str(SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS))
 
 import discover_projects as dp  # noqa: E402
 import discover_workspaces as dw  # noqa: E402
+import pytest
 
 
 def _make(root: Path, files: dict[str, str]) -> Path:
