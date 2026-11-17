@@ -496,6 +496,39 @@ Profile presets (quick / standard / strict / custom) only change the
   dogfood self-scan at the round-10 baseline (12 findings, zero added),
   ruff clean.
 
+- **Round-13 the C/C++ column, the blind spot, and debt paid:** the
+  corpus grew to the whole eight-check C/C++ column - 40 labeled
+  fixtures (`fixture_bench_round13.py`, 32 detected + 8 nearest
+  negatives) push every `cpp-*` check to the five-judged-row promotion
+  threshold with the exemption-protecting negatives (the named casts,
+  the constexpr constant, the newline literal, the main()-owning CLI,
+  the unique_ptr owner, the real error throw, the nullptr boundary
+  call, the translation-unit directive). Labels were written from the
+  rule contracts before the engine ran; all forty passed on first
+  judgment. Twelve checks now read `promotion-ready evidence`
+  (precision 1.00, recall 1.00, judged 5) - the promotion verdict
+  stays a maintainer act the corpus can now object to in twelve
+  places. The round also closed two defects and one blind spot:
+  `accuracy_benchmark.py --json` crashed on the documented reproduce
+  command (a str reached a Path-typed parameter; the CLI boundary had
+  never been exercised); `.cxx`/`.hxx` were declared in
+  `slop_cpp.py`'s scope sets but absent from `CODE_EXTS`/
+  `FAMILY_OF_EXT`, so such files never reached the cpp scanner - both
+  maps gained them and `tests/test_extension_parity.py` pins the
+  general contract (every extension a family rule names must be read
+  and dispatched). And the editorconfig left-padding class that had
+  red'd hosted hygiene twice with every sandbox gate green moved into
+  the suite (`tests/test_editorconfig_compliance.py` mirrors the
+  hosted rule: Python padding multiples, trailing whitespace, final
+  newline). The oldest baselined debt was paid: the ten grandfathered
+  test modules dropped their repeated sys.path preamble for the
+  conftest bootstrap, `boilerplate-duplication` cleared, the baseline
+  rewrite records the identity in `resolved_history` with the floor
+  removed so one copy bites. Evidence: 1113 tests green (4 new
+  parity contracts), fixture benchmark 110 rows all PASS, accuracy
+  zero violations, self-scan blocking 4 -> 0 / code-health F(86) ->
+  A(0) / findings 12 -> 10, ruff clean, mypy 138 files clean.
+
 - **v1.18 fail-closed architecture config:** a config that exists but
   cannot be honored now fails the run instead of being silently
   skipped - the CLI exits **2** (configuration error) with the reason on
