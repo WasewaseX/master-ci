@@ -5,14 +5,15 @@ already covered by the combined ``ts-suppression`` check, so this module
 holds the two oracles that check semantics rather than syntax:
 
 - redundant-type-coercion: String()/Number()/Boolean() applied to a
-  parameter the signature already types as that primitive. The oracle is
-  signature-scan based, not a TypeScript checker: a coercion is flagged
-  only within 30 lines after the signature that declares the typed
-  parameter, and every finding is advisory.
+    parameter the signature already types as that primitive. The oracle
+    is signature-scan based, not a TypeScript checker: a coercion is
+    flagged only within 30 lines after the signature that declares the
+    typed parameter, and every finding is advisory.
 - hidden-fallback: a catch block that returns or assigns a safe-looking
-  default (0, [], {}, null, { ok: true }) - a loud error becomes a quiet
-  wrong answer. JS family only; the oracle cannot model control flow, so
-  legitimate default-structs outside a failed call are out of scope.
+    default (0, [], {}, null, { ok: true }) - a loud error becomes a
+    quiet wrong answer. JS family only; the oracle cannot model control
+    flow, so legitimate default-structs outside a failed call are out
+    of scope.
 """
 
 from __future__ import annotations

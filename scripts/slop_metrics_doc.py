@@ -11,15 +11,15 @@ bundle (density facts, corpus coverage, coupling, churn) rendered as a
 versioned JSON document where every metric carries
 
 - value      - the actual measurement, present whenever the metric was
-               measured, including the healthy below-threshold values
-               (a zero or a 0.8% block density is REAL DATA now);
+                measured, including the healthy below-threshold values
+                (a zero or a 0.8% block density is REAL DATA now);
 - state      - "measured" or "not-measured" (no corpus, no graph, no
-               history) - measured-clean and not-measured finally
-               travel separately;
+                history) - measured-clean and not-measured finally
+                travel separately;
 - coverage   - the corpus states beside the ratios: eligible, measured,
-               parse-failed (named), unsupported (named), excluded by
-               rule (counted), so a shrunken corpus can never read as a
-               clean one.
+                parse-failed (named), unsupported (named), excluded by
+                rule (counted), so a shrunken corpus can never read as a
+                clean one.
 
 The document is deterministic: no timestamps (the snapshot row owns
 sha/ref/ts), values derived only from the scan's own facts. The

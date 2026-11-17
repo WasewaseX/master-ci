@@ -8,15 +8,15 @@ on real code. This harness is the instrument that does, honestly and
 from a small seed:
 
 - positive rows: the fixture benchmark's labeled manifests, judged per
-  rule (expected "detected" that does not appear is a false negative);
+    rule (expected "detected" that does not appear is a false negative);
 - negative rows: clean control projects - complete, hand-shaped code
-  with consumers, manifests and docs - where ANY quality-dimension
-  finding is a false positive, counted per check;
+    with consumers, manifests and docs - where ANY quality-dimension
+    finding is a false positive, counted per check;
 - known false positives: corpus-declared, reason-carrying exemptions
-  (``corpus.json``). They stay VISIBLE in the report as their own
-  column - a limitation recorded is not a limitation hidden - but they
-  do not fail the run: the corpus documents them because they are
-  understood, not because they are excused.
+    (``corpus.json``). They stay VISIBLE in the report as their own
+    column - a limitation recorded is not a limitation hidden - but they
+    do not fail the run: the corpus documents them because they are
+    understood, not because they are excused.
 
 Per check the report reads: judged rows, TP/FP/FN, precision, recall,
 and the promotion verdict - ``promotion-ready evidence`` needs

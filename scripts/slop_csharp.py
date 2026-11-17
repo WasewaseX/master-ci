@@ -181,9 +181,9 @@ def _console_leftover(path: Path, text: str, is_test: bool) -> list[Finding]:
     if is_test:
         return []
     hits = CS_CONSOLE.findall(text)
-    if not hits:
-        return []
     first = CS_CONSOLE.search(text)
+    if first is None:
+        return []
     return [
         _finding(
             path,
