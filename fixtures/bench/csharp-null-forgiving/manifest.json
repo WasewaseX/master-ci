@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "postfix ! silences the nullable warning without a check",
+  "rule": "csharp-null-forgiving",
+  "slug": "csharp-null-forgiving"
+}

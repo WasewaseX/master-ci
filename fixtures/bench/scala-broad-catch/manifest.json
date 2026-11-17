@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "catch clause recovers from Exception wholesale",
+  "rule": "scala-broad-catch",
+  "slug": "scala-broad-catch"
+}

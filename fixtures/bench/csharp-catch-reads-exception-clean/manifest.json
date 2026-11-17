@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "clean",
+  "reason": "the caught exception IS read - broad-catch stays silent",
+  "rule": "csharp-broad-catch",
+  "slug": "csharp-catch-reads-exception-clean"
+}

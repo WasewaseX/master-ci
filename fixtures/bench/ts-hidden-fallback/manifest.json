@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "catch answers a failed call with 0 - the quiet wrong answer",
+  "rule": "hidden-fallback",
+  "slug": "ts-hidden-fallback"
+}

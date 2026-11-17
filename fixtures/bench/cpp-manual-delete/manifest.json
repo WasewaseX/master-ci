@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "manual delete leaks on the early return between new and delete",
+  "rule": "cpp-manual-delete",
+  "slug": "cpp-manual-delete"
+}

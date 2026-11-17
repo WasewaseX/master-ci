@@ -1,0 +1,7 @@
+{
+  "engine": "slop_type_decls",
+  "expected": "clean",
+  "reason": "same name, different body - drift, not duplication; not flagged",
+  "rule": "duplicate-type-declaration",
+  "slug": "duplicate-type-clean"
+}

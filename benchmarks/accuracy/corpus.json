@@ -1,6 +1,6 @@
 {
   "schema": "accuracy-v1",
-  "description": "The accuracy corpus manifest: labeled positives live in fixtures/bench manifests; the clean_* directories are negative controls judged by scripts/accuracy_benchmark.py. known_fps records the false positives the controls deliberately carry - each with its reason, each visible in every report.",
+  "description": "The accuracy corpus manifest: labeled positives live in fixtures/bench manifests; the clean_* directories (python, js, go, csharp, cpp) are negative controls: hand-shaped code the quality dimensions must leave silent judged by scripts/accuracy_benchmark.py. known_fps records the false positives the controls deliberately carry - each with its reason, each visible in every report.",
   "known_fps": [
     {
       "check": "debug-print",

@@ -1,0 +1,7 @@
+{
+  "engine": "slop_type_decls",
+  "expected": "detected",
+  "reason": "one exported shape held by two files - two sources of truth",
+  "rule": "duplicate-type-declaration",
+  "slug": "duplicate-type-declaration"
+}

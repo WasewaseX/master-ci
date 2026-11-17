@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "clean",
+  "reason": "the only unwrap sits behind #[cfg(test)]",
+  "rule": "rust-unwrap",
+  "slug": "rust-test-unwrap-clean"
+}

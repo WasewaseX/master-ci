@@ -39,7 +39,7 @@ from fixture_bench_fixtures import HOTSPOT_COMMITS  # noqa: E402
 
 BENCH = _ROOT / "fixtures" / "bench"
 SCRIPT = _ROOT / "scripts" / "fixture_benchmark.py"
-ROADMAP_SLUGS = {
+SEED_SLUGS = {
     "abstraction-chain",
     "churn-hotspot",
     "circular-dependencies",
@@ -53,6 +53,48 @@ ROADMAP_SLUGS = {
     "unnecessary-dependency",
     "unused-function",
 }
+
+# Round-8 tranche: the family columns and the cross-file type oracle,
+# one labeled row per new check plus the nearest negative for the
+# oracles whose exemption logic a future edit could break.
+ROUND8_SLUGS = {
+    "csharp-async-void",
+    "csharp-broad-catch",
+    "csharp-catch-reads-exception-clean",
+    "csharp-console-leftover",
+    "csharp-empty-catch-rethrow",
+    "csharp-if-ladder",
+    "csharp-index-loop",
+    "csharp-linq-count",
+    "csharp-not-implemented",
+    "csharp-null-forgiving",
+    "csharp-null-guard-clean",
+    "csharp-redundant-doc-comment",
+    "csharp-string-concat-in-loop",
+    "csharp-suppressed-warning",
+    "csharp-sync-over-async",
+    "cpp-c-style-cast",
+    "cpp-define-constant",
+    "cpp-endl-in-stream",
+    "cpp-iostream-leftover",
+    "cpp-manual-delete",
+    "cpp-modern-clean",
+    "cpp-not-implemented",
+    "cpp-null-literal",
+    "cpp-using-namespace-std-in-header",
+    "ts-redundant-coercion",
+    "ts-hidden-fallback",
+    "ts-loud-catch-clean",
+    "go-library-panic",
+    "go-main-panic-clean",
+    "rust-unwrap",
+    "rust-test-unwrap-clean",
+    "scala-broad-catch",
+    "duplicate-type-declaration",
+    "duplicate-type-clean",
+}
+
+BENCH_SLUGS = SEED_SLUGS | ROUND8_SLUGS
 
 
 def run_cli(*args: str, cwd: Path = _ROOT) -> subprocess.CompletedProcess[str]:
@@ -73,11 +115,12 @@ def row_by_slug(rows: list[fb.BenchRow], slug: str) -> fb.BenchRow:
 # --- declarations -----------------------------------------------------------
 
 
-def test_manifests_cover_the_twelve_roadmap_rows():
-    """Every fixture dir declares exactly the roadmap table's twelve slugs."""
+def test_manifests_cover_the_benchmark_table():
+    """Every fixture dir declares exactly the table's slugs: seed + round-8."""
     rows = fb.load_benchmark(BENCH)
-    assert {row.slug for row in rows} == ROADMAP_SLUGS
-    assert len(rows) == 12
+    assert {row.slug for row in rows} == BENCH_SLUGS
+    assert len(rows) == 46
+    assert {row.slug for row in rows} >= SEED_SLUGS
     for row in rows:
         assert row.expected in ("detected", "clean", "pending")
         if row.expected == "pending":
@@ -114,7 +157,8 @@ def test_detected_fixtures_produce_their_check_id():
             continue
         result = fb.evaluate(row, BENCH)
         assert result.verdict == "PASS", (row.slug, result.observed)
-        assert result.observed == row.rule
+        # the named rule must fire; sibling family findings may ride along
+        assert row.rule in result.observed.split(","), (row.slug, result.observed)
 
 
 def test_clean_fixtures_stay_clean():
@@ -157,21 +201,21 @@ def test_table_run_exits_zero_all_proven():
     assert code == 0
     assert lines[0].split() == ["slug", "rule", "expected", "observed", "verdict"]
     data_rows = lines[1:-1]
-    assert len(data_rows) == 12
+    assert len(data_rows) == 46
     slugs = [line.split()[0] for line in data_rows]
     assert slugs == sorted(slugs)
-    assert lines[-1] == "12 fixtures: 12 pass, 0 fail, 0 pending"
+    assert lines[-1] == "46 fixtures: 46 pass, 0 fail, 0 pending"
 
 
 def test_json_run_shape_and_summary():
-    """The json payload lists twelve fixtures with a matching verdict summary."""
+    """The json payload lists every fixture with a matching verdict summary."""
     out, code = fb.run_benchmark(BENCH, "json")
     payload = json.loads(out)
     assert code == 0
-    assert {fixture["slug"] for fixture in payload["fixtures"]} == ROADMAP_SLUGS
+    assert {fixture["slug"] for fixture in payload["fixtures"]} == BENCH_SLUGS
     summary = payload["summary"]
-    assert summary["total"] == 12
-    assert summary["pass"] == 12 and summary["fail"] == 0 and summary["pending"] == 0
+    assert summary["total"] == 46
+    assert summary["pass"] == 46 and summary["fail"] == 0 and summary["pending"] == 0
 
 
 def test_failed_declaration_exits_one(tmp_path):

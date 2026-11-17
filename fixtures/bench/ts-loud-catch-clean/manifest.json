@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "clean",
+  "reason": "the catch rethrows - recovery-neutral, no fallback",
+  "rule": "hidden-fallback",
+  "slug": "ts-loud-catch-clean"
+}

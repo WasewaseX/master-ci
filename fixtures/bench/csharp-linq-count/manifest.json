@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": ".Count() > 0 walks the sequence where .Any() short-circuits",
+  "rule": "csharp-linq-count",
+  "slug": "csharp-linq-count"
+}

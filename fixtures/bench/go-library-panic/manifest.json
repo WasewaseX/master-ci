@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "panic in a library package unwinds the caller's goroutine",
+  "rule": "go-library-panic",
+  "slug": "go-library-panic"
+}

@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "string += literal inside foreach - quadratic reallocation",
+  "rule": "csharp-string-concat-in-loop",
+  "slug": "csharp-string-concat-in-loop"
+}

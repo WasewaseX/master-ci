@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "indexed for over .Length where the index is bookkeeping",
+  "rule": "csharp-index-loop",
+  "slug": "csharp-index-loop"
+}

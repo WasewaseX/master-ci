@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "XML summary restates the member name",
+  "rule": "csharp-redundant-doc-comment",
+  "slug": "csharp-redundant-doc-comment"
+}

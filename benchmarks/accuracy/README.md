@@ -3,9 +3,14 @@
 The fixture benchmark proves declared outcomes; the performance
 benchmark proves speed. Neither proves detection accuracy. This
 directory is the seed of the instrument that does:
-`scripts/accuracy_benchmark.py` judges every labeled row - the twelve
-`fixtures/bench` manifests as positives, the `clean_*` projects as
-negative controls where any quality-dimension finding is a false
+`scripts/accuracy_benchmark.py` judges every labeled row - the
+forty-six `fixtures/bench` manifests as positives (the v2.18 seed
+twelve plus the round-8 tranche: one labeled row per new check and,
+for the oracles whose exemption logic a future edit could break, the
+nearest negative - the named cast, the loud catch, the test-gated
+unwrap, the package-main panic, the drifted type shape), and the five
+`clean_*` projects (python, js, go, csharp, cpp) as negative controls
+where any quality-dimension finding is a false
 positive - and reports per-check precision, recall and a promotion
 verdict. Uncertain rules stay advisory until the evidence justifies a
 blocking promotion; the verdict column says which.
@@ -51,3 +56,16 @@ unexpected false positive; exit 2 on corpus misconfiguration.
    special pleading.
 6. A check earns "promotion-ready evidence" only through this corpus;
    promotion itself stays a reviewed decision, never an automatic flip.
+
+## Round-8 rows (2026-11-17)
+
+The round-8 checks each carry one judged positive row and, where the
+oracle has exemption logic worth pinning, one judged clean row - 34
+rows over 34 fixture trees, plus two new negative controls
+(`clean_csharp`, `clean_cpp`) hand-shaped to pass every quality
+dimension. All rows read precision 1.00, recall 1.00. The promotion
+verdict stays honest: five judged rows per check is the floor, and
+one labeled row is not five - the verdict text says
+`advisory-only (insufficient accuracy evidence)` until the corpus is
+widened per the protocol above.
+

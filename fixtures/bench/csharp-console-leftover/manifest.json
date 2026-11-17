@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "Console/Debug output left in library code",
+  "rule": "csharp-console-leftover",
+  "slug": "csharp-console-leftover"
+}

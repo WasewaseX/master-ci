@@ -54,7 +54,7 @@ from slop_files import load_phrases
 REPO = Path(__file__).resolve().parents[1]
 CORPUS_DIR = REPO / "benchmarks" / "accuracy"
 CORPUS_MANIFEST = CORPUS_DIR / "corpus.json"
-CONTROLS = ("clean_python", "clean_js", "clean_go")
+CONTROLS = ("clean_python", "clean_js", "clean_go", "clean_csharp", "clean_cpp")
 
 # Promotion evidence thresholds - documented, conservative, and meant
 # to be revisited only through the README's protocol.

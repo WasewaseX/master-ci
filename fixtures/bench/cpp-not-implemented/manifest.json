@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "logic_error(\"not implemented\") stub fails at runtime",
+  "rule": "cpp-not-implemented",
+  "slug": "cpp-not-implemented"
+}

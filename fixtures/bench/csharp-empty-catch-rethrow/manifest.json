@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "catch whose only statement is a bare rethrow",
+  "rule": "csharp-empty-catch-rethrow",
+  "slug": "csharp-empty-catch-rethrow"
+}

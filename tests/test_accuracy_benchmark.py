@@ -23,7 +23,7 @@ from ai_slop_detector import scan
 from slop_categories import CHECK_CATEGORIES
 from slop_files import load_phrases
 
-CONTROLS = ("clean_python", "clean_js", "clean_go")
+CONTROLS = ("clean_python", "clean_js", "clean_go", "clean_csharp", "clean_cpp")
 
 
 def test_clean_controls_stay_clean_under_quality_dimensions():

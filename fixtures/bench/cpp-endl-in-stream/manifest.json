@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "<< std::endl flushes on every use",
+  "rule": "cpp-endl-in-stream",
+  "slug": "cpp-endl-in-stream"
+}

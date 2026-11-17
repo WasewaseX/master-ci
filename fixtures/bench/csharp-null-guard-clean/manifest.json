@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "clean",
+  "reason": "a != b is not a null-forgiving operator",
+  "rule": "csharp-null-forgiving",
+  "slug": "csharp-null-guard-clean"
+}

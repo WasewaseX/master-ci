@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "clean",
+  "reason": "static_cast and nullptr - the named replacements the rule asks for",
+  "rule": "cpp-c-style-cast",
+  "slug": "cpp-modern-clean"
+}

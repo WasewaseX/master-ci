@@ -52,20 +52,27 @@ from pathlib import Path
 from typing import Sequence
 
 from fixture_bench_fixtures import build_git_fixture
+from fixture_bench_round8 import _ROUND8_CLEAN_RULES, _ROUND8_DETECTED, _ROUND8_RENAMED
 from slop_abstraction import check_abstraction
 from slop_bloat import check_bloat
 from slop_comments import extract_comments
+from slop_cpp import check_cpp_slop
+from slop_csharp import check_csharp_slop
 from slop_cycles import check_import_cycles
 from slop_dead import check_unused_declarations
 from slop_density import measure as measure_density
 from slop_deps import check_unused_dependencies
 from slop_duplicates import scan_duplicates
+from slop_family import check_go, check_jvm_slop, check_rust
 from slop_files import read_text_lax
 from slop_hotspot import check_hotspot_metrics, churn_map
 from slop_lcom4 import check_class_cohesion
 from slop_lizard import lizard_available
 from slop_model import Finding
+from slop_patterns import FAMILY_OF_EXT
 from slop_test_redundancy import check_test_redundancy
+from slop_ts_checks import check_ts_slop
+from slop_type_decls import check_duplicate_type_decls
 
 DEFAULT_FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "bench"
 MANIFEST_KEYS = {"slug", "rule", "engine", "expected", "reason"}
@@ -124,6 +131,44 @@ def _probe_lcom4(root: Path, files: list[Path]) -> list[Finding]:
 
 def _probe_dead(root: Path, files: list[Path]) -> list[Finding]:
     return check_unused_declarations(root, files, [])
+
+
+def _probe_family_scan(root: Path, files: list[Path]) -> list[Finding]:
+    """The round-8 per-file family columns over one fixture tree.
+
+    One shared probe for the whole tranche: the manifest names the check
+    id it judges, so a single scanner sweep answers every row. Repo-level
+    engines (duplication, density) stay out - the probe judges the named
+    family oracle, not the whole scan.
+    """
+    del root
+    scanners: dict[str, Callable[..., list[Finding]]] = {
+        "csharp": check_csharp_slop,
+        "cpp": check_cpp_slop,
+        "js": check_ts_slop,
+        "jvm": check_jvm_slop,
+        "go": check_go,
+        "rust": check_rust,
+    }
+    findings: list[Finding] = []
+    for path in sorted(files):
+        family = FAMILY_OF_EXT.get(path.suffix.lower(), "")
+        runner = scanners.get(family)
+        if runner is None:
+            continue
+        text = read_text_lax(path)
+        if family == "cpp":
+            findings.extend(runner(path, text, family))
+        elif family == "rust":
+            findings.extend(check_rust(path, text, family))
+        else:
+            findings.extend(runner(path, text, family, path.name))
+    return findings
+
+
+def _probe_type_decls(root: Path, files: list[Path]) -> list[Finding]:
+    """The cross-file duplicate-type oracle over the fixture tree."""
+    return check_duplicate_type_decls(root, files, [])
 
 
 def _probe_deps(root: Path, files: list[Path]) -> list[Finding]:
@@ -217,7 +262,20 @@ PROBES: dict[str, Probe] = {
     "short-but-complex": Probe("slop_bloat", "high-cyclomatic", _probe_cyclomatic),
     "unnecessary-dependency": Probe("slop_deps", "unused-dependency", _probe_deps),
     "unused-function": Probe("slop_dead", "unused-declaration", _probe_dead),
+    # --- round-8 tranche: the family columns + the cross-file oracle ---
+    # Data-driven: every detected slug's rule is its own name; the clean
+    # rows and the cross-file oracle carry their explicit mapping.
 }
+PROBES["duplicate-type-declaration"] = Probe(
+    "slop_type_decls", "duplicate-type-declaration", _probe_type_decls
+)
+for _SLUG in _ROUND8_DETECTED:
+    PROBES[_SLUG] = Probe("slop_family", _ROUND8_RENAMED.get(_SLUG, _SLUG), _probe_family_scan)
+for _CLEAN_SLUG, _CLEAN_RULE in _ROUND8_CLEAN_RULES.items():
+    if _CLEAN_SLUG.startswith("duplicate"):
+        PROBES[_CLEAN_SLUG] = Probe("slop_type_decls", _CLEAN_RULE, _probe_type_decls)
+    else:
+        PROBES[_CLEAN_SLUG] = Probe("slop_family", _CLEAN_RULE, _probe_family_scan)
 
 
 # --- manifest loading and judging -------------------------------------------

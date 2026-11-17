@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "NULL in C++ is an integer constant in disguise",
+  "rule": "cpp-null-literal",
+  "slug": "cpp-null-literal"
+}

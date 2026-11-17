@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "String()/Number() on parameters the signature already types",
+  "rule": "redundant-type-coercion",
+  "slug": "ts-redundant-coercion"
+}

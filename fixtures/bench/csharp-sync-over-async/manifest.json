@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": ".Result blocks on a Task - deadlock under a sync context",
+  "rule": "csharp-sync-over-async",
+  "slug": "csharp-sync-over-async"
+}

@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "catch (Exception) that never reads the caught exception",
+  "rule": "csharp-broad-catch",
+  "slug": "csharp-broad-catch"
+}

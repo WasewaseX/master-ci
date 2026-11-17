@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "header-scope using leaks std into every includer",
+  "rule": "cpp-using-namespace-std-in-header",
+  "slug": "cpp-using-namespace-std-in-header"
+}

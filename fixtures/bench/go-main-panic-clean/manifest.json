@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "clean",
+  "reason": "package main may panic deliberately",
+  "rule": "go-library-panic",
+  "slug": "go-main-panic-clean"
+}
