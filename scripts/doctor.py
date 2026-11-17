@@ -75,7 +75,7 @@ class Note:
 def _load_yaml(path, pyyaml):
     try:
         return pyyaml.safe_load(path.read_text(encoding="utf-8")), None
-    except Exception as exc:  # yaml.YAMLError and friends - fail closed
+    except Exception as exc:  # noqa: BLE001 - yaml.YAMLError and friends - fail closed
         return None, f"cannot parse {path.name}: {exc}"
 
 

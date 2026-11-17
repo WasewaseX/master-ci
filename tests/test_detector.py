@@ -70,10 +70,21 @@ def test_slop_detected(tmp_path):
 
 
 def test_clean_code(tmp_path):
-    # The fixture must reference its own definition: since round-4 the
-    # detector reports repo-level deadness, and an unreferenced def IS
-    # a finding now.
-    findings = scan(tmp_path, {"y.py": "def add(a, b):\n    return a + b\n\nprint(add(1, 2))\n"})
+    # The fixture must reference its own definition (repo-level deadness
+    # is a finding since round-4), and the demo print sits under the
+    # module main guard: bare print() is debug residue since round-9.
+    findings = scan(
+        tmp_path,
+        {
+            "y.py": (
+                "def add(a, b):\n"
+                "    return a + b\n"
+                "\n"
+                'if __name__ == "__main__":\n'
+                "    print(add(1, 2))\n"
+            )
+        },
+    )
     assert not findings
 
 

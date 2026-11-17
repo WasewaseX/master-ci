@@ -356,3 +356,36 @@ each finding names the pattern, not the intent. Language-native
 parsers replace these when the accuracy evidence justifies them
 (audit P2 order, unchanged).
 
+## Round-9 - the catalog closes (2026-11-17)
+
+A re-audit of the scanaislop catalog against the shipped registry found
+the 58-pattern matrix already 56/56 semantically covered: rounds 2-8
+had adopted every rule under another id (`ts-suppression` carries the
+cast/directive rules since round 2, `undeclared-import` is the
+hallucinated-import oracle, `rust-stub` the Rust todo macros,
+`trivial-comments` grades narration, the `todo-density` +
+`placeholder-impl` + `stub-function` trio grades stub markers). Two
+genuine gaps remained, both Python, both adopted in `slop_py_family.py`
+(the family column split out of `slop_py_checks` under the 400-line
+budget):
+
+| Gap | Oracle | Exemptions |
+| --- | ------ | ---------- |
+| `broad-except` | typed handler naming Exception/BaseException, reliability-advisory like its C# sibling | lone re-raise (translation point), coded `# noqa: BLE001` (declared intent), pass-only handlers (swallowed-exception owns them) |
+| Python `debug-print` | print() calls in production modules, AST-backed, advisory file-level count | test paths, script dirs, entrypoint basenames, main-guard files |
+
+Discipline kept: 16 contract tests (963 -> 979); fixture benchmark
+extended to 50 rows, all PASS; accuracy `broad-except` and
+`debug-print` at precision 1.00 recall 1.00 over one judged row each;
+clean controls untouched; ruff clean; and the dogfood self-scan stays
+byte-identical to the v2.18 baseline (blocking 0, 12 advisory
+findings) after two of the engine's own best-effort handlers gained
+their declared intent - the only source edits the new rule demanded
+of the codebase that ships it.
+
+One environmental note recorded for honesty: the 30-test red run this
+round began from was the sandbox missing `lizard` and
+`tree-sitter-language-pack` (both declared in pyproject.toml), not a
+regression - the full suite is green with the declared dependencies
+installed, and the sandbox is now provisioned to match CI.
+

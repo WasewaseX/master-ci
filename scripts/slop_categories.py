@@ -198,6 +198,8 @@ CHECK_CATEGORIES: dict[str, str] = {
     "go-library-panic": "reliability",
     "rust-unwrap": "reliability",
     "scala-broad-catch": "reliability",
+    # scanaislop round-9: the Python broad-catch joins its C# sibling.
+    "broad-except": "reliability",
     "csharp-console-leftover": "code-health",
     "csharp-linq-count": "code-health",
     "csharp-index-loop": "code-health",

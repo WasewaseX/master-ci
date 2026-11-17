@@ -78,13 +78,13 @@ class Client:
             if self.proc.stdin:
                 self.proc.stdin.close()
             self.proc.wait(timeout=15)
-        except Exception:
+        except Exception:  # noqa: BLE001 - best-effort shutdown; kill anyway
             self.proc.kill()
         tail = ""
         if self.proc.stderr:
             try:
                 tail = self.proc.stderr.read()[-400:]
-            except Exception:
+            except Exception:  # noqa: BLE001 - best-effort tail read
                 tail = ""
         return tail
 

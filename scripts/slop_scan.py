@@ -66,6 +66,7 @@ from slop_lcom4 import check_class_cohesion
 from slop_model import Finding, _finding
 from slop_patterns import CODE_EXTS, DOC_EXTS, FAMILY_OF_EXT, TODO_PATTERN, UI_EXTS
 from slop_py_checks import check_elided_code, check_placeholder_impl, check_py_ast
+from slop_py_family import check_py_print_debug
 from slop_reliability import (
     check_reliability_rating,
     check_shared_mutable_state,
@@ -100,6 +101,9 @@ def scan_code_file(
         # other families lean on the family scanners' own oracles.
         findings.extend(check_unclosed_resource(path, text))
         findings.extend(check_shared_mutable_state(path, text))
+        # Round-9: print() debug output, scoped like the other families'
+        # debug-print oracles (test paths, tools and entrypoints out).
+        findings.extend(check_py_print_debug(path, text, family, rel))
         # Test redundancy scopes itself to test paths via is_test_path;
         # production modules return empty before the AST is parsed.
         findings.extend(check_test_redundancy(path, text, rel))

@@ -94,7 +94,14 @@ ROUND8_SLUGS = {
     "duplicate-type-clean",
 }
 
-BENCH_SLUGS = SEED_SLUGS | ROUND8_SLUGS
+ROUND9_SLUGS = {
+    "py-broad-except",
+    "py-broad-declared-clean",
+    "py-print-debug",
+    "py-print-main-guard-clean",
+}
+
+BENCH_SLUGS = SEED_SLUGS | ROUND8_SLUGS | ROUND9_SLUGS
 
 
 def run_cli(*args: str, cwd: Path = _ROOT) -> subprocess.CompletedProcess[str]:
@@ -119,7 +126,7 @@ def test_manifests_cover_the_benchmark_table():
     """Every fixture dir declares exactly the table's slugs: seed + round-8."""
     rows = fb.load_benchmark(BENCH)
     assert {row.slug for row in rows} == BENCH_SLUGS
-    assert len(rows) == 46
+    assert len(rows) == 50
     assert {row.slug for row in rows} >= SEED_SLUGS
     for row in rows:
         assert row.expected in ("detected", "clean", "pending")
@@ -201,10 +208,10 @@ def test_table_run_exits_zero_all_proven():
     assert code == 0
     assert lines[0].split() == ["slug", "rule", "expected", "observed", "verdict"]
     data_rows = lines[1:-1]
-    assert len(data_rows) == 46
+    assert len(data_rows) == 50
     slugs = [line.split()[0] for line in data_rows]
     assert slugs == sorted(slugs)
-    assert lines[-1] == "46 fixtures: 46 pass, 0 fail, 0 pending"
+    assert lines[-1] == "50 fixtures: 50 pass, 0 fail, 0 pending"
 
 
 def test_json_run_shape_and_summary():
@@ -214,8 +221,8 @@ def test_json_run_shape_and_summary():
     assert code == 0
     assert {fixture["slug"] for fixture in payload["fixtures"]} == BENCH_SLUGS
     summary = payload["summary"]
-    assert summary["total"] == 46
-    assert summary["pass"] == 46 and summary["fail"] == 0 and summary["pending"] == 0
+    assert summary["total"] == 50
+    assert summary["pass"] == 50 and summary["fail"] == 0 and summary["pending"] == 0
 
 
 def test_failed_declaration_exits_one(tmp_path):

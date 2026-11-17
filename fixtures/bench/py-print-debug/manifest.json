@@ -1,0 +1,7 @@
+{
+  "engine": "slop_py_family",
+  "expected": "detected",
+  "reason": "print() debug output in a production module with no main guard",
+  "rule": "debug-print",
+  "slug": "py-print-debug"
+}

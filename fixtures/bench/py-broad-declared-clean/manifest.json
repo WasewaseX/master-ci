@@ -1,0 +1,7 @@
+{
+  "engine": "slop_py_family",
+  "expected": "clean",
+  "reason": "the coded noqa declares the broad catch - the same honors-declared-directives law the directive checks follow",
+  "rule": "broad-except",
+  "slug": "py-broad-declared-clean"
+}

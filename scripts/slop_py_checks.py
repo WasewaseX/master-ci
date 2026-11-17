@@ -1,4 +1,8 @@
-"""Deterministic content-defect checks: elided code, placeholders, Python AST."""
+"""Deterministic content-defect checks: elided code, placeholders, Python AST.
+
+The round-9 Python family column (broad-except, print debug) lives in
+``slop_py_family``; this module keeps the AST walk that drives both.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +13,7 @@ from typing import cast
 
 from slop_model import Finding, _finding
 from slop_patterns import ELIDED_PATTERNS, PLACEHOLDER_IMPL_PATTERNS, PLACEHOLDER_NOTE_PATTERNS
+from slop_py_family import check_py_broad_except_handler
 from slop_structural import BLOAT_MAX_PARAMS, GOD_FUNCTION_LINES, MAX_NESTING
 
 
@@ -333,7 +338,6 @@ def _py_star_import(path: Path, node: ast.ImportFrom) -> list[Finding]:
 _PY_NODE_CHECKS: dict[type[ast.AST], object] = {
     ast.FunctionDef: _py_def_findings,
     ast.AsyncFunctionDef: _py_def_findings,
-    ast.ExceptHandler: _py_handler_findings,
     ast.Call: _py_eval_findings,
     ast.ImportFrom: _py_star_import,
 }
@@ -348,7 +352,12 @@ def check_py_ast(path: Path, text: str, family: str) -> list[Finding]:
     except SyntaxError:
         return []
     findings: list[Finding] = []
+    lines = text.splitlines()
     for node in ast.walk(tree):
+        if isinstance(node, ast.ExceptHandler):
+            findings.extend(_py_handler_findings(path, node))
+            findings.extend(check_py_broad_except_handler(path, node, lines))
+            continue
         handler = _PY_NODE_CHECKS.get(type(node))
         if handler is not None:
             fn = cast("Callable[[Path, ast.AST], list[Finding]]", handler)

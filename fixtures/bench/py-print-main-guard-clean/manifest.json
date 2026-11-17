@@ -1,0 +1,7 @@
+{
+  "engine": "slop_py_family",
+  "expected": "clean",
+  "reason": "a file that runs as a tool is its own consumer - the main guard scopes the print to tool output",
+  "rule": "debug-print",
+  "slug": "py-print-main-guard-clean"
+}

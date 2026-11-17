@@ -56,13 +56,13 @@ from slop_density import MIN_CORPUS_LINES, DensityFacts
 from slop_model import Finding
 
 # The dimension's membership: the reliability-relevant findings the
-# scan already emits, plus the two AST-backed checks below. Round-7
-# adds the scanaislop failure-path column: async-void, broad catches,
-# hidden fallback, library panic, per-finding unwrap, scala catch.
+# scan already emits, plus the two AST-backed checks below. Rounds 7-9
+# add the scanaislop failure-path columns (C# and Python broad catches,
+# async-void, hidden fallback, library panic, unwrap, scala catch).
 _RELIABILITY_IDS = """
-bare-except empty-catch empty-rescue go-ignored-error java-broad-throws
-mutable-default redundant-try-catch shared-mutable-state silent-recovery
-swallowed-exception unclosed-resource unwrap-density
+bare-except broad-except empty-catch empty-rescue go-ignored-error
+java-broad-throws mutable-default redundant-try-catch shared-mutable-state
+silent-recovery swallowed-exception unclosed-resource unwrap-density
 csharp-async-void csharp-broad-catch csharp-sync-over-async
 hidden-fallback go-library-panic rust-unwrap scala-broad-catch
 """

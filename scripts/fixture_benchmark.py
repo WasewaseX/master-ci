@@ -53,6 +53,7 @@ from typing import Sequence
 
 from fixture_bench_fixtures import build_git_fixture
 from fixture_bench_round8 import _ROUND8_CLEAN_RULES, _ROUND8_DETECTED, _ROUND8_RENAMED
+from fixture_bench_round9 import ROUND9_CLEAN_RULES, ROUND9_DETECTED, ROUND9_RENAMED
 from slop_abstraction import check_abstraction
 from slop_bloat import check_bloat
 from slop_comments import extract_comments
@@ -70,6 +71,8 @@ from slop_lcom4 import check_class_cohesion
 from slop_lizard import lizard_available
 from slop_model import Finding
 from slop_patterns import FAMILY_OF_EXT
+from slop_py_checks import check_py_ast
+from slop_py_family import check_py_print_debug
 from slop_test_redundancy import check_test_redundancy
 from slop_ts_checks import check_ts_slop
 from slop_type_decls import check_duplicate_type_decls
@@ -276,6 +279,32 @@ for _CLEAN_SLUG, _CLEAN_RULE in _ROUND8_CLEAN_RULES.items():
         PROBES[_CLEAN_SLUG] = Probe("slop_type_decls", _CLEAN_RULE, _probe_type_decls)
     else:
         PROBES[_CLEAN_SLUG] = Probe("slop_family", _CLEAN_RULE, _probe_family_scan)
+
+
+def _probe_py_family(root: Path, files: list[Path]) -> list[Finding]:
+    """The round-9 Python family column over one fixture tree.
+
+    One shared probe for the tranche: broad-except is driven by the
+    check_py_ast walk, print-debug by its own module - the manifest
+    names the check id it judges, so one sweep answers every row. The
+    fixture filename is the rel path, which keeps the scoping
+    exemptions (entrypoints, script dirs) honest for the print rows.
+    """
+    del root
+    findings: list[Finding] = []
+    for path in sorted(files):
+        if path.suffix.lower() != ".py":
+            continue
+        text = read_text_lax(path)
+        findings.extend(check_py_ast(path, text, "py"))
+        findings.extend(check_py_print_debug(path, text, "py", path.name))
+    return findings
+
+
+for _SLUG in ROUND9_DETECTED:
+    PROBES[_SLUG] = Probe("slop_py_family", ROUND9_RENAMED.get(_SLUG, _SLUG), _probe_py_family)
+for _CLEAN_SLUG, _CLEAN_RULE in ROUND9_CLEAN_RULES.items():
+    PROBES[_CLEAN_SLUG] = Probe("slop_py_family", _CLEAN_RULE, _probe_py_family)
 
 
 # --- manifest loading and judging -------------------------------------------

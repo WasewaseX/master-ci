@@ -385,6 +385,42 @@ Profile presets (quick / standard / strict / custom) only change the
   promotion verdict stays `insufficient accuracy evidence` until the
   corpus reaches five rows per check.
 
+- **Round-9 scanaislop adoption (advisory):** the catalog's last two
+  Python columns, the only 58-pattern rules earlier rounds had not
+  adopted under another id, reversed into AST oracles in
+  `slop_py_family.py` (the family column split out of `slop_py_checks`
+  to keep both under the 400-line budget). `broad-except` flags a
+  typed handler naming `Exception`/`BaseException` whose body neither
+  re-raises nor declares intent - a lone `raise` is a translation
+  point (SonarQube's broad-catch rule exempts it the same way) and a
+  coded `# noqa: BLE001` is declared intent, the directive the
+  shipped linter reads; pass-only handlers stay owned by
+  `swallowed-exception`, so one handler yields one finding. The Python
+  `debug-print` oracle flags `print()` calls in production modules at
+  the same advisory file-level grade as the JVM/Go/JS oracles -
+  AST-backed, so comments and string interiors cannot false-positive -
+  and reverses the scanaislop scoping: test paths, script directories
+  (`scripts/`, `bin/`, `examples/`, `docs/`), entrypoint basenames
+  (`__main__`, `cli`, `main`, `manage`, `setup`, `conftest`) and
+  main-guard files print on purpose, a tool that runs as a process is
+  its own consumer. `broad-except` joins the reliability dimension's
+  membership (its C# sibling's grade); `debug-print` was already
+  categorized. Not adopted, reasons: the JS/TS `todo-stub` semantic
+  (the `todo-density` + `placeholder-impl` + `stub-function` trio and
+  the Rust `rust-stub` macro check already grade stub markers; a
+  per-marker TODO check would double-fire), `narrative-comment`
+  (`trivial-comments` already grades step-by-step narration at file
+  ratio) and the TS cast rules (`ts-suppression` has carried
+  `as any`/`as unknown as`/`@ts-ignore` since round 2). Dogfood: the
+  self-scan stays byte-identical to its baseline (blocking 0, 12
+  advisory findings, identical composition) after two of the engine's
+  own best-effort handlers gained their declared `# noqa: BLE001`
+  intent, and the clean accuracy controls gained zero findings.
+  Evidence: 16 contract tests (963 -> 979), fixture benchmark extended
+  to 50 rows (two positives, two nearest negatives, all PASS),
+  accuracy: `broad-except` and `debug-print` precision 1.00 recall 1.00
+  over one judged row each, ruff clean.
+
 - **v1.18 fail-closed architecture config:** a config that exists but
   cannot be honored now fails the run instead of being silently
   skipped - the CLI exits **2** (configuration error) with the reason on

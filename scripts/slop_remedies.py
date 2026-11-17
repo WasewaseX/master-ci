@@ -71,6 +71,9 @@ REMEDIES = {
         "Delete the twin or vary what it asserts; identical bodies prove one behavior N times"
     ),
     "bare-except": "Catch the specific exception and handle or re-raise it",
+    "broad-except": (
+        "Catch the specific exception type, re-raise, or declare the broad catch with # noqa"
+    ),
     "swallowed-exception": "Log, wrap or re-raise; a pass-only handler hides failures",
     "empty-catch": "Handle the error or propagate it; an empty catch hides bugs",
     "empty-rescue": "Handle the specific error class or re-raise",
