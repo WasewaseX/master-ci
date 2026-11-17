@@ -18,11 +18,11 @@ a hook that scanned everything would be too slow to stay installed.
 
 Invocation:
 - file list:      python3 scripts/hook_gate.py src/a.py src/b.ts
-- Claude Code:    python3 scripts/hook_gate.py --stdin-claude
-                  (PostToolUse hook: reads the tool payload on stdin,
-                  gates the file the agent just edited)
-- pre-commit:     python3 scripts/hook_gate.py $(git diff --cached
-                  --name-only --diff-filter=ACMR)
+- Claude Code:      python3 scripts/hook_gate.py --stdin-claude
+                    (PostToolUse hook: reads the tool payload on stdin,
+                    gates the file the agent just edited)
+- pre-commit:       python3 scripts/hook_gate.py $(git diff --cached
+                    --name-only --diff-filter=ACMR)
 
 Exit codes: 0 clean or advisory-only; 1 at least one blocking finding;
 2 the gate itself was misconfigured (no files, an unusable root).

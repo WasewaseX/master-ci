@@ -7,17 +7,18 @@ wired them into an agent's edit loop. This generator writes the two
 hook shapes that matter, plus a recipe sheet for agents without a hook
 API:
 
-- ``--agent claude``     Claude Code PostToolUse hook. When
-                         .claude/settings.json does not exist it is
-                         created; when it exists the hook block is
-                         written to .claude/master-ci-hook.json and
-                         printed for a manual merge - the generator
-                         never silently rewrites a consumer's settings.
-- ``--agent pre-commit`` .git/hooks/pre-commit that gates the staged
-                         files on every commit. Refused when the hook
-                         already exists unless --force.
-- ``--agent recipe``     print the command lines for agents and shells
-                         without a hook API (Codex, plain editors).
+- ``--agent claude``    Claude Code PostToolUse hook. When
+                        .claude/settings.json does not exist it is
+                        created; when it exists the hook block is
+                        written to .claude/master-ci-hook.json and
+                        printed for a manual merge - the generator
+                        never silently rewrites a consumer's settings.
+- ``--agent pre-commit``
+                        .git/hooks/pre-commit that gates the staged
+                        files on every commit. Refused when the hook
+                        already exists unless --force.
+- ``--agent recipe``    print the command lines for agents and shells
+                        without a hook API (Codex, plain editors).
 
 Exit codes: 0 written or printed; 2 refused (an existing file the
 generator will not overwrite without --force, or an unusable root).
@@ -60,16 +61,16 @@ exec python3 scripts/hook_gate.py $changed
 RECIPES = """# master-ci per-edit recipes
 
 Claude Code (settings.json hooks -> PostToolUse):
-  python3 scripts/hook_install.py --agent claude
+    python3 scripts/hook_install.py --agent claude
 
 Git (every commit, staged files only):
-  python3 scripts/hook_install.py --agent pre-commit
+    python3 scripts/hook_install.py --agent pre-commit
 
 Any agent with a run-after-edit command (Codex, editors):
-  python3 scripts/hook_gate.py <file> [<file> ...]
+    python3 scripts/hook_gate.py <file> [<file> ...]
 
 Claude Code PostToolUse payload (one shot, manual):
-  python3 scripts/hook_gate.py --stdin-claude
+    python3 scripts/hook_gate.py --stdin-claude
 """
 
 

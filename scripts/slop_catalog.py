@@ -16,9 +16,9 @@ exact even on an empty repository and costs no analysis time. Its
 contract test pins three invariants:
 
 - every REMEDIES key appears exactly once (no drift between the
-  registry and the catalog);
+    registry and the catalog);
 - the severity label always agrees with ``is_blocking`` (including the
-  --enforce-bloat escalation, which the caller can pass in);
+    --enforce-bloat escalation, which the caller can pass in);
 - every row carries a category from the taxonomy.
 """
 
