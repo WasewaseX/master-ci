@@ -145,6 +145,37 @@ ADVISORY_ONLY_CHECKS = frozenset(
         "ui-placeholder-image",
         "ui-identical-cards",
         "ui-em-dash-overuse",
+        # scanaislop round-8 adoption (bulk, 2026-11): the C#, C/C++ and
+        # TS columns reversed into zero-dependency oracles, plus the Go
+        # panic, per-finding Rust unwrap, Scala broad catch and duplicate
+        # type shape. Judgment calls a reviewer confirms - advisory.
+        "csharp-async-void",
+        "csharp-broad-catch",
+        "csharp-console-leftover",
+        "csharp-empty-catch-rethrow",
+        "csharp-if-ladder",
+        "csharp-index-loop",
+        "csharp-linq-count",
+        "csharp-not-implemented",
+        "csharp-null-forgiving",
+        "csharp-redundant-doc-comment",
+        "csharp-string-concat-in-loop",
+        "csharp-suppressed-warning",
+        "csharp-sync-over-async",
+        "cpp-c-style-cast",
+        "cpp-define-constant",
+        "cpp-endl-in-stream",
+        "cpp-iostream-leftover",
+        "cpp-manual-delete",
+        "cpp-not-implemented",
+        "cpp-null-literal",
+        "cpp-using-namespace-std-in-header",
+        "redundant-type-coercion",
+        "hidden-fallback",
+        "duplicate-type-declaration",
+        "go-library-panic",
+        "rust-unwrap",
+        "scala-broad-catch",
         # v1.21 roadmap item 4: measured test assurance. The gate itself
         # fails the build below the floor; the per-file findings stay
         # advisory so the dimension table carries the detail.

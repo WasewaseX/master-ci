@@ -239,4 +239,91 @@ REMEDIES = {
         "Add the declared structure or narrow the rule's glob; a required "
         "pattern exists so readers can rely on it"
     ),
+    # scanaislop round-8 adoption: the C# column.
+    "csharp-async-void": (
+        "Return Task instead of async void; only event handlers may stay void"
+    ),
+    "csharp-broad-catch": (
+        "Catch the specific exception type the code can recover from and "
+        "use the caught exception when logging"
+    ),
+    "csharp-console-leftover": (
+        "Remove the Console/Debug/Trace output or route it through a logger"
+    ),
+    "csharp-empty-catch-rethrow": (
+        "Delete the try/catch or add real handling; a bare rethrow adds only nesting"
+    ),
+    "csharp-if-ladder": (
+        "Convert the constant-comparison ladder into a switch expression or dispatch table"
+    ),
+    "csharp-index-loop": (
+        "Use foreach; keep the indexed for only when the index does real work"
+    ),
+    "csharp-linq-count": (
+        "Use .Any() for existence; use the Count property, not .Count(), for sizes"
+    ),
+    "csharp-not-implemented": (
+        "Implement the member or remove it; a stub fails the caller at runtime"
+    ),
+    "csharp-null-forgiving": (
+        "Check for null (or contract it) instead of silencing the nullable warning with !"
+    ),
+    "csharp-redundant-doc-comment": (
+        "Delete the summary or document the constraint the signature cannot say"
+    ),
+    "csharp-string-concat-in-loop": (
+        "Build the string with a StringBuilder (or string.Join) instead of +="
+    ),
+    "csharp-suppressed-warning": (
+        "Fix the warning or document the justification beside the suppression"
+    ),
+    "csharp-sync-over-async": (
+        "Await the task all the way up; blocking .Result/.Wait() deadlocks under "
+        "a synchronization context"
+    ),
+    # scanaislop round-8 adoption: the C/C++ column.
+    "cpp-c-style-cast": (
+        "Use static_cast / const_cast / reinterpret_cast so the conversion is named"
+    ),
+    "cpp-define-constant": (
+        "Use constexpr or const so the constant has type, scope and a debugger name"
+    ),
+    "cpp-endl-in-stream": (
+        "Use '\\n'; flush explicitly only when the reader genuinely needs it"
+    ),
+    "cpp-iostream-leftover": (
+        "Remove the debug stream output or route it through the project's logger"
+    ),
+    "cpp-manual-delete": (
+        "Own the pointer with std::unique_ptr or a container; manual delete leaks"
+    ),
+    "cpp-not-implemented": (
+        "Implement the path or remove it; the stub fails at runtime, not compile time"
+    ),
+    "cpp-null-literal": (
+        "Use nullptr; NULL is an integer constant in disguise and mis-overloads"
+    ),
+    "cpp-using-namespace-std-in-header": (
+        "Qualify std:: names in the header or move the using into a translation unit"
+    ),
+    # scanaislop round-8 adoption: TS precision, Go, Rust, Scala.
+    "redundant-type-coercion": (
+        "Delete the String/Number/Boolean conversion; the signature already guarantees it"
+    ),
+    "hidden-fallback": (
+        "Surface the failure (throw, Result, logged fallback) instead of returning "
+        "a safe-looking default"
+    ),
+    "duplicate-type-declaration": (
+        "Keep one declaration and import it; two copies drift apart silently"
+    ),
+    "go-library-panic": (
+        "Return an error; panic is for programmer error in main, not library failures"
+    ),
+    "rust-unwrap": (
+        "Handle the Err/None or use expect with the invariant stated; unwrap panics"
+    ),
+    "scala-broad-catch": (
+        "Catch the specific exception type the recover clause can handle"
+    ),
 }

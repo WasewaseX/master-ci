@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from slop_files import is_test_path
 from slop_model import Finding, _finding
 from slop_patterns import (
     BLANKET_SUPPRESS,
@@ -31,42 +32,77 @@ JVM_DEBUG_PRINT = re.compile(r"\bSystem\.(?:out|err)\.print(?:ln|f)?\s*\(")
 JVM_BROAD_THROWS = re.compile(r"\bthrows\s+(?:[\w.]+\.)?(?:Exception|Throwable)\b")
 JVM_IMPORT = re.compile(r"^\s*import\s+(?:static\s+)?([\w.]+)\s*;", re.MULTILINE)
 
-
-def _is_test_rel(rel: str) -> bool:
-    lowered = rel.lower()
-    return ".test." in lowered or ".spec." in lowered or "/test" in lowered
+# scanaislop round-8 adoption: the Go panic column, the Rust per-finding
+# unwrap (the density verdict keeps its own aggregate) and the Scala
+# broad-catch clause.
+GO_PANIC = re.compile(r"\bpanic\s*\(")
+SCALA_BROAD_CATCH = re.compile(
+    r"case\s+(?:_\s*:|\w+\s*:)\s*(?:[\w.]+\.)?(?:Exception|Throwable)\b"
+)
 
 
 def check_jvm_slop(path: Path, text: str, family: str, rel: str) -> list[Finding]:
-    """Java-column signals from scanaislop's languages page (advisory)."""
-    if family != "jvm" or not path.suffix.lower() == ".java" or _is_test_rel(rel):
+    """Java-column signals from scanaislop's languages page (advisory).
+
+    The Java oracles run on ``.java``; the Scala broad-catch clause joins
+    on ``.scala`` - same family, different suffix, one gate.
+    """
+    if family != "jvm" or is_test_path(rel):
+        return []
+    suffix = path.suffix.lower()
+    if suffix not in (".java", ".scala"):
         return []
     findings: list[Finding] = []
-    prints = len(JVM_DEBUG_PRINT.findall(text))
-    if prints:
-        findings.append(
-            Finding(
-                path=str(path),
-                line=1,
-                check="debug-print",
+    if suffix == ".java":
+        prints = len(JVM_DEBUG_PRINT.findall(text))
+        if prints:
+            findings.append(Finding(
+                path=str(path), line=1, check="debug-print",
                 message=f"System.out debug output ({prints}x)",
-                weight=1,
-                advisory=True,
+                weight=1, advisory=True,
+            ))
+        for match in JVM_BROAD_THROWS.finditer(text):
+            findings.append(
+                _finding(
+                    path,
+                    text,
+                    match.start(),
+                    "java-broad-throws",
+                    f"broad {match.group(0).split()[-1]} thrown - declare the specific type",
+                    1,
+                )
             )
-        )
-    for match in JVM_BROAD_THROWS.finditer(text):
-        findings.append(
-            _finding(
-                path,
-                text,
-                match.start(),
-                "java-broad-throws",
-                f"broad {match.group(0).split()[-1]} thrown - declare the specific type",
-                1,
-            )
-        )
-    findings.extend(_jvm_phantom_imports(path, text))
+        findings.extend(_jvm_phantom_imports(path, text))
+    findings.extend(_scala_broad_catch(path, text))
     return findings
+
+
+def _scala_broad_catch(path: Path, text: str) -> list[Finding]:
+    """Scala catch clauses handling Exception/Throwable wholesale.
+
+    Immediately-rethrowing clauses are exempt (recovery-neutral, the same
+    exemption redundant-try-catch grants). Advisory: the oracle reads one
+    clause line beyond the ``=>``, no more.
+    """
+    if not path.suffix.lower() == ".scala":
+        return []
+    findings: list[Finding] = []
+    for match in SCALA_BROAD_CATCH.finditer(text):
+        tail = text[match.end():match.end() + 80]
+        clause = tail.split("=>", 1)[-1].split("\n")[0] if "=>" in tail else ""
+        if "throw" not in clause:
+            findings.append(
+                _finding(
+                    path,
+                    text,
+                    match.start(),
+                    "scala-broad-catch",
+                    "catch clause handles Exception/Throwable wholesale - "
+                    "recover from the specific type it can handle",
+                    1,
+                )
+            )
+    return findings[:5]
 
 
 def _jvm_phantom_imports(path: Path, text: str) -> list[Finding]:
@@ -194,7 +230,31 @@ def check_go(path: Path, text: str, family: str, rel: str) -> list[Finding]:
                     advisory=True,
                 )
             )
+        findings.extend(_go_library_panic(path, text))
     return findings
+
+
+def _go_library_panic(path: Path, text: str) -> list[Finding]:
+    """scanaislop round-8: panic unwinds the caller's goroutine instead of
+    returning an error; `package main` binaries may, libraries may not."""
+    if "package main" in text[:200] or "package main" in text[-200:]:
+        return []
+    for match in GO_PANIC.finditer(text):
+        line_start = text.rfind("\n", 0, match.start()) + 1
+        if text[line_start:match.start()].strip().startswith("//"):
+            continue
+        return [
+            _finding(
+                path,
+                text,
+                match.start(),
+                "go-library-panic",
+                "panic() in a library package - return an error the caller "
+                "can handle instead of unwinding its goroutine",
+                1,
+            )
+        ]
+    return []
 
 
 def check_rust(path: Path, text: str, family: str) -> list[Finding]:
@@ -224,7 +284,35 @@ def check_rust(path: Path, text: str, family: str) -> list[Finding]:
                 advisory=True,
             )
         )
+    findings.extend(_rust_unwraps(path, text))
     return findings
+
+
+def _rust_unwraps(path: Path, text: str) -> list[Finding]:
+    """Per-finding unwraps in production code (scanaislop round-8).
+
+    Test-gated by both the path and the in-file ``#[cfg(test)]`` marker:
+    only unwraps before the marker are flagged, so a mixed file's test
+    half stays silent. Advisory - an unwrap behind a documented invariant
+    is a judgment call the oracle cannot model.
+    """
+    cfg_test = text.find("#[cfg(test)]")
+    findings: list[Finding] = []
+    for match in RUST_UNWRAP.finditer(text):
+        if cfg_test != -1 and match.start() > cfg_test:
+            break
+        findings.append(
+            _finding(
+                path,
+                text,
+                match.start(),
+                "rust-unwrap",
+                "unwrap() panics on None/Err - handle it or document the "
+                "invariant that makes it safe",
+                1,
+            )
+        )
+    return findings[:5]
 
 
 def check_debug_left(path: Path, text: str, family: str, rel: str) -> list[Finding]:

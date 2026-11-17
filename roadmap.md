@@ -310,3 +310,49 @@ clang tooling) replaces the name-search heuristics as each language's
 accuracy evidence justifies it; corpus widening per
 benchmarks/accuracy/README.md; CI modularity and caching after the
 measurements are trusted.
+
+## Round-8 - the scanaislop bulk adoption (2026-11-17)
+
+The user directive: reverse-engineer the aislop rule catalog
+(github.com/scanaislop/aislop, 66-rule ai-slop engine) and bulk-add
+everything the engine does not yet cover. The six prior adoption
+rounds had taken the catalog's first 30 rules; this round took the
+rest that fits a zero-dependency oracle - 27 new check ids in four
+modules:
+
+| Batch | Module | Checks |
+| ----- | ------ | ------ |
+| C# column (13) | slop_csharp.py | async-void, broad-catch, console-leftover, empty-catch-rethrow, if-ladder, index-loop, linq-count, not-implemented, null-forgiving, redundant-doc-comment, string-concat-in-loop, suppressed-warning, sync-over-async |
+| C/C++ column (8) | slop_cpp.py | c-style-cast, define-constant, endl-in-stream, iostream-leftover, manual-delete, not-implemented, null-literal, using-namespace-std-in-header |
+| TS precision (2) | slop_ts_checks.py | redundant-type-coercion, hidden-fallback |
+| Cross-file (1) | slop_type_decls.py | duplicate-type-declaration |
+| Family columns (3) | slop_family.py | go-library-panic, rust-unwrap, scala-broad-catch |
+
+Not adopted, with the reason recorded: `unused-css` (needs a
+project-wide CSS reference graph, a different oracle class than the
+line engine owns), `duplicate-type-declaration` structural equality
+(textual normalization only), and the three TS cast/directive rules
+already covered by the combined `ts-suppression` check since round 2.
+
+Discipline kept from the v2.18 thesis - the bulk-add did not bend a
+single measurement law:
+
+- every check advisory by registry law; the reliability rating prices
+  exactly the seven failure-path ids it categorizes;
+- 29 new contract tests (934 -> 963) pin each positive, nearest
+  negative and the advisory flag;
+- the dogfood self-scan is byte-identical to the v2.18 baseline
+  (blocking 0, 12 advisory findings, all dimensions A) - the engine
+  swallowed its own medicine twice: four new functions were flattened
+  under the cognitive budget 15, and the test module loads per the
+  conftest convention after the boilerplate rule flagged its preamble;
+- fixture benchmark 12/12, accuracy clean controls untouched (zero
+  round-8 findings), ruff clean, bloat budgets held (all new modules
+  under 400 non-blank lines).
+
+Deliberate language limits, stated per rule in the module docstrings:
+the oracles are line/regex-grade, not Roslyn/clang/tree-sitter-grade;
+each finding names the pattern, not the intent. Language-native
+parsers replace these when the accuracy evidence justifies them
+(audit P2 order, unchanged).
+

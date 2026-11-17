@@ -27,6 +27,8 @@ from slop_commentary import check_unknown_directives
 from slop_comments import extract_comments, scan_comment_vocabulary
 from slop_corpus import measure_corpus
 from slop_coupling import check_coupling_metrics, measure_coupling
+from slop_cpp import check_cpp_slop
+from slop_csharp import check_csharp_slop
 from slop_cycles import check_import_cycles
 from slop_dead import check_orphan_modules, check_unused_declarations
 from slop_debt import check_debt_metrics
@@ -71,6 +73,8 @@ from slop_reliability import (
 )
 from slop_residue import check_residue
 from slop_test_redundancy import check_test_redundancy
+from slop_ts_checks import check_ts_slop
+from slop_type_decls import check_duplicate_type_decls
 from slop_ui_prose import check_ui_slop, scan_doc_file
 
 
@@ -106,7 +110,10 @@ def scan_code_file(
     findings.extend(check_rust(path, text, family))
     findings.extend(check_debug_left(path, text, family, rel))
     findings.extend(check_js_slop(path, text, family, rel))
+    findings.extend(check_ts_slop(path, text, family, rel))
     findings.extend(check_jvm_slop(path, text, family, rel))
+    findings.extend(check_csharp_slop(path, text, family, rel))
+    findings.extend(check_cpp_slop(path, text, family))
     findings.extend(check_residue(path, text, family, rel, comments))
     findings.extend(check_ui_slop(path, text, ext))
     findings.extend(check_blanket_suppression(path, text))
@@ -270,6 +277,7 @@ def _repo_level_findings(
     """
     findings: list[Finding] = []
     findings.extend(scan_duplicates(files, root, globs))
+    findings.extend(check_duplicate_type_decls(root, files, globs))
     findings.extend(check_unused_declarations(root, files, globs))
     findings.extend(check_unused_dependencies(root, files, globs))
     findings.extend(check_orphan_modules(root, files, globs))

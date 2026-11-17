@@ -337,6 +337,48 @@ Profile presets (quick / standard / strict / custom) only change the
   blocking-grade by construction. master-ci holds itself to this: the
   template ships its own config (slop modules may not import MCP
   modules; every engine module keeps PEP 563).
+- **Round-8 scanaislop adoption (advisory):** the full C# and C/C++
+  columns, the TypeScript precision pair and the Go/Rust/Scala
+  failure-path rules, reversed into zero-dependency line oracles - 27
+  new check ids, every one a judgment call the registry keeps advisory.
+  C# (`slop_csharp.py`): `csharp-async-void` (event-handler `On*` names
+  exempt), `csharp-broad-catch` (the caught variable must be read or the
+  block must rethrow), `csharp-empty-catch-rethrow`, `csharp-console-leftover`
+  (test paths exempt), `csharp-linq-count`, `csharp-index-loop`,
+  `csharp-if-ladder` (four or more constant comparisons on one subject),
+  `csharp-not-implemented`, `csharp-null-forgiving` (`!=` is not a
+  null-forgiving operator), `csharp-redundant-doc-comment`,
+  `csharp-string-concat-in-loop` (brace-depth scope over comment-free
+  text), `csharp-suppressed-warning` (`#pragma` needs a reason comment,
+  `[SuppressMessage]` needs a Justification) and `csharp-sync-over-async`.
+  C/C++ (`slop_cpp.py`): the cast, `#define`-constant and `NULL` rules
+  run on C++-only extensions - a plain `.h` may be compiled as C, where
+  `nullptr`/`constexpr` do not exist, so flagging it would be a false
+  positive by construction; `cpp-endl-in-stream`, `cpp-iostream-leftover`
+  (files with a `main` are exempt), `cpp-manual-delete`,
+  `cpp-not-implemented` (matched on the unstripped text - the
+  "not implemented" literal IS the signal) and
+  `cpp-using-namespace-std-in-header` run on every C-family file.
+  TypeScript (`slop_ts_checks.py`): `redundant-type-coercion` flags
+  `String()`/`Number()`/`Boolean()` applied to a parameter the signature
+  already types as that primitive, inside a 30-line window; `hidden-fallback`
+  flags catch blocks that answer a failed call with a safe-looking
+  default. Cross-file (`slop_type_decls.py`): `duplicate-type-declaration`
+  reports one exported shape held by two or more files - same name and
+  normalized body only, a same-name-different-body pair is not flagged.
+  Family columns: `go-library-panic` (panic outside `package main` and
+  tests), `rust-unwrap` (per-finding, everything after the in-file
+  `#[cfg(test)]` marker stays silent, in addition to the existing
+  `unwrap-density` aggregate) and `scala-broad-catch` (`.scala` joins the
+  JVM gate; immediately-rethrowing clauses are exempt). The reliability
+  rating prices the failure-path seven (`csharp-async-void`,
+  `csharp-broad-catch`, `csharp-sync-over-async`, `hidden-fallback`,
+  `go-library-panic`, `rust-unwrap`, `scala-broad-catch`) at the
+  advisory weight, so the rating and the dimension table cannot
+  disagree. Dogfood: adding all 27 left the self-scan byte-identical to
+  its v2.18 baseline (blocking 0, 12 advisory findings, all dimensions
+  A), and the clean accuracy controls gained zero findings.
+
 - **v1.18 fail-closed architecture config:** a config that exists but
   cannot be honored now fails the run instead of being silently
   skipped - the CLI exits **2** (configuration error) with the reason on
