@@ -30,10 +30,9 @@ import re
 from pathlib import Path
 
 from slop_commentary import check_commentary
+from slop_dispatch import check_dispatch_ladders
 from slop_files import is_test_path
 from slop_model import Finding
-
-LADDER_MIN = 4  # branches before a hand-rolled dispatch table is flagged
 
 GENERIC_NAMES = frozenset(
     {
@@ -150,83 +149,6 @@ def check_range_len_loop(path: Path, tree: ast.AST) -> list[Finding]:
                     line=node.lineno,
                     check="range-len-loop",
                     message="for i in range(len(...)) - iterate directly or enumerate",
-                    weight=1,
-                    advisory=True,
-                )
-            )
-    return findings
-
-
-def _isinstance_subject(test: ast.expr) -> str | None:
-    """Subject key when the test is isinstance(name, ...), else None."""
-    if (
-        isinstance(test, ast.Call)
-        and isinstance(test.func, ast.Name)
-        and test.func.id == "isinstance"
-        and test.args
-        and isinstance(test.args[0], ast.Name)
-    ):
-        return f"isinstance:{test.args[0].id}"
-    return None
-
-
-def _eq_string_subject(test: ast.expr) -> str | None:
-    """Subject key when the test is name == 'literal', else None."""
-    if (
-        isinstance(test, ast.Compare)
-        and test.ops
-        and isinstance(test.ops[0], ast.Eq)
-        and isinstance(test.left, ast.Name)
-        and test.comparators
-        and isinstance(test.comparators[0], ast.Constant)
-        and isinstance(test.comparators[0].value, str)
-    ):
-        return f"eq:{test.left.id}"
-    return None
-
-
-def _chain_subjects(root: ast.If) -> dict[str, int]:
-    """Count branch tests per subject across one if/elif chain."""
-    subjects: dict[str, int] = {}
-    node: ast.If | None = root
-    while node is not None:
-        subject = _isinstance_subject(node.test) or _eq_string_subject(node.test)
-        if subject:
-            subjects[subject] = subjects.get(subject, 0) + 1
-        nxt = (
-            node.orelse[0] if len(node.orelse) == 1 and isinstance(node.orelse[0], ast.If) else None
-        )
-        node = nxt
-    return subjects
-
-
-def check_dispatch_ladders(path: Path, tree: ast.AST) -> list[Finding]:
-    """Four-plus isinstance or ==-string branches testing the same subject."""
-    chain_members: set[int] = set()
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.If)
-            and len(node.orelse) == 1
-            and isinstance(node.orelse[0], ast.If)
-        ):
-            chain_members.add(id(node.orelse[0]))
-    findings: list[Finding] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.If) or id(node) in chain_members:
-            continue
-        for subject, count in _chain_subjects(node).items():
-            if count < LADDER_MIN:
-                continue
-            findings.append(
-                Finding(
-                    path=str(path),
-                    line=node.lineno,
-                    check=(
-                        "isinstance-ladder"
-                        if subject.startswith("isinstance:")
-                        else "repetitive-dispatch"
-                    ),
-                    message=f"{count} branches on one subject - use a dispatch table",
                     weight=1,
                     advisory=True,
                 )

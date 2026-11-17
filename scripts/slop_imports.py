@@ -221,35 +221,58 @@ def _is_declared(top: str, declared: set[str]) -> bool:
     return norm.replace("-", "") in {d.replace("-", "") for d in declared}
 
 
+def _py_import_tops(tree: ast.AST) -> list[tuple[str, int]]:
+    """(top-level module, line) for every absolute import in the module.
+
+    The inventory comes from the AST, not a line regex: prose such as
+    the docstring sentence "from a small seed:" is not an import, and no
+    sentence can become one (the self-scan false positive of 2026-11-18,
+    on accuracy_benchmark.py). Relative imports (level > 0) have no
+    external module to verify and are skipped.
+    """
+    tops: list[tuple[str, int]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            tops.extend((alias.name.split(".")[0], node.lineno) for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            tops.append((node.module.split(".")[0], node.lineno))
+    return tops
+
+
 def _py_undeclared_findings(
     path: Path,
     text: str,
     py_manifests: tuple[set[str], set[str]],
 ) -> list[Finding]:
-    """Python imports that no manifest declares (advisory)."""
+    """Python imports that no manifest declares (advisory).
+
+    A file the AST cannot parse yields no findings here -
+    analysis-coverage already reports it as parse-failed, so the
+    silence is named, never hidden.
+    """
     declared, local = py_manifests
     if not declared and not local:
         return []
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return []
     findings: list[Finding] = []
     seen: set[str] = set()
-    for match in re.finditer(r"^\s*(?:import|from)\s+([A-Za-z_][\w.]*)", text, re.MULTILINE):
-        top = match.group(1).split(".")[0]
-        if top in seen:
+    for top, lineno in _py_import_tops(tree):
+        if top in seen or top in STD_LIB_NAMES or top in local or _is_declared(top, declared):
             continue
         seen.add(top)
-        if top in STD_LIB_NAMES or top in local or _is_declared(top, declared):
-            continue
         findings.append(
-            _finding(
-                path,
-                text,
-                match.start(),
-                "undeclared-import",
-                (
+            Finding(
+                path=str(path),
+                line=lineno,
+                check="undeclared-import",
+                message=(
                     f"import {top!r} is neither stdlib, local nor declared in a "
                     "manifest - verify it exists (slopsquatting)"
                 ),
-                2,
+                weight=2,
             )
         )
     return findings[:5]

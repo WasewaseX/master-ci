@@ -72,9 +72,6 @@ def render_markdown(rows: list[dict]) -> str:
         severity = row["severity"]
         if row["structural_budget"]:
             severity += " (structural budget)"
-        lines.append(
-            f"| `{row['check']}` | {row['category']} | {severity} "
-            f"| {row['remedy']} |"
-        )
+        lines.append(f"| `{row['check']}` | {row['category']} | {severity} | {row['remedy']} |")
     lines.append("")
     return "\n".join(lines)

@@ -183,6 +183,17 @@ def _block_clones(
     return len(covered), worst
 
 
+# Corpus state -> coverage counter. A state outside this table is not a
+# documented exclusion, so exclude() ignores it instead of guessing.
+_EXCLUSION_COUNTERS = {
+    "test": "excluded_test",
+    "generated": "excluded_generated",
+    "ignored": "excluded_ignored",
+    "nonsource": "excluded_nonsource",
+    "unsupported": "unsupported",
+}
+
+
 class _CorpusAccumulator:
     """The per-file accumulation: counters, sequences and coverage counts."""
 
@@ -208,16 +219,9 @@ class _CorpusAccumulator:
 
     def exclude(self, state: str) -> None:
         """Count one file under a documented exclusion (or unsupported)."""
-        if state == "test":
-            self.counts["excluded_test"] += 1
-        elif state == "generated":
-            self.counts["excluded_generated"] += 1
-        elif state == "ignored":
-            self.counts["excluded_ignored"] += 1
-        elif state == "nonsource":
-            self.counts["excluded_nonsource"] += 1
-        elif state == "unsupported":
-            self.counts["unsupported"] += 1
+        key = _EXCLUSION_COUNTERS.get(state)
+        if key is not None:
+            self.counts[key] += 1
 
     def name_unsupported(self, rel: str) -> None:
         if len(self.unsupported) < MAX_COVERAGE_NAMES:

@@ -734,6 +734,100 @@ def test_repetitive_string_dispatch_flagged(tmp_path):
     assert any(f.check == "repetitive-dispatch" for f in findings)
 
 
+def test_guard_if_dispatch_flagged(tmp_path):
+    # scanaislop claim triaged 2026-11-18 and turned into a fixture: four
+    # SEPARATE guard ifs (no elif) dispatching on one subject. The
+    # pre-2026-11-18 elif-only walk missed this shape, which
+    # flaky_parsers.py actually shipped.
+    code = (
+        "def parse_file(suffix):\n"
+        "    if suffix == '.xml':\n"
+        "        return 1\n"
+        "    if suffix == '.trx':\n"
+        "        return 2\n"
+        "    if suffix == '.gojson':\n"
+        "        return 3\n"
+        "    if suffix == '.libtest':\n"
+        "        return 4\n"
+        "    raise ValueError(suffix)\n"
+    )
+    findings = scan_py(tmp_path, code)
+    assert any(f.check == "repetitive-dispatch" for f in findings)
+
+
+def test_guard_isinstance_run_flagged(tmp_path):
+    code = (
+        "def route(x):\n"
+        "    if isinstance(x, int):\n"
+        "        return 1\n"
+        "    if isinstance(x, float):\n"
+        "        return 2\n"
+        "    if isinstance(x, str):\n"
+        "        return 3\n"
+        "    if isinstance(x, bytes):\n"
+        "        return 4\n"
+        "    return 0\n"
+    )
+    findings = scan_py(tmp_path, code)
+    assert any(f.check == "isinstance-ladder" for f in findings)
+
+
+def test_three_guard_ifs_stay_silent(tmp_path):
+    code = (
+        "def parse_file(suffix):\n"
+        "    if suffix == '.xml':\n"
+        "        return 1\n"
+        "    if suffix == '.trx':\n"
+        "        return 2\n"
+        "    if suffix == '.gojson':\n"
+        "        return 3\n"
+        "    raise ValueError(suffix)\n"
+    )
+    findings = scan_py(tmp_path, code)
+    assert not any(f.check == "repetitive-dispatch" for f in findings)
+
+
+def test_non_exiting_guards_are_not_dispatch(tmp_path):
+    # Guards whose branches do not leave the block are independent
+    # conditional features on one subject - flagging them would be the
+    # false-positive factory this rule must never become.
+    code = (
+        "def tune(mode):\n"
+        "    if mode == 'strict':\n"
+        "        level = 2\n"
+        "    if mode == 'strict':\n"
+        "        retry = True\n"
+        "    if mode == 'strict':\n"
+        "        warn = True\n"
+        "    if mode == 'strict':\n"
+        "        echo = True\n"
+        "    return mode\n"
+    )
+    findings = scan_py(tmp_path, code)
+    assert not any(f.check == "repetitive-dispatch" for f in findings)
+
+
+def test_docstring_prose_is_not_an_import(tmp_path):
+    # Self-scan false positive (2026-11-18): the pre-AST inventory ran a
+    # line regex over raw text and read the docstring sentence "from a
+    # small seed:" as an import of a module named 'a'. Prose is not code;
+    # the AST inventory cannot make this mistake.
+    (tmp_path / "requirements.txt").write_text("boto3\n", encoding="utf-8")
+    code = (
+        '"""The accuracy benchmark: labeled rows, precision, recall.\n'
+        "\n"
+        "This harness is honest and from a small seed:\n"
+        "one labeled row at a time.\n"
+        '"""\n'
+        "import boto3\n"
+        "\n"
+        "def client():\n"
+        "    return boto3.client\n"
+    )
+    findings = scan_py(tmp_path, code)
+    assert not [f for f in findings if f.check == "undeclared-import"]
+
+
 def test_duplicate_top_level_import_flagged(tmp_path):
     code = "import os\nimport sys\nimport os\n\n\ndef f():\n    return os.sep\n"
     findings = scan_py(tmp_path, code)

@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from slop_abstraction import check_abstraction
-from slop_arch import ArchConfigError, check_architecture_rules  # noqa: F401
+from slop_arch import check_architecture_rules
 from slop_bloat import check_bloat
 from slop_cognitive import check_cognitive
 from slop_commentary import check_unknown_directives

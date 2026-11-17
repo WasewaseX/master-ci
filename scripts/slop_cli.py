@@ -338,4 +338,3 @@ def _quality_ratchet(args: argparse.Namespace, findings: list) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

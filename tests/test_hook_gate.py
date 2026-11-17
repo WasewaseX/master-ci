@@ -135,9 +135,7 @@ def test_install_pre_commit_writes_and_refuses(hook_root):
     # A second run refuses; --force replaces.
     refused = hook_install.main(["--agent", "pre-commit", "--root", str(hook_root)])
     assert refused == 2
-    forced = hook_install.main(
-        ["--agent", "pre-commit", "--root", str(hook_root), "--force"]
-    )
+    forced = hook_install.main(["--agent", "pre-commit", "--root", str(hook_root), "--force"])
     assert forced == 0
 
 

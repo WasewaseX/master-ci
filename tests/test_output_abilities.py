@@ -22,9 +22,7 @@ CLI = REPO / "scripts" / "slop_cli.py"
 
 
 def _run_cli(*argv: str) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [sys.executable, str(CLI), *argv], capture_output=True, text=True
-    )
+    return subprocess.run([sys.executable, str(CLI), *argv], capture_output=True, text=True)
 
 
 # ---------------------------------------------------------------------------

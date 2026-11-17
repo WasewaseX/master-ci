@@ -443,3 +443,75 @@ modules, and a masked second error (an undefined Task name) surfaced
 once the first cleared. Fixed in 7a37557 by renaming the four fixtures
 to unique module names and giving the guarded fixture a real Task
 class; mypy now passes the CI invocation over 163 files.
+
+## Round-12 - the scanaislop claims triage (2026-11-18)
+
+The competitor scanned this repo and published 18 claims: four
+`complexity/file-too-large`, eleven `ai-slop/unused-import`, three
+`ai-slop/python-repetitive-dispatch`, each triaged here against the
+real source before anything was fixed - the audit's rule that a claim
+is a hypothesis until reproduced held.
+
+The file-too-large group was a metric disagreement, not a defect: the
+four scripts (fixture_benchmark, slop_cycles, slop_dead,
+slop_structural) measure 385-392 non-blank lines against our documented
+400 non-blank budget, while scanaislop counts total lines (441-460).
+The contract in .ai-integrity-ignore ("no scope-offs: scripts/ is a
+package of modules, each inside the 400-line file budget") is satisfied
+under the metric the verdict messages state. No change.
+
+The unused-import group was false on every one of its eleven rows.
+`ai_slop_detector.py` is the vendored facade foreign repos import by
+path; every flagged line carries `# noqa: F401` under a documented
+re-export contract, and the flagged symbols resolve to real consumers
+tests reach through importlib (`mod.check_class_cohesion`,
+`mod.ArchConfigError`) - dynamic access a static import graph cannot
+see. But the triage surfaced one genuinely dead binding the claims'
+frame hid: `slop_scan.py` imported `ArchConfigError` it never used,
+masked by its own blanket noqa. Removed. And the narrative contract
+"every public name is re-exported here" turned out to be false in
+twenty-four places - `tests/test_facade_surface.py` now asserts the
+facade re-exports every top-level `check_*` in every `slop_*` module
+(61 parametrized assertions), so the surface is machine-checked, not
+narrated.
+
+The repetitive-dispatch group was the real gap, half already closed:
+round-2 adopted the check (LADDER_MIN 4) and the self-scan already
+fired on slop_corpus.py:211 - but the detector only walked elif
+chains, and flaky_parsers.py's `parse_file` dispatched through four
+SEPARATE guard-ifs with returns, exactly the shape scanaislop caught
+and we could not. The dispatch family moved to its own module
+(`slop_dispatch.py`) - slop_residue.py was at 452 non-blank lines
+against its 400 budget - and the guard-run detector landed: a run is
+consecutive sibling ifs, empty else clauses, one subject, every branch
+leaving the block (return/raise/continue/break), because guards that
+do not exit are conditional features and flagging them would be the
+false-positive factory this rule must never become. The two flagged
+ladders were refactored to dispatch tables (`_PARSERS` in
+flaky_parsers.py, `_EXCLUSION_COUNTERS` in slop_corpus.py) so the
+engine's own source passes the rule it now enforces.
+
+The round also caught the engine in a false positive of its own: the
+self-scan's `undeclared-import` on accuracy_benchmark.py:8 read the
+docstring sentence "from a small seed:" as an import of a module named
+`a` - a line regex over raw text. The inventory is AST now
+(`_py_import_tops`); prose cannot become an import, and a parse failure
+still reports through analysis-coverage rather than passing silently.
+
+"Hold every pull request to this" is wired, not promised: the
+post-fix findings (11, all pre-existing debt) are recorded as
+`.quality-baseline.json` (schema v2: 5 check floors, per-finding
+identities), the ratchet defaults to auto, and a probe run proved both
+directions - a planted four-branch ladder exits 1, the clean tree exits
+0. New dispatch, unused-import, over-budget-file or undeclared-import
+findings now fail CI instead of joining the advisory pile. Along the
+way the sandbox reproduced the hosted gates exactly (pinned lizard,
+tree-sitter, ruff 0.17.4, mypy) and turned the format gate green: nine
+files had drifted from `ruff format` before this round - seven of them
+untouched since earlier rounds - all nine reformatted, `ruff check .`
+and `ruff format --check .` and mypy (89 files) all pass.
+
+Final state: 1109 tests green (61 new facade-contract, 5 new
+dispatch/undeclared regressions), self-scan blocking 4 / advisory 12 /
+verdict CLEAN with maintainability A and zero findings attributable to
+the round, ratchet floor recorded and proven to bite.

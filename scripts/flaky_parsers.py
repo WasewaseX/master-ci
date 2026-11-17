@@ -66,23 +66,6 @@ class Outcome:
         return f"{self.suite}::{self.name}" if self.suite else self.name
 
 
-def parse_file(path: Path) -> list[Outcome]:
-    """Dispatch on the file suffix; unknown shapes fail closed."""
-    suffix = path.suffix.lower()
-    text = path.read_text(encoding="utf-8", errors="strict")
-    if suffix == ".xml":
-        return parse_junit(text)
-    if suffix == ".trx":
-        return parse_trx(text)
-    if suffix == ".gojson":
-        return parse_go_json(text)
-    if suffix == ".libtest":
-        return parse_libtest(text)
-    raise FlakyParseError(
-        f"{path.name}: unknown result format '{suffix}' - expected one of {', '.join(SUFFIXES)}"
-    )
-
-
 def parse_junit(text: str) -> list[Outcome]:
     """JUnit XML: testcase@name, classname falling back to the suite name."""
     try:
@@ -167,3 +150,25 @@ def parse_libtest(text: str) -> list[Outcome]:
             f"cargo test output (first line: {text.splitlines()[0][:80]!r})"
         )
     return outcomes
+
+
+# Dispatch table over the four documented result shapes. A new suffix
+# joins here and in SUFFIXES; parse_file stays the single fail-closed
+# entry point, unknown shapes raise instead of guessing.
+_PARSERS = {
+    ".xml": parse_junit,
+    ".trx": parse_trx,
+    ".gojson": parse_go_json,
+    ".libtest": parse_libtest,
+}
+
+
+def parse_file(path: Path) -> list[Outcome]:
+    """Dispatch on the file suffix; unknown shapes fail closed."""
+    suffix = path.suffix.lower()
+    parser = _PARSERS.get(suffix)
+    if parser is None:
+        raise FlakyParseError(
+            f"{path.name}: unknown result format '{suffix}' - expected one of {', '.join(SUFFIXES)}"
+        )
+    return parser(path.read_text(encoding="utf-8", errors="strict"))

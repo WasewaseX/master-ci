@@ -17,20 +17,13 @@ from slop_suppress import closest_scope, is_functional, parse_file_suppression
 # The one-line try/except fixture the scope matrix pins. The blocking
 # check the detector emits for it is swallowed-exception (line of the
 # except clause); every scope test suppresses or preserves exactly it.
-CATCH = (
-    "def run():\n"
-    "    try:\n"
-    "        work()\n"
-    "    except Exception:\n"
-    "        pass\n"
-)
+CATCH = "def run():\n    try:\n        work()\n    except Exception:\n        pass\n"
 
 
 def run_svc(tmp_path, code, name="svc.py"):
     """One fixture file, one scan - keeps the shared scan idiom out of
     the cross-file line-duplication ledger this repo enforces."""
     return scan(tmp_path, {name: code})
-
 
 
 def test_control_without_directive_fires(tmp_path):
@@ -47,18 +40,14 @@ def test_same_line_directive_suppresses_blocking(tmp_path):
 
 
 def test_bare_directive_equals_same_line(tmp_path):
-    code = CATCH.replace(
-        "    except Exception:\n", "    except Exception:  # master-ci-ignore\n"
-    )
+    code = CATCH.replace("    except Exception:\n", "    except Exception:  # master-ci-ignore\n")
     findings = run_svc(tmp_path, code)
     assert not _hits(findings, "swallowed-exception")
 
 
 def test_next_line_directive_suppresses_the_following_line(tmp_path):
     # Trailing on the last try-body line: the next line is the except.
-    code = CATCH.replace(
-        "        work()\n", "        work()  # master-ci-ignore-next-line\n"
-    )
+    code = CATCH.replace("        work()\n", "        work()  # master-ci-ignore-next-line\n")
     findings = run_svc(tmp_path, code)
     assert not _hits(findings, "swallowed-exception")
 
@@ -110,11 +99,7 @@ def test_directive_inside_string_literal_is_neither(tmp_path):
 
 
 def test_directive_inside_docstring_is_neither(tmp_path):
-    code = (
-        'def run():\n'
-        '    """Use master-ci-ignore-next-line to silence a line."""\n'
-        + CATCH
-    )
+    code = 'def run():\n    """Use master-ci-ignore-next-line to silence a line."""\n' + CATCH
     findings = scan(tmp_path, {"app.py": code})
     assert _hits(findings, "swallowed-exception")
     assert not _hits(findings, "unknown-directive")

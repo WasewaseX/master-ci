@@ -52,9 +52,7 @@ _BARE_SCOPE = "line"  # the bare form suppresses its own line
 
 # One regex for the whole self namespace; the scope group decides whether
 # the directive is functional or invented.
-DIRECTIVE_RE = re.compile(
-    re.escape(PREFIX) + r"(?:-([a-z][a-z0-9-]*))?", re.IGNORECASE
-)
+DIRECTIVE_RE = re.compile(re.escape(PREFIX) + r"(?:-([a-z][a-z0-9-]*))?", re.IGNORECASE)
 
 
 def _compact(scope: str) -> str:
@@ -93,7 +91,9 @@ class FileSuppress:
     whole_file: bool = False
 
 
-def _directive_lines(comment_text: str, start_line: int) -> list[tuple[int, str | None, str | None]]:
+def _directive_lines(
+    comment_text: str, start_line: int
+) -> list[tuple[int, str | None, str | None]]:
     """(line, canonical_scope, unknown_scope) for each directive in one comment.
 
     Block comments span lines: the offset of the matched line inside the
@@ -142,9 +142,7 @@ def parse_file_suppression(path: Path) -> tuple[FileSuppress, list[Finding]]:
     except OSError:
         return positions, unknown
     prefixes = _line_prefixes(family)
-    comment_lines = {
-        c.line for c in extract_comments(text, family) if c.kind != "docstring"
-    }
+    comment_lines = {c.line for c in extract_comments(text, family) if c.kind != "docstring"}
     for idx, masked in enumerate(_strip_strings(text).splitlines(), start=1):
         if idx in comment_lines:
             tail = masked
@@ -282,10 +280,7 @@ def apply_inline_suppression(
         if positions.whole_file and finding.advisory:
             suppressed += 1
             continue
-        if (
-            finding.line in positions.same
-            or (finding.line - 1) in positions.following
-        ):
+        if finding.line in positions.same or (finding.line - 1) in positions.following:
             suppressed += 1
             continue
         kept.append(finding)

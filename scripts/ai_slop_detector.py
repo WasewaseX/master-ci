@@ -42,6 +42,14 @@ from slop_categories import (  # noqa: F401
 from slop_cli import main, parse_args  # noqa: E402,F401
 from slop_cognitive import check_cognitive  # noqa: F401
 from slop_commentary import (  # noqa: F401
+    check_commentary,
+    check_hardcoded_ids,
+    check_hardcoded_urls,
+    check_js_dead_patterns,
+    check_js_empty_functions,
+    check_js_thin_wrappers,
+    check_meta_comments,
+    check_prose_blocks,
     check_unknown_directives,
 )
 from slop_comments import (  # noqa: F401
@@ -56,6 +64,8 @@ from slop_coupling import (  # noqa: F401
     check_coupling_metrics,
     measure_coupling,
 )
+from slop_cpp import check_cpp_slop  # noqa: F401
+from slop_csharp import check_csharp_slop  # noqa: F401
 from slop_cycles import check_import_cycles  # noqa: F401
 from slop_dead import (  # noqa: F401
     check_orphan_modules,
@@ -80,6 +90,8 @@ from slop_density import (  # noqa: F401
     measure_corpus,
 )
 from slop_deps import check_unused_dependencies  # noqa: F401
+from slop_deps_stacks import check_stack_dependencies  # noqa: F401
+from slop_dispatch import check_dispatch_ladders  # noqa: F401
 from slop_duplicates import (  # noqa: F401
     MIN_SOURCES_FOR_INVENTORY,
     PROVENANCE_MARKERS,
@@ -110,6 +122,7 @@ from slop_hotspot import (  # noqa: F401
     check_hotspot_metrics,
     churn_map,
 )
+from slop_identities import check_of  # noqa: F401
 from slop_imports import (  # noqa: F401
     DepContext,
     check_phantom_imports,
@@ -147,6 +160,10 @@ from slop_py_checks import (  # noqa: F401
     check_placeholder_impl,
     check_py_ast,
 )
+from slop_py_family import (  # noqa: F401
+    check_py_broad_except_handler,
+    check_py_print_debug,
+)
 from slop_reliability import (  # noqa: F401
     RELIABILITY_CHECKS,
     check_reliability_rating,
@@ -170,7 +187,14 @@ from slop_reporting import (  # noqa: F401
     write_sarif,
 )
 from slop_residue import (  # noqa: F401
+    check_constant_condition,
+    check_duplicate_imports,
+    check_generic_names,
+    check_handler_debts,
+    check_range_len_loop,
     check_residue,
+    check_tautological_tests,
+    check_unreachable,
 )
 from slop_scan import (  # noqa: E402,F401
     ScanContext,
@@ -184,6 +208,8 @@ from slop_scan import (  # noqa: E402,F401
     scan_code_file,
 )
 from slop_test_redundancy import check_test_redundancy  # noqa: F401
+from slop_ts_checks import check_ts_slop  # noqa: F401
+from slop_type_decls import check_duplicate_type_decls  # noqa: F401
 from slop_ui_prose import (  # noqa: F401
     check_doc_extras,
     check_ui_slop,
