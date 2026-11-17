@@ -267,7 +267,11 @@ def test_concurrency_cancels_superseded_pr_runs():
 def test_helper_configs_referenced_by_workflows_exist():
     refs = set()
     for wf in WORKFLOWS:
-        refs.update(re.findall(r"_ci/configs/(\S+)", wf.read_text(encoding="utf-8")))
+        # The capture stops at quotes and whitespace: references appear
+        # bare (cp _ci/configs/.editorconfig .) and quoted inside
+        # hashFiles('_ci/configs/tool-versions.yml') - a \S+ capture
+        # swallows the closing quote and false-fails the lookup.
+        refs.update(re.findall(r"""_ci/configs/([^\s'"]+)""", wf.read_text(encoding="utf-8")))
     assert refs, "expected at least one helper config reference"
     for name in refs:
         assert (ROOT / "configs" / name).is_file(), f"missing helper config: configs/{name}"

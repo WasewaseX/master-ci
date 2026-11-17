@@ -949,6 +949,16 @@ jobs:
           path: _ci
           fetch-depth: 1
           persist-credentials: false
+      - name: Cache pinned parser wheels
+        # The parser pack is the heaviest recurring install in this
+        # workflow (tree-sitter-language-pack carries every grammar
+        # wheel); the pin list comes from the helpers' tool-versions.yml,
+        # so its hash is the cache key - a new pin invalidates, the same
+        # pin restores, and the install step stays the source of truth.
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/pip
+          key: pip-parsers-${{ runner.os }}-${{ hashFiles('_ci/configs/tool-versions.yml') }}
       - name: Install pinned parser tooling
         # The parser guarantee (v2.5): this scan advertises parse-backed
         # dimensions (god-function, cognitive complexity), so it runs
@@ -1125,6 +1135,16 @@ jobs:
           path: _ci
           fetch-depth: 1
           persist-credentials: false
+      - name: Cache pinned parser wheels
+        # The parser pack is the heaviest recurring install in this
+        # workflow (tree-sitter-language-pack carries every grammar
+        # wheel); the pin list comes from the helpers' tool-versions.yml,
+        # so its hash is the cache key - a new pin invalidates, the same
+        # pin restores, and the install step stays the source of truth.
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/pip
+          key: pip-parsers-${{ runner.os }}-${{ hashFiles('_ci/configs/tool-versions.yml') }}
       - name: Install pinned parser tooling
         # The parser guarantee (v2.5): the complexity ceilings promise
         # measurement. new_code_gate.py fails closed (exit 2) when an
@@ -1195,6 +1215,16 @@ jobs:
           path: _ci
           fetch-depth: 1
           persist-credentials: false
+      - name: Cache pinned parser wheels
+        # The parser pack is the heaviest recurring install in this
+        # workflow (tree-sitter-language-pack carries every grammar
+        # wheel); the pin list comes from the helpers' tool-versions.yml,
+        # so its hash is the cache key - a new pin invalidates, the same
+        # pin restores, and the install step stays the source of truth.
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/pip
+          key: pip-parsers-${{ runner.os }}-${{ hashFiles('_ci/configs/tool-versions.yml') }}
       - name: Install pinned parser tooling
         # The parser guarantee (v2.5): a floor recorded with parsers
         # must be enforced with parsers - a missing analyzer would
@@ -1595,6 +1625,16 @@ jobs:
         with:
           python-version: ${{ inputs.python_version }}
           cache: ${{ (hashFiles('**/requirements*.txt') != '' || hashFiles('**/pyproject.toml') != '') && 'pip' || '' }}
+      - name: Cache pinned parser wheels
+        # The parser pack is the heaviest recurring install in this
+        # workflow (tree-sitter-language-pack carries every grammar
+        # wheel); the pin list comes from the helpers' tool-versions.yml,
+        # so its hash is the cache key - a new pin invalidates, the same
+        # pin restores, and the install step stays the source of truth.
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/pip
+          key: pip-parsers-${{ runner.os }}-${{ hashFiles('_ci/configs/tool-versions.yml') }}
       - name: Install tooling
         if: steps.detect.outputs.tool != 'none'
         run: |

@@ -592,6 +592,18 @@ code-health A(0) - the round's own new comment block was caught by
 prose-block before the commit and tightened, so the round ends with
 fewer findings than it started and none of its own.
 
+The audit's P3 row (CI caching, ordered after the measurements
+became trusted) took its first slice: the survey found exactly one
+caching site in twenty workflows - the quality-history trend file -
+while the four heaviest installs re-pulled tree-sitter-language-pack
+and the rest of the pinned parser set on every run. Each install now
+sits behind an actions/cache step keyed on the helpers'
+tool-versions.yml hash (a new pin invalidates, the same pin restores,
+the install stays the source of truth on a miss), the workflow
+contract test's config-reference capture was made quote-aware (the
+first quoted hashFiles reference false-failed a \S+ capture), and
+actionlint passes over all twenty workflows.
+
 Final state: 1113 tests green (2 editorconfig-parity, 2
 extension-parity, benchmark pins grown), ruff clean, mypy 138 files
 clean, editorconfig-checker exit 0, hosted CI green on the red-repair
