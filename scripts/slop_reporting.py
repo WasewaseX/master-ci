@@ -435,3 +435,5 @@ def write_baseline(path: str, findings: list[Finding]) -> None:
     data = {"version": 1, "fingerprints": sorted(fingerprint(f) for f in findings)}
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(data, handle, indent=2)
+
+

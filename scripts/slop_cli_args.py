@@ -13,10 +13,13 @@ from pathlib import Path
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("root", type=Path, help="Repo path to scan")
+    # Optional only so --list-checks (a registry-only surface, no scan)
+    # can run without a repo path; main() still demands a root for a scan.
+    parser.add_argument("root", type=Path, nargs="?", default=None, help="Repo path to scan")
     _add_gate_args(parser)
     _add_baseline_args(parser)
     _add_profile_args(parser)
+    _add_output_args(parser)
     _add_coverage_args(parser)
     return parser.parse_args(argv)
 
@@ -154,17 +157,60 @@ def _add_profile_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_output_args(parser: argparse.ArgumentParser) -> None:
+    """The round-11 output surfaces: json, badge, catalog."""
+    parser.add_argument(
+        "--sarif",
+        default="",
+        help="Write SARIF 2.1.0 results to this path (for the Security tab)",
+    )
+    parser.add_argument(
+        "--json",
+        dest="json_out",
+        default="",
+        metavar="PATH",
+        help=(
+            "Write the findings document (findings-v1) to this path: the "
+            "score, both suppression counters and every finding with "
+            "severity and remedy. The aislop-ci parity surface - machine "
+            "output paired with the exit-code gate; deterministic, no "
+            "timestamps"
+        ),
+    )
+    parser.add_argument(
+        "--badge",
+        default="",
+        metavar="PATH.svg",
+        help=(
+            "Write the AI-integrity score badge (SVG, grade-colored) to "
+            "this path and print the markdown snippet for the README; "
+            "shows the same slop score the --max-slop-score gate reads"
+        ),
+    )
+    parser.add_argument(
+        "--list-checks",
+        dest="list_checks",
+        action="store_true",
+        help=(
+            "Print the check catalog (registry only, no scan): every "
+            "check id with category, severity and remedy. Pairs with "
+            "--catalog-format json|md; exits 0"
+        ),
+    )
+    parser.add_argument(
+        "--catalog-format",
+        choices=("json", "md"),
+        default="json",
+        help="Output format for --list-checks (default: json)",
+    )
+
+
 def _add_coverage_args(parser: argparse.ArgumentParser) -> None:
     """The measured-coverage gates: floors, diff window, report paths."""
     parser.add_argument(
         "--report-file",
         default="",
         help="Write a markdown report to this path",
-    )
-    parser.add_argument(
-        "--sarif",
-        default="",
-        help="Write SARIF 2.1.0 results to this path (for the Security tab)",
     )
     parser.add_argument(
         "--min-coverage",

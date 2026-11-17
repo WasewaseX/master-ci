@@ -223,10 +223,7 @@ SUPPRESSION_DIRECTIVE = re.compile(
     r"markdownlint|hadolint|prettier)[\s:=-]+(?:ignore|disable|skip|off)\b",
     re.IGNORECASE,
 )
-# Inline suppressions for this detector's own namespace: the real opt-out
-# mechanism is the ignore file, never an inline comment, so any inline
-# form is an invented directive that suppresses nothing.
-SELF_TOOL_DIRECTIVE = re.compile(r"(?:#|//)\s*master-ci[-_]?ignore\b", re.IGNORECASE)
+# Round-11: self-prefix suppression lives in slop_suppress, scoped and reported there.
 # Tools a repo is considered to configure: a config file with one of these
 # names at the root, or the tool name appearing in one of the manifest /
 # workflow files checked by the unknown-directive pass.

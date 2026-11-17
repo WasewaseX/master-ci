@@ -59,15 +59,18 @@ Contract:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 
 from coverage_gate import coverage_gate_stage
 from slop_arch import ArchConfigError
+from slop_cli_args import parse_args  # noqa: F401 - re-exported entry point
 from slop_cognitive import tree_sitter_available
 from slop_files import load_phrases
 from slop_lizard import lizard_available
 from slop_metrics_doc import write_document
 from slop_model import enforce_structural_budget
+from slop_outputs import write_badge, write_json
 from slop_profiles import ProfileSpec, apply_profile_stage, profile_from_args
 from slop_ratchet import (
     RatchetError,
@@ -120,7 +123,14 @@ def _parser_guarantee(args: argparse.Namespace) -> int:
 
 
 def _validate_request(args: argparse.Namespace) -> tuple[int, ProfileSpec | None]:
-    """Parser guarantee plus the profile gate; (exit, profile) out."""
+    """Root presence, parser guarantee, profile gate; (exit, profile) out."""
+    if args.root is None:
+        print(
+            "ai-integrity: a repo path is required for a scan "
+            "(--list-checks is the only no-root surface)",
+            file=sys.stderr,
+        )
+        return 2, None
     parser_exit = _parser_guarantee(args)
     if parser_exit:
         return parser_exit, None
@@ -142,13 +152,16 @@ def _scan_stage(args: argparse.Namespace, profile: ProfileSpec) -> tuple[list, d
     from ai_slop_detector import scan
 
     metrics_bundle: dict = {}
+    # The bundle is always passed (passing it changes no findings): the
+    # round-11 suppression bookkeeping (inline_suppressed) rides in it
+    # even when no --metrics-json document is requested.
     findings = scan(
         args.root,
         load_phrases(),
         extra_globs=args.ignore,
         provenance=args.provenance,
         budgets=profile.budgets or None,
-        metrics_out=metrics_bundle if args.metrics_json else None,
+        metrics_out=metrics_bundle,
     )
     return findings, metrics_bundle
 
@@ -170,8 +183,30 @@ def _metrics_stage(args: argparse.Namespace, findings: list, bundle: dict) -> bo
     return True
 
 
+def _catalog_stage(args: argparse.Namespace) -> int | None:
+    """--list-checks: the registry-only surface; None when not requested.
+
+    Split out of main so the scan orchestrator keeps its complexity
+    budget: the catalog branch reads no repository, so it must not sit
+    in the same decision nest as the gates.
+    """
+    if not args.list_checks:
+        return None
+    from slop_catalog import build_catalog, render_markdown
+
+    rows = build_catalog()
+    if args.catalog_format == "json":
+        print(json.dumps({"version": "catalog-v1", "checks": rows}, indent=1))
+    else:
+        print(render_markdown(rows), end="")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    catalog_exit = _catalog_stage(args)
+    if catalog_exit is not None:
+        return catalog_exit
     parser_exit, profile = _validate_request(args)
     if parser_exit:
         return parser_exit
@@ -202,7 +237,13 @@ def main(argv: list[str] | None = None) -> int:
             f"-> {args.write_baseline}"
         )
         return 0
-    ai_score = _emit_results(args, findings, suppressed, gate_sections)
+    ai_score = _emit_results(
+        args,
+        findings,
+        suppressed,
+        gate_sections,
+        inline_suppressed=int(metrics_bundle.get("inline_suppressed", 0)),
+    )
     failed = (
         blocking_score(findings) > args.max_score
         or ai_score > args.max_slop_score
@@ -217,6 +258,7 @@ def _emit_results(
     findings: list,
     suppressed: int,
     gate_sections: list[str],
+    inline_suppressed: int = 0,
 ) -> int:
     """Write every requested artifact and the one-line score summary.
 
@@ -233,6 +275,18 @@ def _emit_results(
         )
     if args.sarif:
         write_sarif(args.sarif, findings)
+    if args.json_out:
+        write_json(
+            args.json_out,
+            str(args.root),
+            findings,
+            suppressed_baseline=suppressed,
+            suppressed_inline=inline_suppressed,
+        )
+    if args.badge:
+        ai_score, ai_grade, _verdict = ai_integrity_score(findings)
+        snippet = write_badge(args.badge, ai_score, ai_grade)
+        print(f"badge markdown: {snippet}")
     if args.annotate:
         annotate(findings)
     ai_score, ai_grade, ai_verdict = ai_integrity_score(findings)
@@ -243,7 +297,10 @@ def _emit_results(
         f"ai-integrity blocking={blocking_score(findings)} max={args.max_score} "
         f"advisory={advisory_score(findings)} findings={len(findings)} "
         f"slop={ai_score}/100 grade={ai_grade} verdict={ai_verdict} "
-        f"ceiling={args.max_slop_score:g} dims: {dims}"
+        f"ceiling={args.max_slop_score:g}"
+        + (f" baseline-suppressed={suppressed}" if suppressed else "")
+        + (f" inline-suppressed={inline_suppressed}" if inline_suppressed else "")
+        + f" dims: {dims}"
         + (" enforce=bloat" if args.enforce_bloat else "")
     )
     return ai_score
@@ -282,7 +339,3 @@ def _quality_ratchet(args: argparse.Namespace, findings: list) -> int:
 if __name__ == "__main__":
     raise SystemExit(main())
 
-
-# The argument surface lives in slop_cli_args (v2.18 budget split);
-# parse_args stays the single entry point, re-exported here.
-from slop_cli_args import parse_args  # noqa: E402,F401

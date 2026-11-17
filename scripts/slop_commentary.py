@@ -31,7 +31,6 @@ from slop_patterns import (
     JS_EMPTY_FUNCTION,
     JS_THIN_WRAPPER,
     PROVIDER_ID_VALUE,
-    SELF_TOOL_DIRECTIVE,
     SUPPRESSION_DIRECTIVE,
     TOOL_MANIFEST_FILES,
     _strip_strings,
@@ -251,9 +250,16 @@ def check_hardcoded_ids(path: Path, text: str, rel: str) -> Finding | None:
 
 
 def _directive_tool(line: str) -> str | None:
-    """The lint tool a suppression comment names, if any."""
-    if SELF_TOOL_DIRECTIVE.search(line):
-        return "master-ci"
+    """The lint tool a suppression comment names, if any.
+
+    Round-11: this detector's own namespace is no longer classified here.
+    ``slop_suppress`` owns the self-prefix end to end - canonical scoped
+    directives actually suppress, unknown scopes are reported there with
+    a did-you-mean hint - so a canonical directive passing through this
+    line returns None instead of being flagged as invented.
+    """
+    if re.search(r"(?:#|//)\s*master-ci[-_]?ignore\b", line, re.IGNORECASE):
+        return None
     for tool in DIRECTIVE_TOOLS:
         if SUPPRESSION_DIRECTIVE.search(line) and re.search(
             rf"\b{tool}[\s:=-]+(?:ignore|disable|skip|off)\b", line, re.IGNORECASE

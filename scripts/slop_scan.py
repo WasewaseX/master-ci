@@ -73,6 +73,7 @@ from slop_reliability import (
     check_unclosed_resource,
 )
 from slop_residue import check_residue
+from slop_suppress import apply_inline_suppression, collect_suppression
 from slop_test_redundancy import check_test_redundancy
 from slop_ts_checks import check_ts_slop
 from slop_type_decls import check_duplicate_type_decls
@@ -356,4 +357,13 @@ def scan(
     )
     findings = _file_findings(root, files, globs, ctx)
     findings.extend(_repo_level_findings(root, files, globs, provenance, budgets, metrics_out))
-    return _apply_suppression(findings, disabled, scoped)
+    findings = _apply_suppression(findings, disabled, scoped)
+    # Round-11 (scanaislop adoption): scoped inline directives are a real
+    # suppression mechanism now; unknown scopes ride out as findings.
+    # The count lands in the metrics bundle when one is passed - passing
+    # the bundle still changes no findings, only the reported bookkeeping.
+    table, unknown = collect_suppression(base, files, globs)
+    findings, _inline_count = apply_inline_suppression(findings + unknown, table, base)
+    if metrics_out is not None:
+        metrics_out["inline_suppressed"] = _inline_count
+    return findings

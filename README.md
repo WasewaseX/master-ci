@@ -942,9 +942,18 @@ pip install ruff mypy vulture lizard pytest
 ruff check . && ruff format --check .
 mypy --ignore-missing-imports .
 python -m pytest -q
-python3 scripts/ai_slop_detector.py . --max-score 8 --sarif /tmp/ai.sarif
-python3 scripts/ai_slop_detector.py . --write-baseline .ai-baseline.json   # accept current findings
+python3 scripts/slop_cli.py . --max-score 8 --sarif /tmp/ai.sarif --json /tmp/ai.json
+python3 scripts/slop_cli.py . --write-baseline .ai-baseline.json   # accept current findings
+python3 scripts/slop_cli.py --list-checks --catalog-format md       # the check catalog, no scan
+python3 scripts/slop_cli.py . --badge /tmp/badge.svg                # score badge + README snippet
+python3 scripts/hook_install.py --agent claude                      # per-edit gate for Claude Code
+python3 scripts/hook_install.py --agent pre-commit                  # gate staged files on commit
 ```
+
+Inline suppression: `master-ci-ignore-line` (same line), `master-ci-ignore-next-line`,
+`master-ci-ignore-file` (advisory findings only - blocking checks survive), or the bare
+`master-ci-ignore`. Unknown scopes suppress nothing and are reported with a
+did-you-mean hint; every suppressed finding is counted in the summary and `--json`.
 
 ## Roadmap to v2.0 and beyond (deeper analysis, not more heuristics)
 

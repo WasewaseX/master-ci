@@ -1444,13 +1444,18 @@ def test_unknown_directive_clear_when_tool_configured(tmp_path):
     assert not any(f.check == "unknown-directive" for f in findings)
 
 
-def test_self_tool_directive_always_unknown(tmp_path):
-    # The detector's own opt-out is the ignore file, never an inline
-    # comment, so the inline form is flagged even when master-ci runs.
-    inline = "# master-ci-" + "ignore this file"
-    findings = scan(tmp_path, {"app.py": inline + "\nvalue = compute()\n"})
+def test_self_directive_scopes_are_functional_round11(tmp_path):
+    # Round-11 doctrine change: canonical scoped directives are real and
+    # unflagged; unknown scopes still are (did-you-mean hint included).
+    # The full scope matrix lives in tests/test_suppress_directives.py.
+    unknown = "# master-ci-" + "ignore-nextline"
+    code = unknown + "\nvalue = compute()\n"
+    findings = scan(tmp_path, {"app.py": code})
     hits = [f for f in findings if f.check == "unknown-directive"]
-    assert hits and "master-ci" in hits[0].message
+    assert hits and "next-line" in hits[0].message
+    canonical = "# master-ci-" + "ignore-next-line"
+    findings = scan(tmp_path, {"app.py": canonical + "\nvalue = compute()\n"})
+    assert not any(f.check == "unknown-directive" for f in findings)
 
 
 def test_unknown_directive_respects_ignore_globs(tmp_path):

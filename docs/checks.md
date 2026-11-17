@@ -221,10 +221,11 @@ Profile presets (quick / standard / strict / custom) only change the
   UUIDs on id-named bindings - baked into non-test source; placeholders
   and digit-only strings are filtered). Invented suppressions:
   `unknown-directive` (a comment that suppresses in the name of a lint
-  tool the repo does not configure, or an inline `master-ci-ignore` -
-  the real opt-out is the ignore file, never an inline comment; tools
-  count as configured when a root config file or the manifests/
-  workflows name them). The doc phrase table also grew the
+  tool the repo does not configure, or an inline `master-ci-ignore`
+  whose scope is not one of the canonical forms - tools count as
+  configured when a root config file or the manifests/workflows name
+  them; round 11 turned the self-prefix into a real mechanism, see
+  the suppression-directive entry below). The doc phrase table also grew the
   marketing-catchphrase set from noqode's copy signs: urgency filler
   ("look no" + "further"), power verbs paired with "your", the
   "not just X" pivot, and hustle-culture scene setting.
@@ -454,6 +455,46 @@ Profile presets (quick / standard / strict / custom) only change the
   push, and the two prior runs were path-skipped docs-only commits);
   fixed in 7a37557 by renaming the four fixtures and giving the
   guarded fixture a real Task class, mypy 163 files clean.
+
+- **Round-11 abilities and gates (aislop parity):** the product surface,
+  not the registry. Claim-checking the scanaislop product against this
+  template left four abilities missing - the machine findings document,
+  the score badge, the browsable catalog and the per-edit hook loop -
+  plus the suppression mechanism their hook relies on. All five landed:
+  **scoped inline suppression directives** (`master-ci-ignore-line`,
+  `-next-line`, `-file`, or the bare same-line form) are a real
+  mechanism now - the old "inline suppresses nothing" doctrine is gone;
+  unknown scopes still suppress nothing and are reported with a
+  did-you-mean hint (`unknown-directive`), directives count only inside
+  real comments (string literals and docstrings never do), the file
+  scope never silences blocking-grade findings, and every suppressed
+  finding is counted in the metrics bundle, the summary line and
+  `--json`; **`--json PATH`** writes the findings-v1 document (score,
+  both suppression counters, every finding with severity and remedy,
+  byte-deterministic); **`--badge PATH.svg`** writes the grade-colored
+  slop badge the `--max-slop-score` gate reads and prints the README
+  snippet; **`--list-checks [--catalog-format json|md]`** prints the
+  registry catalog (no scan needed, every REMEDIES key exactly once,
+  severity always agreeing with `is_blocking`); **`hook_gate.py`** gates
+  the files an agent just touched with the same per-file engines and the
+  same registry (blocking exits 1, advisory prints), with a Claude Code
+  PostToolUse stdin mode; **`hook_install.py`** writes the hook configs
+  (Claude settings or a `.git/hooks/pre-commit` staged-file gate),
+  refusing to rewrite an existing settings.json or hook without
+  `--force`. A defect the claim-check surfaced on its own: `slop_cli.py`
+  crashed when run as a script (`parse_args` imported after the
+  `__main__` guard) - fixed by hoisting the import. Discipline kept:
+  the tranche tripped the engine's own laws again and all were fixed in
+  kind - `slop_reporting.py` over its bloat budget (outputs moved to
+  `slop_outputs.py`), `main()` over the complexity budget (the catalog
+  stage split out), three new `def main(` signatures tripping
+  `boilerplate-duplication` (one entry point removed, two signatures
+  varied, both documented), the sixth copy of the contract-test scan
+  idiom (a local `run_svc` helper), and a prose-block on the doctrine
+  comment itself (trimmed). Evidence: 45 contract tests (998 -> 1043),
+  fixture benchmark 70 rows all PASS, precision/recall 1.00 unchanged,
+  dogfood self-scan at the round-10 baseline (12 findings, zero added),
+  ruff clean.
 
 - **v1.18 fail-closed architecture config:** a config that exists but
   cannot be honored now fails the run instead of being silently
