@@ -382,8 +382,8 @@ Profile presets (quick / standard / strict / custom) only change the
   negative where the oracle has exemption logic) plus two new hand-
   shaped negative controls (`clean_csharp`, `clean_cpp`) - every round-8
   check reads precision 1.00, recall 1.00, one judged row each, so the
-  promotion verdict honestly stays `insufficient accuracy evidence`
-  until the corpus reaches five rows per check.
+  promotion verdict stays `insufficient accuracy evidence` until the
+  corpus reaches five rows per check.
 
 - **v1.18 fail-closed architecture config:** a config that exists but
   cannot be honored now fails the run instead of being silently
