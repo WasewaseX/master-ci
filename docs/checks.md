@@ -448,6 +448,12 @@ Profile presets (quick / standard / strict / custom) only change the
   19 contract tests (979 -> 998), fixture benchmark 70 rows all PASS,
   accuracy 66 labeled rows, dogfood self-scan back to the v2.18
   baseline (blocking 0, 12 advisory, all dimensions A), ruff clean.
+  CI note: the first hosted run over the tranche failed mypy on the
+  round-9 fixtures (duplicate service.py/worker.py module names that
+  had never met CI - c26a7bd was pushed for the first time in the same
+  push, and the two prior runs were path-skipped docs-only commits);
+  fixed in 7a37557 by renaming the four fixtures and giving the
+  guarded fixture a real Task class, mypy 163 files clean.
 
 - **v1.18 fail-closed architecture config:** a config that exists but
   cannot be honored now fails the run instead of being silently

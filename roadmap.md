@@ -432,3 +432,14 @@ evidence accident - the four checks stay advisory until the
 maintainer promotes them with the corpus now able to object. The
 other 36 judged columns still sit below five rows; the next corpus
 rounds grow them the same way.
+
+A CI note recorded for honesty: the first push carrying both commits
+(af025c5) failed the hosted python job's mypy step - and the failure
+was round-9's, not round-10's. c26a7bd had never been pushed before,
+and the two intervening runs were path-skipped docs-only commits, so
+the round-9 fixtures never met the hosted mypy: two service.py files
+and two worker.py files in fixtures/bench collided as duplicate
+modules, and a masked second error (an undefined Task name) surfaced
+once the first cleared. Fixed in 7a37557 by renaming the four fixtures
+to unique module names and giving the guarded fixture a real Task
+class; mypy now passes the CI invocation over 163 files.
