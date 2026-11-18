@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "null-forgiving operator on a lazily-bound config section",
+  "rule": "csharp-null-forgiving",
+  "slug": "csharp-nullbang-config-section"
+}

@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "summary restating that the Count property gets the count",
+  "rule": "csharp-redundant-doc-comment",
+  "slug": "csharp-docrestate-order-count"
+}

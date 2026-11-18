@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "SuppressMessage attribute without a Justification",
+  "rule": "csharp-suppressed-warning",
+  "slug": "csharp-suppress-message-performance"
+}

@@ -665,3 +665,26 @@ their unused-import extractor and their file-too-large budget and
 trigger, over their production-path scope - reports zero claims, where
 the same replica run before this round reproduces the user's paste
 exactly (4 too-large, 16 unused-import, all in scripts/).
+
+## Round-15 - the C# column grows up (2026-11-18)
+
+The corpus protocol's named next act: the eleven C# checks that had
+carried a single judged row since round-8 each gained four diverse
+real-shaped positives - the pricing service's Debug.WriteLine, the
+bare catch that rethrows, the five-branch status ladder, the index
+for-loop over Count, the .Count() yes/no guard, the NotImplementedException
+stub, the null-forgiving bang on a config section, the quadratic +=
+of a literal in a loop, the .Result read and the GetAwaiter().GetResult()
+gate, the bare #pragma warning disable, the <summary>Gets the name.</summary>
+- plus one nearest-negative clean row per rule pinning the exemption
+logic the way round-13 pinned the C/C++ column's. Labels were written
+before the engine ran; 165/165 fixtures judged PASS on the first run,
+zero violations, zero label disputes. The accuracy report now reads
+precision 1.00 recall 1.00 judged 5 on every one of the eleven
+columns: twenty-four checks carry promotion-ready evidence, up from
+thirteen. The honesty pins moved with the corpus (the promotion-set
+pin grew from twelve to twenty-four and its comment names round-15;
+the fixture-count pin reads 165; the tiny-fixture pin caught two
+30-line files at exactly its boundary and the fixtures were trimmed
+instead of the pin). The promotion act itself stays a reviewed decision
+per the protocol - the evidence is banked, the flip is not made here.

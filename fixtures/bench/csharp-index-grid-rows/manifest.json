@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "long index for-loop over a grid's Length",
+  "rule": "csharp-index-loop",
+  "slug": "csharp-index-grid-rows"
+}

@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "clean",
+  "reason": "nearest negative: the catch handles, logs the exception and flags",
+  "rule": "csharp-empty-catch-rethrow",
+  "slug": "csharp-rethrow-handled-clean"
+}

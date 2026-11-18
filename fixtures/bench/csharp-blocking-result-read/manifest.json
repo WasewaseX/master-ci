@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "task result read synchronously through .Result",
+  "rule": "csharp-sync-over-async",
+  "slug": "csharp-blocking-result-read"
+}

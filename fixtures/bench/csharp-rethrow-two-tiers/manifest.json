@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "two catch tiers each passing the same exception upward unchanged",
+  "rule": "csharp-empty-catch-rethrow",
+  "slug": "csharp-rethrow-two-tiers"
+}

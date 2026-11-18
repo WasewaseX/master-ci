@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "catch (IOException) whose body only rethrows",
+  "rule": "csharp-empty-catch-rethrow",
+  "slug": "csharp-rethrow-io-tier"
+}

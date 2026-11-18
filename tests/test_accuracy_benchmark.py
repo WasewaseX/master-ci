@@ -82,9 +82,10 @@ def test_full_run_exit_zero_and_report_shape(tmp_path):
     assert checks["debug-print"]["known_fp"] == 1
     assert checks["debug-print"]["fp"] == 0
     # The honesty rule: only columns the corpus has grown to five judged
-    # rows (round-10, the round-13 C/C++ column) may claim promotion
-    # evidence. The pin is exact so silent drift fails here.
-    PROMOTION_TWELVE = {
+    # rows (round-10, the round-13 C/C++ column, the round-15 C# column)
+    # may claim promotion evidence. The pin is exact so silent drift
+    # fails here.
+    PROMOTION_READY = {
         "csharp-async-void",
         "csharp-broad-catch",
         "rust-unwrap",
@@ -97,9 +98,21 @@ def test_full_run_exit_zero_and_report_shape(tmp_path):
         "cpp-not-implemented",
         "cpp-null-literal",
         "cpp-using-namespace-std-in-header",
+        # round-15: the eleven one-judged-row csharp checks
+        "csharp-console-leftover",
+        "csharp-empty-catch-rethrow",
+        "csharp-if-ladder",
+        "csharp-index-loop",
+        "csharp-linq-count",
+        "csharp-not-implemented",
+        "csharp-null-forgiving",
+        "csharp-redundant-doc-comment",
+        "csharp-string-concat-in-loop",
+        "csharp-suppressed-warning",
+        "csharp-sync-over-async",
     }
     for check_id, cell in checks.items():
-        if check_id in PROMOTION_TWELVE:
+        if check_id in PROMOTION_READY:
             assert cell["promotion"] == "promotion-ready evidence", cell
         else:
             assert cell["promotion"].startswith("advisory-only"), cell

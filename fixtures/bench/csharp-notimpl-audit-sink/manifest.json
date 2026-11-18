@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "audit sink method stubbed with NotImplementedException",
+  "rule": "csharp-not-implemented",
+  "slug": "csharp-notimpl-audit-sink"
+}

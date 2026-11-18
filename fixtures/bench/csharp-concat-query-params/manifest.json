@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "string built with += of a literal inside a foreach body",
+  "rule": "csharp-string-concat-in-loop",
+  "slug": "csharp-concat-query-params"
+}

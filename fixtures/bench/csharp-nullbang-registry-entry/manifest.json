@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "null-forgiving operator on a registry lookup result",
+  "rule": "csharp-null-forgiving",
+  "slug": "csharp-nullbang-registry-entry"
+}

@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "clean",
+  "reason": "nearest negative: the switch statement is the dispatch table",
+  "rule": "csharp-if-ladder",
+  "slug": "csharp-ifladder-switch-clean"
+}

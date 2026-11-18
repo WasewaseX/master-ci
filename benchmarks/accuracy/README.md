@@ -77,3 +77,24 @@ one labeled row is not five - the verdict text says
 `advisory-only (insufficient accuracy evidence)` until the corpus is
 widened per the protocol above.
 
+
+## Round-15 rows (2026-11-18)
+
+The C# accuracy column deepening: the eleven one-judged-row csharp
+checks (console-leftover, empty-catch-rethrow, if-ladder, index-loop,
+linq-count, not-implemented, null-forgiving, string-concat-in-loop,
+suppressed-warning, sync-over-async, redundant-doc-comment) each gained
+four diverse real-shaped positives and one nearest-negative clean row
+pinning the rule's exemption logic - the injected logger, the
+handled-and-flagged catch, the switch statement, the foreach loop, the
+.Any() guard, the real method body, the explicit null check, the
+StringBuilder, the awaited call, the justified suppression, and the
+informative summary. 55 new fixtures; the benchmark table is 165 rows.
+Labels were written before the engine ran; every row agreed on the
+first run (165/165 PASS), and the accuracy report reads precision 1.00
+recall 1.00 judged 5 on all eleven columns - promotion-ready evidence
+under the same floor (precision >= 0.8 across >= 5 judged rows).
+Twenty-four checks now carry promotion-ready evidence; the promotion
+act itself stays the reviewed decision the protocol asks for, with
+this report (`python3 scripts/accuracy_benchmark.py --json`) as the
+artifact a promotion change attaches.

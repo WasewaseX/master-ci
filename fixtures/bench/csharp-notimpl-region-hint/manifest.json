@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "catalog method stubbed with NotImplementedException",
+  "rule": "csharp-not-implemented",
+  "slug": "csharp-notimpl-region-hint"
+}

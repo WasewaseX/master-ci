@@ -37,6 +37,11 @@ sys.path.insert(0, str(_ROOT / "scripts"))
 import fixture_bench_probes as fp  # noqa: E402
 import fixture_benchmark as fb  # noqa: E402
 from fixture_bench_fixtures import HOTSPOT_COMMITS  # noqa: E402
+from fixture_bench_round15 import (  # noqa: E402
+    ROUND15_CSHARP_CLEAN_RULES,
+    ROUND15_CSHARP_DETECTED,
+    ROUND15_CSHARP_RENAMED,
+)
 
 BENCH = _ROOT / "fixtures" / "bench"
 SCRIPT = _ROOT / "scripts" / "fixture_benchmark.py"
@@ -175,8 +180,18 @@ ROUND13_SLUGS = {
     "cpp-usingns-tu-clean",
 }
 
+# Round-15 tranche: the C# accuracy column deepening - the eleven
+# one-judged-row csharp checks pushed to the five-judged-row promotion
+# threshold, each with four diverse positives and one
+# exemption-pinning nearest-negative clean row.
+ROUND15_SLUGS = (
+    set(ROUND15_CSHARP_DETECTED) | set(ROUND15_CSHARP_RENAMED) | set(ROUND15_CSHARP_CLEAN_RULES)
+)
 
-BENCH_SLUGS = SEED_SLUGS | ROUND8_SLUGS | ROUND9_SLUGS | ROUND10_SLUGS | ROUND13_SLUGS
+
+BENCH_SLUGS = (
+    SEED_SLUGS | ROUND8_SLUGS | ROUND9_SLUGS | ROUND10_SLUGS | ROUND13_SLUGS | ROUND15_SLUGS
+)
 
 
 def run_cli(*args: str, cwd: Path = _ROOT) -> subprocess.CompletedProcess[str]:
@@ -198,10 +213,10 @@ def row_by_slug(rows: list[fb.BenchRow], slug: str) -> fb.BenchRow:
 
 
 def test_manifests_cover_the_benchmark_table():
-    """Every fixture dir declares exactly the table's slugs: seed to round-13."""
+    """Every fixture dir declares exactly the table's slugs: seed to round-15."""
     rows = fb.load_benchmark(BENCH)
     assert {row.slug for row in rows} == BENCH_SLUGS
-    assert len(rows) == 110
+    assert len(rows) == 165
     assert {row.slug for row in rows} >= SEED_SLUGS
     for row in rows:
         assert row.expected in ("detected", "clean", "pending")
@@ -283,10 +298,10 @@ def test_table_run_exits_zero_all_proven():
     assert code == 0
     assert lines[0].split() == ["slug", "rule", "expected", "observed", "verdict"]
     data_rows = lines[1:-1]
-    assert len(data_rows) == 110
+    assert len(data_rows) == 165
     slugs = [line.split()[0] for line in data_rows]
     assert slugs == sorted(slugs)
-    assert lines[-1] == "110 fixtures: 110 pass, 0 fail, 0 pending"
+    assert lines[-1] == "165 fixtures: 165 pass, 0 fail, 0 pending"
 
 
 def test_json_run_shape_and_summary():
@@ -296,8 +311,8 @@ def test_json_run_shape_and_summary():
     assert code == 0
     assert {fixture["slug"] for fixture in payload["fixtures"]} == BENCH_SLUGS
     summary = payload["summary"]
-    assert summary["total"] == 110
-    assert summary["pass"] == 110 and summary["fail"] == 0 and summary["pending"] == 0
+    assert summary["total"] == 165
+    assert summary["pass"] == 165 and summary["fail"] == 0 and summary["pending"] == 0
 
 
 def test_failed_declaration_exits_one(tmp_path):

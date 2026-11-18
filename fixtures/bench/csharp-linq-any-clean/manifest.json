@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "clean",
+  "reason": "nearest negative: .Any() is the yes/no oracle",
+  "rule": "csharp-linq-count",
+  "slug": "csharp-linq-any-clean"
+}

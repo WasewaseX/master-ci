@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "clean",
+  "reason": "nearest negative: StringBuilder.Append is the linear builder",
+  "rule": "csharp-string-concat-in-loop",
+  "slug": "csharp-concat-builder-clean"
+}

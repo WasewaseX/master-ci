@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "clean",
+  "reason": "nearest negative: foreach when the index is bookkeeping",
+  "rule": "csharp-index-loop",
+  "slug": "csharp-index-foreach-clean"
+}

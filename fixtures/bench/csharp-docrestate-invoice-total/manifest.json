@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "summary restating that the Total property sets the total",
+  "rule": "csharp-redundant-doc-comment",
+  "slug": "csharp-docrestate-invoice-total"
+}

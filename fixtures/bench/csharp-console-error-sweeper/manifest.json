@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "Console.Error.WriteLine inside an audit sweep's error path",
+  "rule": "csharp-console-leftover",
+  "slug": "csharp-console-error-sweeper"
+}

@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "four branches comparing the file extension against constants",
+  "rule": "csharp-if-ladder",
+  "slug": "csharp-ifladder-file-mime"
+}

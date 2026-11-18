@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "summary restating that the Name property gets the name",
+  "rule": "csharp-redundant-doc-comment",
+  "slug": "csharp-docrestate-customer-name"
+}

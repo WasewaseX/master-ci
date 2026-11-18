@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "clean",
+  "reason": "nearest negative: await instead of blocking on the task",
+  "rule": "csharp-sync-over-async",
+  "slug": "csharp-blocking-await-clean"
+}

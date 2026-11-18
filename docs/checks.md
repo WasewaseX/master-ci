@@ -1734,3 +1734,9 @@ commit with regression tests.
   from a replica of their shipped rules over their production scope;
   our own floor, ratchet, suite and benchmark unchanged (1113 tests,
   110/110 fixtures).
+- **The C# accuracy column (round-15):** eleven csharp checks grew from
+  one judged row to five with 55 labeled fixtures (44 positives, 11
+  exemption-pinning nearest-negatives); 165/165 PASS, precision and
+  recall 1.00 on every widened column, and twenty-four checks now carry
+  promotion-ready evidence. The promotion flip stays a reviewed act per
+  the corpus protocol; the accuracy report is the artifact it attaches.

@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": ".Count() < 1 answering a yes/no question",
+  "rule": "csharp-linq-count",
+  "slug": "csharp-linq-under-limit"
+}

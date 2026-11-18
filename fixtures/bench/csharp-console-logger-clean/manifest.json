@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "clean",
+  "reason": "nearest negative: the injected ILogger is the real diagnostic path",
+  "rule": "csharp-console-leftover",
+  "slug": "csharp-console-logger-clean"
+}

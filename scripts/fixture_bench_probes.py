@@ -49,6 +49,11 @@ from fixture_bench_round13 import (
     ROUND13_CPP_DETECTED,
     ROUND13_CPP_RENAMED,
 )
+from fixture_bench_round15 import (
+    ROUND15_CSHARP_CLEAN_RULES,
+    ROUND15_CSHARP_DETECTED,
+    ROUND15_CSHARP_RENAMED,
+)
 from slop_bloat import check_bloat
 from slop_comments import extract_comments
 from slop_cpp import check_cpp_slop
@@ -237,4 +242,12 @@ for _CLEAN_SLUG, _CLEAN_RULE in ROUND10_PY_CLEAN_RULES.items():
 for _SLUG in ROUND13_CPP_DETECTED:
     PROBES[_SLUG] = Probe("slop_family", ROUND13_CPP_RENAMED.get(_SLUG, _SLUG), _probe_family_scan)
 for _CLEAN_SLUG, _CLEAN_RULE in ROUND13_CPP_CLEAN_RULES.items():
+    PROBES[_CLEAN_SLUG] = Probe("slop_family", _CLEAN_RULE, _probe_family_scan)
+
+# --- round-15 tranche: the C# accuracy column deepening ----------------------
+for _SLUG in ROUND15_CSHARP_DETECTED:
+    PROBES[_SLUG] = Probe(
+        "slop_family", ROUND15_CSHARP_RENAMED.get(_SLUG, _SLUG), _probe_family_scan
+    )
+for _CLEAN_SLUG, _CLEAN_RULE in ROUND15_CSHARP_CLEAN_RULES.items():
     PROBES[_CLEAN_SLUG] = Probe("slop_family", _CLEAN_RULE, _probe_family_scan)

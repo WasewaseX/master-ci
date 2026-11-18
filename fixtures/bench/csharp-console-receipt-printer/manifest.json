@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "Console.WriteLine receipt row in checkout code",
+  "rule": "csharp-console-leftover",
+  "slug": "csharp-console-receipt-printer"
+}

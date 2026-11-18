@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "index for-loop over a list's Count to find the first blank",
+  "rule": "csharp-index-loop",
+  "slug": "csharp-index-name-scan"
+}

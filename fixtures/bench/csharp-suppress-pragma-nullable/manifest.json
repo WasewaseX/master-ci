@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "pragma warning disable without a reason comment",
+  "rule": "csharp-suppressed-warning",
+  "slug": "csharp-suppress-pragma-nullable"
+}

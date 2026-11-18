@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "index for-loop over an array's Length to copy samples",
+  "rule": "csharp-index-loop",
+  "slug": "csharp-index-copy-samples"
+}

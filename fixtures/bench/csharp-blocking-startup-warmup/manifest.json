@@ -1,0 +1,7 @@
+{
+  "engine": "slop_family",
+  "expected": "detected",
+  "reason": "startup path blocks on two tasks with Wait() and .Result",
+  "rule": "csharp-sync-over-async",
+  "slug": "csharp-blocking-startup-warmup"
+}
