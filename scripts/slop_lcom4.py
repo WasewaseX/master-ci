@@ -49,9 +49,10 @@ from dataclasses import dataclass
 from itertools import combinations
 from pathlib import Path
 
+from slop_code_lines import _code_lines
 from slop_files import is_ignored, is_test_path, read_text_lax
 from slop_model import Finding
-from slop_structural import _brace_depths, _close_line, _code_lines
+from slop_structural import _brace_depths, _close_line
 
 # One measurement per class, capped so a pathological repo cannot flood
 # the report; order is deterministic (sorted rel paths, class order).

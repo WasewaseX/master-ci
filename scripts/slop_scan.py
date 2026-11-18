@@ -30,7 +30,7 @@ from slop_coupling import check_coupling_metrics, measure_coupling
 from slop_cpp import check_cpp_slop
 from slop_csharp import check_csharp_slop
 from slop_cycles import check_import_cycles
-from slop_dead import check_orphan_modules, check_unused_declarations
+from slop_dead import check_unused_declarations
 from slop_debt import check_debt_metrics
 from slop_density import check_analysis_coverage, density_findings
 from slop_deps import check_unused_dependencies
@@ -64,6 +64,7 @@ from slop_imports import (
 )
 from slop_lcom4 import check_class_cohesion
 from slop_model import Finding, _finding
+from slop_orphan import check_orphan_modules
 from slop_patterns import CODE_EXTS, DOC_EXTS, FAMILY_OF_EXT, TODO_PATTERN, UI_EXTS
 from slop_py_checks import check_elided_code, check_placeholder_impl, check_py_ast
 from slop_py_family import check_py_print_debug

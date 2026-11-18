@@ -34,6 +34,7 @@ _ROOT = _HERE.parent
 sys.path.insert(0, str(_HERE))
 sys.path.insert(0, str(_ROOT / "scripts"))
 
+import fixture_bench_probes as fp  # noqa: E402
 import fixture_benchmark as fb  # noqa: E402
 from fixture_bench_fixtures import HOTSPOT_COMMITS  # noqa: E402
 
@@ -376,7 +377,7 @@ def test_redundant_tests_row_and_its_distinct_test():
     assert result.verdict == "PASS"
     assert result.observed == "redundant-test"
     fixture_dir = BENCH / "redundant-tests"
-    findings = fb.probe_test_redundancy(fixture_dir, fb._fixture_files(fixture_dir))
+    findings = fp.probe_test_redundancy(fixture_dir, fb._fixture_files(fixture_dir))
     assert len(findings) == 1, "one finding per duplicate group"
     message = findings[0].message
     for twin in (

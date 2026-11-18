@@ -613,3 +613,55 @@ five rows (the 13-check C# column's other eleven, TS precision, the
 family columns, the quality dimensions) grow the same way; promotion
 itself stays a maintainer act the corpus can now object to in twelve
 places.
+
+## Round-14 - the claims paid in kind (2026-11-18)
+
+Round-12 triaged scanaislop's claims against source and won the
+argument: the file-too-large rows counted total lines where our
+`bloat-long-file` budget counts non-blank lines, and the facade
+re-exports carried `# noqa: F401` our own binding-aware phantom-import
+check honors. The user re-ran the tool and pasted the same rows back
+with a fair question: why do the warnings persist? An argument won is
+not a repo clean. This round paid the claims in kind - the repo is
+now clean under the competitor's own rules, in the competitor's own
+production-path scope, verified by a replica ported from their
+shipped TypeScript (`src/engines/ai-slop/unused-imports.ts`,
+`src/engines/code-quality/complexity.ts`), not from their report.
+
+The facade (scripts/ai_slop_detector.py) now declares every re-export
+with the PEP 484 redundant-alias convention - `from X import Y as Y`.
+That convention is the machine-readable statement "this module
+publishes the name", and scanaislop's unused-import rule skips a
+redundant alias explicitly (their extractor, line 108-109); ruff and
+the engine's own phantom-import check stay quiet via the same scoped
+noqa as before. One surface, three scanners, zero disagreement. The
+facade contract test (test_facade_surface.py) passes unchanged - the
+alias form binds the same names.
+
+Four modules that had grown past the 400-total-line mark in the
+claims' counting split along their seams, the same split the engine
+enforces on consumers: slop_structural.py (451) moved the string-aware
+comment blanker and the shared code-line view into slop_code_lines.py
+and kept the budget law and the block scanners; slop_cycles.py (460)
+moved the per-language edge extractors into slop_cycle_edges.py and
+kept the graph, Tarjan's SCC and the check; slop_dead.py (441) moved
+the orphan-module half into slop_orphan.py, which also absorbed the
+dead MAX_ORPHANS constant and finally wires it into its own cap;
+fixture_benchmark.py (470) moved the Probe table and the per-tranche
+registrations into fixture_bench_probes.py and kept the judge, the
+renderer and the CLI. Every new module sits at or under 280 total
+lines; no public check name moved facade-ward, so no consumer import
+changed except the two that name the moved check directly
+(slop_scan.py, and the facade's own check_orphan_modules source).
+
+Evidence: 1113 tests pass (the one honest touch: the redundant-tests
+fixture test reached a probe through the runner module's namespace and
+now names the probes module); ruff check and ruff format --check clean
+over 153 files; mypy clean over 94; self-scan verdict CLEAN with a
+floor byte-identical to the committed .quality-baseline.json; the
+quality ratchet exits 0 in enforce mode; the fixture benchmark runs
+110/110 PASS; editorconfig-checker v4.0.2 exits 0. The replica scan -
+their unused-import extractor and their file-too-large budget and
+trigger, over their production-path scope - reports zero claims, where
+the same replica run before this round reproduces the user's paste
+exactly (4 too-large, 16 unused-import, all in scripts/).
