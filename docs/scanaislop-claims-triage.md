@@ -164,6 +164,6 @@ restating the verdict:
 Verification is a replica ported from their shipped source, not a
 reading of their report: their unused-import extractor, their
 file-too-large budget/trigger math, and their production-path scope
-(fixtures/, tests/ and siblings excluded, which is why only scripts/
-ever appeared in the claims). After the round: zero claims. The same
+(fixtures/, tests/ and siblings excluded - only scripts/ ever reached
+their production scan). After the round: zero claims. The same
 replica against the pre-round tree reproduces the user's paste exactly.
