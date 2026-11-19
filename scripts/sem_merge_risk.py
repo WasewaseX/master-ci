@@ -98,20 +98,51 @@ def score(
         count = classes.get(cls, 0)
         if count:
             report.contributions.append(
-                {"kind": f"{cls}-findings", "count": count, "weight": WEIGHTS[cls], "points": count * WEIGHTS[cls]}
+                {
+                    "kind": f"{cls}-findings",
+                    "count": count,
+                    "weight": WEIGHTS[cls],
+                    "points": count * WEIGHTS[cls],
+                }
             )
     if changed_count >= 50:
-        report.contributions.append({"kind": "blast-radius", "count": changed_count, "weight": BLAST_LARGE, "points": BLAST_LARGE})
+        report.contributions.append(
+            {
+                "kind": "blast-radius",
+                "count": changed_count,
+                "weight": BLAST_LARGE,
+                "points": BLAST_LARGE,
+            }
+        )
     elif changed_count >= 20:
-        report.contributions.append({"kind": "blast-radius", "count": changed_count, "weight": BLAST_SMALL, "points": BLAST_SMALL})
+        report.contributions.append(
+            {
+                "kind": "blast-radius",
+                "count": changed_count,
+                "weight": BLAST_SMALL,
+                "points": BLAST_SMALL,
+            }
+        )
     if not available:
         report.incomplete = True
         report.contributions.append(
-            {"kind": "data-gap", "count": 1, "weight": DATA_GAP, "points": DATA_GAP, "detail": "no findings input"}
+            {
+                "kind": "data-gap",
+                "count": 1,
+                "weight": DATA_GAP,
+                "points": DATA_GAP,
+                "detail": "no findings input",
+            }
         )
     if not coverage_known:
         report.contributions.append(
-            {"kind": "data-gap", "count": 1, "weight": DATA_GAP, "points": DATA_GAP, "detail": "new-code coverage unknown"}
+            {
+                "kind": "data-gap",
+                "count": 1,
+                "weight": DATA_GAP,
+                "points": DATA_GAP,
+                "detail": "new-code coverage unknown",
+            }
         )
     report.score = min(CAP, sum(int(c["points"]) for c in report.contributions))
     return report
@@ -129,9 +160,7 @@ def render_markdown(report: RiskReport, changed_count: int) -> str:
         "| --- | --- | --- | --- |",
     ]
     for c in report.contributions:
-        lines.append(
-            f"| {c['kind']} | {c['count']} | {c['weight']} | {c['points']} |"
-        )
+        lines.append(f"| {c['kind']} | {c['count']} | {c['weight']} | {c['points']} |")
     lines += [
         "",
         "A low score is not proof of safety: it only means the model's inputs found nothing.",
@@ -146,7 +175,9 @@ def main(argv: Sequence[str] | None = None, /) -> int:
     parser = argparse.ArgumentParser(description="score a PR's merge risk")
     parser.add_argument("--findings", default="-", help="detector JSON file, or - for stdin")
     parser.add_argument("--changed", type=int, default=0, help="number of changed files")
-    parser.add_argument("--coverage-known", action="store_true", help="new-code coverage is available")
+    parser.add_argument(
+        "--coverage-known", action="store_true", help="new-code coverage is available"
+    )
     parser.add_argument("--json", action="store_true", help="machine-readable output")
     args = parser.parse_args(argv)
     if args.findings == "-":

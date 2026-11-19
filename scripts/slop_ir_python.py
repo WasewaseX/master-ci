@@ -67,21 +67,23 @@ def _visit_body(
             qual = f"{prefix}{node.name}"
             exported = not node.name.startswith("_") or node.name in exported_all
             symbols.append(
-                SymbolIR(kind=kind, name=node.name, qualname=qual, line=node.lineno, exported=exported)
+                SymbolIR(
+                    kind=kind, name=node.name, qualname=qual, line=node.lineno, exported=exported
+                )
             )
             _visit_body(node.body, f"{qual}.", exported_all, symbols, in_class=False)
         elif isinstance(node, ast.ClassDef):
             qual = f"{prefix}{node.name}"
             exported = not node.name.startswith("_") or node.name in exported_all
             symbols.append(
-                SymbolIR(kind="class", name=node.name, qualname=qual, line=node.lineno, exported=exported)
+                SymbolIR(
+                    kind="class", name=node.name, qualname=qual, line=node.lineno, exported=exported
+                )
             )
             _visit_body(node.body, f"{qual}.", exported_all, symbols, in_class=True)
         else:
             for attr in _CONTAINER_BODIES.get(type(node), ()):
-                _visit_body(
-                    getattr(node, attr), prefix, exported_all, symbols, in_class
-                )
+                _visit_body(getattr(node, attr), prefix, exported_all, symbols, in_class)
 
 
 def _extract_symbols(tree: ast.Module, exported_all: set[str]) -> list[SymbolIR]:

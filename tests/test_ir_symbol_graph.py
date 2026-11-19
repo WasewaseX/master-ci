@@ -58,6 +58,20 @@ def test_ir_roundtrip_preserves_every_field(tmp_path):
     assert restored.symbols[0].name == "_gone"
 
 
+def test_ir_file_roundtrip_through_disk(tmp_path):
+    """write_ir/read_ir: the slice-2 persistence contract, exercised."""
+    from slop_ir import read_ir, write_ir
+    from slop_ir_python import extract_python
+
+    source = _write(tmp_path, "mod.py", "class Widget:\n    def ping(self):\n        return 1\n")
+    ir = extract_python(source)
+    bundle = tmp_path / "mod.ir.json"
+    write_ir(ir, bundle)
+    restored = read_ir(bundle)
+    assert restored == ir
+    assert restored.symbols[0].kind == "class"
+
+
 def test_ir_version_mismatch_raises():
     payload = {"ir_version": IR_VERSION + 1, "path": "x.py"}
     with pytest.raises(ValueError, match="IR version mismatch"):
@@ -197,7 +211,7 @@ def test_go_lowercase_dead_flagged_but_init_and_main_exempt(tmp_path):
             'import "fmt"\n\n'
             'func ExportedHelper() { fmt.Println("x") }\n\n'
             'func deadHelper() { fmt.Println("y") }\n\n'
-            'func init() { ExportedHelper() }\n'
+            "func init() { ExportedHelper() }\n"
         ),
     )
     findings = check_semantic_dead_symbols(tmp_path, [tmp_path / "b.go"], [])

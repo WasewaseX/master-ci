@@ -1,5 +1,4 @@
-# The next-generation analysis system: what the code says, what the IR
-# unlocks, and where Rust earns its place
+# The next-generation analysis system: what the code says, what the IR unlocks
 
 Written against the actual source (2026-11-19, commit range up to the
 round-17 vertical slice). Every number below was measured on this

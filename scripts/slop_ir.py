@@ -29,10 +29,8 @@ from pathlib import Path
 IR_VERSION = 1
 
 #: One row per language the IR accepts, with the parser family that
-#: lowers it and the one file suffix it claims. "native-ast" rows use a
-#: compiler-grade parser shipped with the toolchain; "tree-sitter" rows
-#: use the grammar pack (syntax-grade, not scope-aware). This table is
-#: the coverage claim - the graph and the capability matrix read it,
+#: lowers it and the one file suffix it claims. This table is the
+#: coverage claim - the graph and the capability matrix read it,
 #: never prose.
 EXTRACTORS: dict[str, dict[str, str]] = {
     "python": {"parser": "native-ast", "suffix": ".py"},

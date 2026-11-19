@@ -72,7 +72,9 @@ def _first_name(node) -> str:
     return ""
 
 
-def _def_symbol(node, def_kind: str, language: str, in_export: bool, prefix: str) -> SymbolIR | None:
+def _def_symbol(
+    node, def_kind: str, language: str, in_export: bool, prefix: str
+) -> SymbolIR | None:
     """The SymbolIR for one definition node, or None when nameless."""
     name = _first_name(node)
     if not name:
@@ -204,6 +206,7 @@ def _go_import(node) -> ImportIR | None:
             module = child.text.decode("utf-8", "replace").strip("'\"")
             return ImportIR(module=module, names=[], line=node.start_point[0] + 1)
     return None
+
 
 def extract_treesitter(path: Path, language: str) -> FileIR:
     """Lower one TS/TSX/JS/Go file to the shared IR."""

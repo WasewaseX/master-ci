@@ -755,15 +755,15 @@ correctly refusing an outdated base.
 
 ## The 50-feature reverse-engineering program (2026-11-19)
 
-The external spec lists fifty features across three reference families
-- the SonarQube/Qlty/Qodana quality engine (A1-A20), the CodeRabbit
-review platform (B21-B39) and the Semaphore pipeline model (C40-C50) -
-and demands each one either exists here or goes on the build plan. The
-status column was audited feature-by-feature against this tree on the
-date above: every "shipped" row names the module or workflow that
-carries it, every "partial" row says what is missing, and every
-"missing" row lands in a numbered batch. The audit method was grep plus
-source reads over `scripts/`, `tests/`, `docs/` and
+The external spec lists fifty features across three reference
+families: the SonarQube/Qlty/Qodana quality engine (A1-A20), the
+CodeRabbit review platform (B21-B39) and the Semaphore pipeline model
+(C40-C50), and demands each one either exists here or goes on the
+build plan. The status column was audited feature-by-feature against
+this tree on the date above: every "shipped" row names the module or
+workflow that carries it, every "partial" row says what is missing,
+and every "missing" row lands in a numbered batch. The audit method
+was grep plus source reads over `scripts/`, `tests/`, `docs/` and
 `.github/workflows/` - no status was copied from prose.
 
 The build order follows value and integration cost, fastest first:

@@ -1,24 +1,24 @@
 """The vertical slice's benchmark: performance, quality, and the delta.
 
-    Three phases, one command, JSON on demand:
+Three phases, one command, JSON on demand:
 
-    1. Performance - lower this repository's own Python, TypeScript and
-        Go surface to IR and report wall time, per-parser split and
-        corpus counts. This is the measurement harness the architecture
-        decision record points at: if the Python IR builder ever
-        dominates the scan budget, that number - not taste - is what
-        justifies moving the hot loop into a compiled engine.
+1. Performance - lower this repository's own Python, TypeScript and
+    Go surface to IR and report wall time, per-parser split and
+    corpus counts. This is the measurement harness the architecture
+    decision record points at: if the Python IR builder ever
+    dominates the scan budget, that number - not taste - is what
+    justifies moving the hot loop into a compiled engine.
 
-    2. Detection quality on the labeled corpus - the flawed_python
-        positive control and the clean_* negative controls yield TP/FP/
-        FN, precision and recall. A rule with insufficient samples stays
-        advisory, and no promotion is claimed from unit tests alone.
+2. Detection quality on the labeled corpus - the flawed_python
+    positive control and the clean_* negative controls yield TP/FP/
+    FN, precision and recall. A rule with insufficient samples stays
+    advisory, and no promotion is claimed from unit tests alone.
 
-    3. The delta against the textual occurrence oracle - the same
-        corpus under slop_dead's textual deadness check, so the
-        semantic slice's contribution is visible as concrete findings
-        the prose-kept-alive names escaped, and nothing the textual
-        oracle caught was lost.
+3. The delta against the textual occurrence oracle - the same
+    corpus under slop_dead's textual deadness check, so the
+    semantic slice's contribution is visible as concrete findings
+    the prose-kept-alive names escaped, and nothing the textual
+    oracle caught was lost.
 """
 
 from __future__ import annotations

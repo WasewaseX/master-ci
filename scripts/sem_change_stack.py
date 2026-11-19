@@ -40,7 +40,18 @@ COHORT_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("service", ("services/", "core/", "domain/", "usecases/", "engine")),
     ("ui", ("components/", "pages/", "views/", "styles/", "ui/", ".css", ".scss")),
     ("tests", ("tests/", "test_", "_test.", "spec/", "conftest")),
-    ("build", ("makefile", "dockerfile", ".github/workflows/", "scripts/", "gradle", "cargo.toml", "package.json")),
+    (
+        "build",
+        (
+            "makefile",
+            "dockerfile",
+            ".github/workflows/",
+            "scripts/",
+            "gradle",
+            "cargo.toml",
+            "package.json",
+        ),
+    ),
     ("config", ("config", "settings", ".toml", ".yaml", ".yml", ".json", "manifest", ".ini")),
     ("docs", (".md", "docs/", "readme", "changelog")),
 )
@@ -65,12 +76,16 @@ class Cohort:
     @property
     def added(self) -> int | None:
         counts = [f.added for f in self.files]
-        return sum(c for c in counts if c is not None) if any(c is not None for c in counts) else None
+        return (
+            sum(c for c in counts if c is not None) if any(c is not None for c in counts) else None
+        )
 
     @property
     def deleted(self) -> int | None:
         counts = [f.deleted for f in self.files]
-        return sum(c for c in counts if c is not None) if any(c is not None for c in counts) else None
+        return (
+            sum(c for c in counts if c is not None) if any(c is not None for c in counts) else None
+        )
 
 
 def classify(path: str) -> str:
@@ -126,7 +141,9 @@ def render_markdown(stack: list[Cohort]) -> str:
                     f"- {PurePosixPath(change.path).as_posix()} (+{change.added}/-{change.deleted})"
                 )
         lines.append("")
-    lines.append("Cohorts are ordered foundation-first; `unclassified` files are shown, not hidden.")
+    lines.append(
+        "Cohorts are ordered foundation-first; `unclassified` files are shown, not hidden."
+    )
     lines.append("")
     return "\n".join(lines)
 

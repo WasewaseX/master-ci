@@ -67,9 +67,7 @@ def _loader():
     class UniqueKeyLoader(yaml.SafeLoader):
         pass
 
-    UniqueKeyLoader.add_constructor(
-        yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _unique_mapping
-    )
+    UniqueKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _unique_mapping)
     return UniqueKeyLoader
 
 
@@ -133,16 +131,12 @@ def _validate_dimensions(
             continue
         issue = _dimension_issue(key, value)
         if issue:
-            violations.append(
-                MatrixViolation(workflow, job, issue.kind, issue.detail)
-            )
+            violations.append(MatrixViolation(workflow, job, issue.kind, issue.detail))
             product = 0
             continue
         product *= max(len(value), 1)
     if product > ceiling:
-        shape = " x ".join(
-            str(len(v)) for v in dims.values() if isinstance(v, list) and v
-        )
+        shape = " x ".join(str(len(v)) for v in dims.values() if isinstance(v, list) and v)
         violations.append(
             MatrixViolation(
                 workflow,
@@ -252,11 +246,7 @@ def validate_root(root: Path, ceiling: int = MAX_MATRIX_JOBS) -> list[MatrixViol
             payload = load_workflow(path)
         except MatrixError as exc:
             detail = str(exc)
-            kind = (
-                "duplicate-key"
-                if "duplicate mapping key" in detail
-                else "workflow-parse"
-            )
+            kind = "duplicate-key" if "duplicate mapping key" in detail else "workflow-parse"
             violations.append(MatrixViolation(path.name, "-", kind, detail))
             continue
         for job, node in _iter_job_matrices(payload):

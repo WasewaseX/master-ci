@@ -56,7 +56,11 @@ def test_matrix_empty_dimension_fails(tmp_path):
 
 
 def test_matrix_non_list_dimension_fails(tmp_path):
-    _workflow(tmp_path, "wf.yml", "jobs:\n  build:\n    strategy:\n      matrix:\n        os: ubuntu-latest\n")
+    _workflow(
+        tmp_path,
+        "wf.yml",
+        "jobs:\n  build:\n    strategy:\n      matrix:\n        os: ubuntu-latest\n",
+    )
     violations = matrix_mod.validate_root(tmp_path)
     assert [v.kind for v in violations] == ["non-list-dimension"]
 
@@ -105,7 +109,7 @@ def test_matrix_clean_workflow_passes_with_exit_zero(tmp_path):
             "jobs:\n  build:\n    strategy:\n      matrix:\n"
             "        os: [ubuntu-latest, macos-latest]\n"
             "        node: [18, 20]\n"
-    "        include:\n          - os: macos-latest\n            experimental: true\n"
+            "        include:\n          - os: macos-latest\n            experimental: true\n"
         ),
     )
     assert matrix_mod.validate_root(tmp_path) == []
@@ -211,7 +215,9 @@ def test_merge_risk_blast_radius_tiers():
     assert small.score == 0
     assert mid.score == risk_mod.BLAST_SMALL
     assert large.score == risk_mod.BLAST_LARGE
-    assert risk_mod.score([], 60, coverage_known=True, findings_available=True).score <= risk_mod.CAP
+    assert (
+        risk_mod.score([], 60, coverage_known=True, findings_available=True).score <= risk_mod.CAP
+    )
 
 
 def test_merge_risk_legitimate_empty_scan_is_not_a_gap():

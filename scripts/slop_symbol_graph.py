@@ -69,11 +69,8 @@ _DUNDER_EXEMPT = frozenset(
         # the binary's entry - neither is referenced from a parse tree.
         "init",
         "main",
-        # The dataclass and class-builder protocols the interpreter calls:
-        # __post_init__ runs after generated __init__, __init_subclass__
-        # and __set_name__ fire at class creation, __class_getitem__ and
-        # __subclasshook__ are runtime hooks. All caught by the repo's
-        # own self-scan before a single external user hit them.
+        # Dataclass and class-builder protocols the interpreter calls;
+        # all caught by the repo's own self-scan, not by guesswork.
         "__post_init__",
         "__init_subclass__",
         "__set_name__",
@@ -161,9 +158,7 @@ def _candidate_symbol(sym: SymbolIR, graph: SymbolGraph) -> bool:
     return graph.use_counts.get(sym.name, 0) == 0
 
 
-def _dead_candidates(
-    graph: SymbolGraph, root: Path
-) -> list[tuple[FileIR, SymbolIR]]:
+def _dead_candidates(graph: SymbolGraph, root: Path) -> list[tuple[FileIR, SymbolIR]]:
     """Private, non-exempt symbols with zero parse-tree references."""
     out: list[tuple[FileIR, SymbolIR]] = []
     for ir in graph.files.values():
