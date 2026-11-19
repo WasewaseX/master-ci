@@ -122,9 +122,7 @@ def test_python_shell_true_dynamic_command_reports():
 
 def test_python_shell_true_fstring_reports():
     text = 'subprocess.run(f"ls {d}", shell=True)\n'
-    assert checks_of(check_shell_injection(Path("a.py"), text, "py", "a.py")) == [
-        "shell-injection"
-    ]
+    assert checks_of(check_shell_injection(Path("a.py"), text, "py", "a.py")) == ["shell-injection"]
 
 
 def test_python_constant_command_stays_silent():
@@ -178,10 +176,7 @@ def test_safe_load_and_loader_stay_silent():
 
 
 def test_binary_formatter_reports():
-    text = (
-        "var fmt = new BinaryFormatter();\n"
-        "var obj = fmt.Deserialize(stream);\n"
-    )
+    text = "var fmt = new BinaryFormatter();\nvar obj = fmt.Deserialize(stream);\n"
     findings = check_unsafe_deserialization(Path("a.cs"), text, "csharp", "a.cs")
     assert checks_of(findings) == ["unsafe-deserialization"]
 
@@ -190,7 +185,7 @@ def test_binary_formatter_reports():
 
 
 def test_unsafe_c_calls_report():
-    text = 'void f(char *d, char *s) { strcpy(d, s); }\n'
+    text = "void f(char *d, char *s) { strcpy(d, s); }\n"
     findings = check_unsafe_c_call(Path("a.c"), text, "cpp", "a.c")
     assert checks_of(findings) == ["unsafe-c-call"]
 
@@ -250,7 +245,7 @@ def test_column_skips_test_paths_wholesale():
 
 
 def test_column_reports_on_production_path():
-    text = 'el.innerHTML = x;\n'
+    text = "el.innerHTML = x;\n"
     assert check_security_column(Path("a.ts"), text, "js", "src/a.ts")
 
 
@@ -268,7 +263,7 @@ def test_unused_css_reports_orphan_class(tmp_path):
     root, files = _repo_with(
         tmp_path,
         ".card-body { padding: 1rem; }\n.orphan-widget { color: red; }\n",
-        'def render():\n    return \'<div class="card-body"></div>\'\n',
+        "def render():\n    return '<div class=\"card-body\"></div>'\n",
     )
     findings = check_unused_css(root, files, [])
     assert len(findings) == 1
@@ -279,7 +274,7 @@ def test_referenced_class_stays_silent(tmp_path):
     root, files = _repo_with(
         tmp_path,
         ".card-body { padding: 1rem; }\n",
-        'def render():\n    return \'<div class="card-body"></div>\'\n',
+        "def render():\n    return '<div class=\"card-body\"></div>'\n",
     )
     assert check_unused_css(root, files, []) == []
 
@@ -389,9 +384,7 @@ def test_new_checks_registered():
 
 
 def test_security_column_is_blocking_grade():
-    finding = mod.Finding(
-        path="a.ts", line=1, check="sql-injection", message="x", weight=5
-    )
+    finding = mod.Finding(path="a.ts", line=1, check="sql-injection", message="x", weight=5)
     assert finding.advisory is False
 
 

@@ -1,21 +1,21 @@
 """The Semaphore compile-time secret contract, enforced statically.
 
-    Semaphore fails a pipeline at compile time when it imports a secret
-    name that does not exist. GitHub Actions fails at runtime instead -
-    usually as a silent empty string, which is worse: the job runs and
-    "passes" without the credential. This lint ports the compile-time
-    contract to workflow YAML:
+Semaphore fails a pipeline at compile time when it imports a secret
+name that does not exist. GitHub Actions fails at runtime instead -
+usually as a silent empty string, which is worse: the job runs and
+"passes" without the credential. This lint ports the compile-time
+contract to workflow YAML:
 
-    - every `${{ secrets.NAME }}` used under .github/workflows/ must be
-        declared in docs/secrets-manifest.yml - an unknown name exits 1,
-    - a workflow triggered by `pull_request` that consumes secrets gets
-        flagged: forked-PR runs receive empty secrets unless explicitly
-        allow-listed, so the consumption is either dead or a leak path,
-    - raw `${{ secrets.NAME }}` interpolation directly inside an
-        `echo`/`printf` command line gets flagged: it lands in logs
-        unmasked-adjacent and the shell history of the runner.
+- every `${{ secrets.NAME }}` used under .github/workflows/ must be
+    declared in docs/secrets-manifest.yml - an unknown name exits 1,
+- a workflow triggered by `pull_request` that consumes secrets gets
+    flagged: forked-PR runs receive empty secrets unless explicitly
+    allow-listed, so the consumption is either dead or a leak path,
+- raw `${{ secrets.NAME }}` interpolation directly inside an
+    `echo`/`printf` command line gets flagged: it lands in logs
+    unmasked-adjacent and the shell history of the runner.
 
-    Exit codes: 0 clean, 1 violation, 2 usage error.
+Exit codes: 0 clean, 1 violation, 2 usage error.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Sequence
 
 if TYPE_CHECKING:
     pass
@@ -80,6 +80,55 @@ def triggers_on_pull_request(text: str) -> bool:
     return bool(match and "pull_request" in match.group(1))
 
 
+def _audit_one_workflow(
+    rel: str,
+    text: str,
+    declared: dict[str, dict],
+    manifest_path: Path,
+) -> tuple[list[str], list[str], set[str]]:
+    """One workflow's errors and warnings against the declared secrets.
+
+    GitHub secret names are case-insensitive at runtime: the repo's
+    lowercase `secrets.dockerhub_token` and a declared DOCKERHUB_TOKEN
+    are the same credential. Matching is case-insensitive; a lowercase
+    spelling is a convention warning, not a compile error.
+    """
+    declared_ci = {name.upper() for name in declared}
+    errors: list[str] = []
+    warnings: list[str] = []
+    used = set(_SECRET_USE.findall(text))
+    for name in sorted(n for n in used if n.upper() not in declared_ci):
+        errors.append(
+            f"{rel}: secret '{name}' is not declared in {manifest_path} - "
+            "GitHub passes an empty string at runtime; declare it or fix the name"
+        )
+    for name in sorted(n for n in used if n not in declared and n.upper() in declared_ci):
+        warnings.append(
+            f"{rel}: secret '{name}' spelled lowercase - use the "
+            "declared UPPER_SNAKE form in workflow YAML"
+        )
+    errors.extend(_fork_exposure(rel, text, used))
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        if _ECHO_LINE.search(line):
+            warnings.append(f"{rel}:{lineno}: secret interpolated into an echo/printf line")
+    return errors, warnings, used
+
+
+def _fork_exposure(rel: str, text: str, used: set[str]) -> list[str]:
+    """The error for secret consumption a forked PR can reach."""
+    if not used or not triggers_on_pull_request(text):
+        return []
+    for trigger in ("pull_request_target", "pull_request"):
+        if trigger in text and not _has_fork_guard(text):
+            return [
+                f"{rel}: consumes secrets {sorted(used)} on a "
+                f"{trigger} trigger without a fork guard - forked "
+                "PRs receive empty secrets or, with "
+                "pull_request_target, an exfiltration path"
+            ]
+    return []
+
+
 def scan(root: Path, manifest_path: Path) -> tuple[list[str], list[str]]:
     """(errors, warnings) across every workflow file.
 
@@ -87,47 +136,16 @@ def scan(root: Path, manifest_path: Path) -> tuple[list[str], list[str]]:
     exposure; warnings are the log-interpolation hygiene nits.
     """
     declared = load_manifest(manifest_path)
-    # GitHub secret names are case-insensitive at runtime: the repo's
-    # lowercase `secrets.dockerhub_token` and a declared DOCKERHUB_TOKEN
-    # are the same credential. Matching is case-insensitive; a lowercase
-    # spelling is a convention warning, not a compile error.
-    declared_ci: dict[str, dict] = {
-        name.upper(): entry for name, entry in declared.items()
-    }
     errors: list[str] = []
     warnings: list[str] = []
     used_names: set[str] = set()
     for path in workflow_files(root):
         rel = path.relative_to(root).as_posix()
         text = path.read_text(encoding="utf-8", errors="replace")
-        used = set(_SECRET_USE.findall(text))
+        file_errors, file_warnings, used = _audit_one_workflow(rel, text, declared, manifest_path)
+        errors.extend(file_errors)
+        warnings.extend(file_warnings)
         used_names |= used
-        unknown = {name for name in used if name.upper() not in declared_ci}
-        for name in sorted(unknown):
-            errors.append(
-                f"{rel}: secret '{name}' is not declared in {manifest_path} - "
-                "GitHub passes an empty string at runtime; declare it or fix the name"
-            )
-        for name in sorted(
-            name for name in used if name not in declared and name.upper() in declared_ci
-        ):
-            warnings.append(
-                f"{rel}: secret '{name}' spelled lowercase - use the "
-                "declared UPPER_SNAKE form in workflow YAML"
-            )
-        if used and triggers_on_pull_request(text):
-            for trigger in ("pull_request_target", "pull_request"):
-                if trigger in text and not _has_fork_guard(text):
-                    errors.append(
-                        f"{rel}: consumes secrets {sorted(used)} on a "
-                        f"{trigger} trigger without a fork guard - forked "
-                        "PRs receive empty secrets or, with "
-                        "pull_request_target, an exfiltration path"
-                    )
-                    break
-        for lineno, line in enumerate(text.splitlines(), start=1):
-            if _ECHO_LINE.search(line):
-                warnings.append(f"{rel}:{lineno}: secret interpolated into an echo/printf line")
     for name in sorted(
         name for name in declared if not any(name.upper() == u.upper() for u in used_names)
     ):
@@ -151,7 +169,7 @@ def _has_fork_guard(text: str) -> bool:
     )
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="sem_secrets_lint",
         description="compile-time secret-name contract for workflow YAML",

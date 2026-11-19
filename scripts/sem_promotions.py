@@ -1,24 +1,24 @@
 """The Semaphore promotions model, reverse-engineered (round-16).
 
-    Semaphore's signature feature is the promotion: a named target that
-    starts a downstream pipeline after (or during) the parent run, with
-    declared parameters and an auto-promotion condition. This module
-    ports the model to GitHub Actions reality:
+Semaphore's signature feature is the promotion: a named target that
+starts a downstream pipeline after (or during) the parent run, with
+declared parameters and an auto-promotion condition. This module
+ports the model to GitHub Actions reality:
 
-    - `.semaphore/promotions.yml` declares the promotions as repo data:
-        name, target workflow file, auto_promote condition, parameters
-        with required/default/options/regex validation.
-    - `validate` enforces the contracts: unique names, existing target
-        files, the conditions-DSL subset (`result`, `result_reason`,
-        `branch`, `tag`, `pull_request`, operators =, !=, =~, !~, and,
-        or), `result` only legal inside auto_promote, required parameters
-        carrying a default when the promotion auto-promotes, and
-        regex_pattern compiling.
-    - `promote` validates the supplied parameters against the declared
-        contract and prints the exact `gh workflow run` command it would
-        execute - the manual-promotion path with no secret ever printed.
+- `.semaphore/promotions.yml` declares the promotions as repo data:
+    name, target workflow file, auto_promote condition, parameters
+    with required/default/options/regex validation.
+- `validate` enforces the contracts: unique names, existing target
+    files, the conditions-DSL subset (`result`, `result_reason`,
+    `branch`, `tag`, `pull_request`, operators =, !=, =~, !~, and,
+    or), `result` only legal inside auto_promote, required parameters
+    carrying a default when the promotion auto-promotes, and
+    regex_pattern compiling.
+- `promote` validates the supplied parameters against the declared
+    contract and prints the exact `gh workflow run` command it would
+    execute - the manual-promotion path with no secret ever printed.
 
-    Exit codes: 0 valid/promoted, 1 validation failure, 2 usage error.
+Exit codes: 0 valid/promoted, 1 validation failure, 2 usage error.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Sequence
 
 if TYPE_CHECKING:
     pass
@@ -41,7 +41,9 @@ CONDITION_OPS = re.compile(r"(=~|!~|!=|=|\band\b|\bor\b|\bAND\b|\bOR\b)")
 _QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
 _PARAM_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
 PROMOTION_KEYS = frozenset({"name", "pipeline_file", "auto_promote", "parameters"})
-PARAM_KEYS = frozenset({"name", "description", "required", "default_value", "options", "regex_pattern"})
+PARAM_KEYS = frozenset(
+    {"name", "description", "required", "default_value", "options", "regex_pattern"}
+)
 
 
 class PromotionError(ValueError):
@@ -64,7 +66,9 @@ def load_promotions(path: Path) -> list[dict]:
     for entry in entries:
         unknown = set(entry) - PROMOTION_KEYS
         if unknown:
-            raise PromotionError(f"promotion {entry.get('name', '?')}: unknown keys {sorted(unknown)}")
+            raise PromotionError(
+                f"promotion {entry.get('name', '?')}: unknown keys {sorted(unknown)}"
+            )
     return entries
 
 
@@ -89,6 +93,58 @@ def validate_condition(expr: str, *, auto: bool) -> list[str]:
     return errors
 
 
+def _validate_auto_promote(entry: dict) -> list[str]:
+    """The auto_promote block's own contract errors."""
+    auto = entry.get("auto_promote")
+    if auto is None:
+        return []
+    when = auto.get("when") if isinstance(auto, dict) else None
+    if not when:
+        return ["auto_promote requires a 'when' condition"]
+    return validate_condition(str(when), auto=True)
+
+
+def _validate_parameters_block(entry: dict) -> list[str]:
+    """The declared env_vars' shape errors: names, defaults, regexes."""
+    errors: list[str] = []
+    auto = entry.get("auto_promote")
+    params = entry.get("parameters") or {}
+    for param in params.get("env_vars", []) if isinstance(params, dict) else []:
+        pname = str(param.get("name"))
+        errors.extend(_unknown_param_keys(pname, param))
+        if not _PARAM_NAME.fullmatch(str(pname)):
+            errors.append(f"parameter name must be UPPER_SNAKE: {pname!r}")
+        if _needs_default_under_auto(param, auto):
+            errors.append(f"parameter {pname} is required but auto_promote fills no default")
+        errors.extend(_bad_regex(pname, param))
+        options = param.get("options")
+        if options is not None and not isinstance(options, list):
+            errors.append(f"parameter {pname}: options must be a list")
+    return errors
+
+
+def _unknown_param_keys(pname: str, param: dict) -> list[str]:
+    unknown = set(param) - PARAM_KEYS
+    if not unknown:
+        return []
+    return [f"parameter {pname}: unknown keys {sorted(unknown)}"]
+
+
+def _needs_default_under_auto(param: dict, auto) -> bool:
+    return bool(param.get("required")) and auto is not None and param.get("default_value") is None
+
+
+def _bad_regex(pname: str, param: dict) -> list[str]:
+    pattern = param.get("regex_pattern")
+    if pattern is None:
+        return []
+    try:
+        re.compile(str(pattern))
+    except re.error as exc:
+        return [f"parameter {pname}: regex_pattern does not compile: {exc}"]
+    return []
+
+
 def validate_promotion(entry: dict, root: Path) -> list[str]:
     """Every contract one promotion entry must satisfy."""
     errors: list[str] = []
@@ -100,38 +156,8 @@ def validate_promotion(entry: dict, root: Path) -> list[str]:
         errors.append("promotion is missing pipeline_file")
     elif not (root / target).is_file():
         errors.append(f"pipeline_file does not exist: {target}")
-    auto = entry.get("auto_promote")
-    if auto is not None:
-        when = auto.get("when") if isinstance(auto, dict) else None
-        if not when:
-            errors.append("auto_promote requires a 'when' condition")
-        else:
-            errors.extend(validate_condition(str(when), auto=True))
-    params = entry.get("parameters") or {}
-    env_vars = params.get("env_vars", []) if isinstance(params, dict) else []
-    required_names: set[str] = set()
-    for param in env_vars:
-        pname = param.get("name", "")
-        unknown = set(param) - PARAM_KEYS
-        if unknown:
-            errors.append(f"parameter {pname}: unknown keys {sorted(unknown)}")
-        if not _PARAM_NAME.fullmatch(str(pname)):
-            errors.append(f"parameter name must be UPPER_SNAKE: {pname!r}")
-        if param.get("required"):
-            required_names.add(str(pname))
-            if auto is not None and param.get("default_value") is None:
-                errors.append(
-                    f"parameter {pname} is required but auto_promote fills no default"
-                )
-        pattern = param.get("regex_pattern")
-        if pattern is not None:
-            try:
-                re.compile(str(pattern))
-            except re.error as exc:
-                errors.append(f"parameter {pname}: regex_pattern does not compile: {exc}")
-        options = param.get("options")
-        if options is not None and not isinstance(options, list):
-            errors.append(f"parameter {pname}: options must be a list")
+    errors.extend(_validate_auto_promote(entry))
+    errors.extend(_validate_parameters_block(entry))
     return errors
 
 
@@ -149,28 +175,38 @@ def validate_config(path: Path, root: Path) -> list[str]:
     return errors
 
 
+def _declared_params(entry: dict) -> dict[str, dict]:
+    params = entry.get("parameters") or {}
+    env_vars = params.get("env_vars", []) if isinstance(params, dict) else []
+    return {str(param.get("name")): param for param in env_vars}
+
+
 def validate_parameters(entry: dict, supplied: dict[str, str]) -> list[str]:
     """Supplied parameters against one promotion's declared contract."""
-    errors: list[str] = []
-    declared: dict[str, dict] = {}
-    params = entry.get("parameters") or {}
-    for param in (params.get("env_vars", []) if isinstance(params, dict) else []):
-        declared[str(param.get("name"))] = param
-    for name in declared:
-        if name not in supplied:
-            default = declared[name].get("default_value")
-            if declared[name].get("required") and default is None:
-                errors.append(f"missing required parameter: {name}")
+    declared = _declared_params(entry)
+    missing = sorted(
+        name
+        for name, param in declared.items()
+        if param.get("required") and name not in supplied and param.get("default_value") is None
+    )
+    errors = [f"missing required parameter: {name}" for name in missing]
     for name, value in supplied.items():
-        if name not in declared:
-            errors.append(f"undeclared parameter: {name}")
-            continue
-        pattern = declared[name].get("regex_pattern")
-        options = declared[name].get("options")
-        if pattern is not None and not re.fullmatch(str(pattern), str(value)):
-            errors.append(f"parameter {name}={value!r} fails regex {pattern!r}")
-        if options is not None and str(value) not in {str(o) for o in options}:
-            errors.append(f"parameter {name}={value!r} not in options {options}")
+        errors.extend(_one_supplied_param(declared, name, value))
+    return errors
+
+
+def _one_supplied_param(declared: dict[str, dict], name: str, value: str) -> list[str]:
+    """One supplied value's contract errors against its declaration."""
+    if name not in declared:
+        return [f"undeclared parameter: {name}"]
+    param = declared[name]
+    errors: list[str] = []
+    pattern = param.get("regex_pattern")
+    if pattern is not None and not re.fullmatch(str(pattern), str(value)):
+        errors.append(f"parameter {name}={value!r} fails regex {pattern!r}")
+    options = param.get("options")
+    if options is not None and str(value) not in {str(o) for o in options}:
+        errors.append(f"parameter {name}={value!r} not in options {options}")
     return errors
 
 
@@ -178,7 +214,7 @@ def resolved_parameters(entry: dict, supplied: dict[str, str]) -> dict[str, str]
     """Supplied values overlaid on defaults, as the promoted run sees them."""
     params = entry.get("parameters") or {}
     resolved: dict[str, str] = {}
-    for param in (params.get("env_vars", []) if isinstance(params, dict) else []):
+    for param in params.get("env_vars", []) if isinstance(params, dict) else []:
         name = str(param.get("name"))
         if name in supplied:
             resolved[name] = str(supplied[name])
@@ -216,7 +252,7 @@ def _parse_params(pairs: list[str]) -> dict[str, str]:
     return out
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="sem_promotions",
         description="Semaphore-style promotions: validate configs and promote",

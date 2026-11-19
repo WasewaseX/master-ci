@@ -1,27 +1,27 @@
 """The security column adopted from scanaislop (round-16 parity).
 
-    The placeholder-credential check catches placeholder credentials by
-    name; this module catches the shape-level defects the naming oracle
-    cannot see:
+The placeholder-credential check catches placeholder credentials by
+name; this module catches the shape-level defects the naming oracle
+cannot see:
 
-    - innerhtml / dangerously-set-innerhtml: DOM injection sinks that
-        need sanitization (JS family)
-    - sql-injection: interpolation or concatenation inside an SQL string
-        (Python f-strings, JS template literals, C# interpolated strings)
-    - shell-injection: a non-literal command handed to a shell executor
-        (subprocess shell=True, child_process.exec, C system/popen)
-    - unsafe-deserialization: pickle/marshal/yaml.load without a safe
-        loader and the .NET BinaryFormatter/SoapFormatter sinks
-    - unsafe-c-call: the memory-unsafe C string functions (gets, strcpy,
-        strcat, sprintf)
-    - hardcoded-secret: format-specific credentials the naming oracle
-        misses (AWS access keys, JWTs, PEM private keys, database URLs
-        with embedded passwords)
+- innerhtml / dangerously-set-innerhtml: DOM injection sinks that
+    need sanitization (JS family)
+- sql-injection: interpolation or concatenation inside an SQL string
+    (Python f-strings, JS template literals, C# interpolated strings)
+- shell-injection: a non-literal command handed to a shell executor
+    (subprocess shell=True, child_process.exec, C system/popen)
+- unsafe-deserialization: pickle/marshal/yaml.load without a safe
+    loader and the .NET BinaryFormatter/SoapFormatter sinks
+- unsafe-c-call: the memory-unsafe C string functions (gets, strcpy,
+    strcat, sprintf)
+- hardcoded-secret: format-specific credentials the naming oracle
+    misses (AWS access keys, JWTs, PEM private keys, database URLs
+    with embedded passwords)
 
-    Every oracle is lexical by design and skips test paths and comment
-    lines: the column refuses to decide taint across function
-    boundaries, so it flags only the sink patterns a reviewer can
-    confirm on the same line.
+Every oracle is lexical by design and skips test paths and comment
+lines: the column refuses to decide taint across function
+boundaries, so it flags only the sink patterns a reviewer can
+confirm on the same line.
 """
 
 from __future__ import annotations
@@ -95,9 +95,7 @@ def check_innerhtml(path: Path, text: str, family: str, rel: str) -> list[Findin
     return _cap(out)
 
 
-def check_dangerously_set_innerhtml(
-    path: Path, text: str, family: str, rel: str
-) -> list[Finding]:
+def check_dangerously_set_innerhtml(path: Path, text: str, family: str, rel: str) -> list[Finding]:
     """React dangerouslySetInnerHTML: the JSX escape hatch for raw HTML."""
     if family != "js" or _skip(rel):
         return []
@@ -176,61 +174,77 @@ _JS_EXEC = re.compile(r"\b(?:child_process\.)?exec(?:Sync)?\s*\(")
 _C_SYSTEM = re.compile(r"\b(?:system|popen)\s*\(\s*[^\"\s)]")
 
 
+def _py_shell_findings(path: Path, text: str) -> list[Finding]:
+    """shell=True whose command slot holds anything but a constant."""
+    out: list[Finding] = []
+    for n, line in _code_lines(text):
+        if _SHELL_TRUE.search(line) and _PY_DYNAMIC_CMD.search(line):
+            out.append(
+                _finding(
+                    path,
+                    text,
+                    _offset(text, n),
+                    "shell-injection",
+                    "shell=True with a dynamic command - pass an argv "
+                    "list without shell=True instead",
+                    5,
+                )
+            )
+            if len(out) >= 5:
+                break
+    return out
+
+
+def _js_shell_findings(path: Path, text: str) -> list[Finding]:
+    """exec()/execSync() with an interpolated command string."""
+    out: list[Finding] = []
+    for n, line in _code_lines(text):
+        if _JS_EXEC.search(line) and re.search(r"\$\{|\+\s*\w", line):
+            out.append(
+                _finding(
+                    path,
+                    text,
+                    _offset(text, n),
+                    "shell-injection",
+                    "exec() with an interpolated command - use execFile with an argv array instead",
+                    5,
+                )
+            )
+            if len(out) >= 5:
+                break
+    return out
+
+
+def _c_shell_findings(path: Path, text: str) -> list[Finding]:
+    """system()/popen() whose argument reaches /bin/sh unevaluated."""
+    code = _strip_strings(text)
+    out: list[Finding] = []
+    for n, line in _code_lines(code):
+        if _C_SYSTEM.search(line):
+            out.append(
+                _finding(
+                    path,
+                    text,
+                    _offset(code, n),
+                    "shell-injection",
+                    "system()/popen() with a non-literal command - the "
+                    "argument reaches /bin/sh; use execvp/fork instead",
+                    5,
+                )
+            )
+            if len(out) >= 5:
+                break
+    return out
+
+
+_SHELL_ORACLES = {"py": _py_shell_findings, "js": _js_shell_findings, "cpp": _c_shell_findings}
+
+
 def check_shell_injection(path: Path, text: str, family: str, rel: str) -> list[Finding]:
     """A dynamic command handed to a shell: the shell parses the input."""
-    if _skip(rel):
+    if _skip(rel) or family not in _SHELL_ORACLES:
         return []
-    out: list[Finding] = []
-    code = _strip_strings(text) if family == "cpp" else text
-    if family == "py":
-        for n, line in _code_lines(text):
-            if _SHELL_TRUE.search(line) and _PY_DYNAMIC_CMD.search(line):
-                out.append(
-                    _finding(
-                        path,
-                        text,
-                        _offset(text, n),
-                        "shell-injection",
-                        "shell=True with a dynamic command - pass an argv "
-                        "list without shell=True instead",
-                        5,
-                    )
-                )
-                if len(out) >= 5:
-                    break
-    elif family == "js":
-        for n, line in _code_lines(text):
-            if _JS_EXEC.search(line) and re.search(r"\$\{|\+\s*\w", line):
-                out.append(
-                    _finding(
-                        path,
-                        text,
-                        _offset(text, n),
-                        "shell-injection",
-                        "exec() with an interpolated command - use execFile "
-                        "with an argv array instead",
-                        5,
-                    )
-                )
-                if len(out) >= 5:
-                    break
-    elif family == "cpp":
-        for n, line in _code_lines(code):
-            if _C_SYSTEM.search(line):
-                out.append(
-                    _finding(
-                        path,
-                        text,
-                        _offset(code, n),
-                        "shell-injection",
-                        "system()/popen() with a non-literal command - the "
-                        "argument reaches /bin/sh; use execvp/fork instead",
-                        5,
-                    )
-                )
-                if len(out) >= 5:
-                    break
-    return _cap(out)
+    return _cap(_SHELL_ORACLES[family](path, text))
 
 
 # -- 4. Unsafe deserialization ----------------------------------------------
@@ -241,49 +255,60 @@ _NET_DESER = re.compile(r"\b(?:BinaryFormatter|SoapFormatter|NetDataContractSeri
 _FMT_DESERIALIZE = re.compile(r"\.Deserialize\s*\(")
 
 
-def check_unsafe_deserialization(
-    path: Path, text: str, family: str, rel: str
-) -> list[Finding]:
+def _py_deserialization_findings(path: Path, text: str) -> list[Finding]:
+    """pickle/marshal loads and yaml.load without a safe loader."""
+    out: list[Finding] = []
+    for n, line in _code_lines(text):
+        if _PY_DESER.search(line) or (_YAML_UNSAFE.search(line) and "Loader=" not in line):
+            out.append(
+                _finding(
+                    path,
+                    text,
+                    _offset(text, n),
+                    "unsafe-deserialization",
+                    "pickle/marshal/yaml.load reconstructs arbitrary "
+                    "objects - parse untrusted input with a safe loader",
+                    5,
+                )
+            )
+            if len(out) >= 5:
+                break
+    return out
+
+
+def _csharp_deserialization_findings(path: Path, text: str) -> list[Finding]:
+    """The legacy .NET formatters paired with a Deserialize call."""
+    out: list[Finding] = []
+    if not _FMT_DESERIALIZE.search(text):
+        return out
+    for n, line in _code_lines(text):
+        if _NET_DESER.search(line):
+            out.append(
+                _finding(
+                    path,
+                    text,
+                    _offset(text, n),
+                    "unsafe-deserialization",
+                    "BinaryFormatter/SoapFormatter deserialization - the "
+                    "legacy formatters execute attacker-chosen types; "
+                    "migrate to a data-only format",
+                    5,
+                )
+            )
+            if len(out) >= 5:
+                break
+    return out
+
+
+def check_unsafe_deserialization(path: Path, text: str, family: str, rel: str) -> list[Finding]:
     """Formats that instantiate attacker-chosen types on load."""
     if _skip(rel):
         return []
-    out: list[Finding] = []
     if family == "py":
-        for n, line in _code_lines(text):
-            if _PY_DESER.search(line) or (
-                _YAML_UNSAFE.search(line) and "Loader=" not in line
-            ):
-                out.append(
-                    _finding(
-                        path,
-                        text,
-                        _offset(text, n),
-                        "unsafe-deserialization",
-                        "pickle/marshal/yaml.load reconstructs arbitrary "
-                        "objects - parse untrusted input with a safe loader",
-                        5,
-                    )
-                )
-                if len(out) >= 5:
-                    break
-    elif family == "csharp":
-        for n, line in _code_lines(text):
-            if _NET_DESER.search(line) and _FMT_DESERIALIZE.search(text):
-                out.append(
-                    _finding(
-                        path,
-                        text,
-                        _offset(text, n),
-                        "unsafe-deserialization",
-                        "BinaryFormatter/SoapFormatter deserialization - the "
-                        "legacy formatters execute attacker-chosen types; "
-                        "migrate to a data-only format",
-                        5,
-                    )
-                )
-                if len(out) >= 5:
-                    break
-    return _cap(out)
+        return _cap(_py_deserialization_findings(path, text))
+    if family == "csharp":
+        return _cap(_csharp_deserialization_findings(path, text))
+    return []
 
 
 # -- 5. Memory-unsafe C calls ------------------------------------------------

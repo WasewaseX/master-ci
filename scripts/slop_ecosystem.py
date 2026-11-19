@@ -1,18 +1,18 @@
 """Cross-file ecosystem checks adopted from scanaislop (round-16 parity).
 
-    Two oracles the per-file pipeline cannot express because they need
-    the whole repository as evidence:
+Two oracles the per-file pipeline cannot express because they need
+the whole repository as evidence:
 
-    - unused-css: custom class selectors defined in .css/.scss
-        stylesheets but referenced nowhere in the project (className
-        bindings, clsx/cn template literals, data-* hooks, HTML).
-        Conservative by design: any class whose name appears as a
-        substring in any scanned source string is spared, and
-        utility-looking names are skipped.
-    - vulnerable-dependency: converts a pip-audit JSON report into
-        findings. The audit itself is opt-in (MASTERCI_PIP_AUDIT=1 with
-        pip-audit installed); a skipped audit stays transparent at the
-        gate layer via analysis-coverage instead of a per-file guess.
+- unused-css: custom class selectors defined in .css/.scss
+    stylesheets but referenced nowhere in the project (className
+    bindings, clsx/cn template literals, data-* hooks, HTML).
+    Conservative by design: any class whose name appears as a
+    substring in any scanned source string is spared, and
+    utility-looking names are skipped.
+- vulnerable-dependency: converts a pip-audit JSON report into
+    findings. The audit itself is opt-in (MASTERCI_PIP_AUDIT=1 with
+    pip-audit installed); a skipped audit stays transparent at the
+    gate layer via analysis-coverage instead of a per-file guess.
 """
 
 from __future__ import annotations
@@ -61,10 +61,8 @@ def _stylesheet_class_names(text: str) -> set[str]:
     return names
 
 
-def check_unused_css(root: Path, files: list[Path], globs: list[str]) -> list[Finding]:
-    """Classes defined in stylesheets but referenced nowhere (advisory)."""
-    if not root.is_dir():
-        return []
+def _discover_stylesheets(root: Path, globs: list[str]) -> dict[str, tuple[Path, set[str], str]]:
+    """rel -> (path, class names, raw text) for every scanned stylesheet."""
     from slop_files import is_ignored
 
     styles: dict[str, tuple[Path, set[str], str]] = {}
@@ -79,13 +77,16 @@ def check_unused_css(root: Path, files: list[Path], globs: list[str]) -> list[Fi
         except OSError:
             continue
         styles[rel] = (path, _stylesheet_class_names(text), text)
-    if not styles:
-        return []
+    return styles
 
-    # The usage corpus is every scanned non-stylesheet file. Stylesheets
-    # are not in it: a class is trivially present in its own selector
-    # text, and iter_files may hand the .css files over with the rest -
-    # the discovery glob above already owns them.
+
+def _usage_corpus(files: list[Path]) -> list[str]:
+    """The non-stylesheet source text the evidence search runs over.
+
+    Stylesheets are excluded: a class is trivially present in its own
+    selector text, and iter_files may hand the .css files over with the
+    rest - the discovery glob already owns them.
+    """
     corpus: list[str] = []
     for path in files:
         if path.suffix.lower() in CSS_EXTS:
@@ -94,18 +95,21 @@ def check_unused_css(root: Path, files: list[Path], globs: list[str]) -> list[Fi
             corpus.append(path.read_text(encoding="utf-8", errors="replace"))
         except OSError:
             continue
+    return corpus
 
+
+def _orphan_findings(
+    styles: dict, siblings: dict[str, str], corpus: list[str], limit: int = MAX_FINDINGS_PER_CHECK
+) -> list[Finding]:
+    """Findings for the classes with no substring evidence anywhere."""
     findings: list[Finding] = []
     for rel, (path, names, _own_text) in sorted(styles.items()):
-        # The raw text of the OTHER sheets is evidence: a class consumed
-        # by a sibling sheet (variants, compositions) is alive.
-        other_sheet_text = [text for r, (_, _, text) in styles.items() if r != rel]
-        evidence = corpus + other_sheet_text
+        evidence = siblings.get(rel, "") + "".join(corpus)
         for name in sorted(names):
             # Substring evidence anywhere keeps the class: dynamic className
             # builders (`ui-${variant}` prefixes) are invisible to a syntax
             # oracle, so the rule errs alive.
-            if any(name in blob for blob in evidence):
+            if name in evidence:
                 continue
             findings.append(
                 Finding(
@@ -119,9 +123,27 @@ def check_unused_css(root: Path, files: list[Path], globs: list[str]) -> list[Fi
                     weight=1,
                 )
             )
-            if len(findings) >= MAX_FINDINGS_PER_CHECK:
+            if len(findings) >= limit:
                 return findings
     return findings
+
+
+def check_unused_css(root: Path, files: list[Path], globs: list[str]) -> list[Finding]:
+    """Classes defined in stylesheets but referenced nowhere (advisory)."""
+    if not root.is_dir():
+        return []
+    styles = _discover_stylesheets(root, globs)
+    if not styles:
+        return []
+
+    # The usage corpus is every scanned non-stylesheet file. A stylesheet
+    # only ever counts as evidence for the OTHER sheets: the raw text of
+    # the siblings covers variants and compositions.
+    corpus = _usage_corpus(files)
+    siblings = {
+        rel: "".join(text for r, (_, _, text) in styles.items() if r != rel) for rel in styles
+    }
+    return _orphan_findings(styles, siblings, corpus)
 
 
 # -- vulnerable-dependency ---------------------------------------------------
@@ -148,17 +170,14 @@ def _parse_audit_report(stdout: str) -> list[tuple[str, str]]:
     return out
 
 
-def check_vulnerable_dependencies(
-    root: Path, files: list[Path], globs: list[str]
-) -> list[Finding]:
+def check_vulnerable_dependencies(root: Path, files: list[Path], globs: list[str]) -> list[Finding]:
     """Findings from an opt-in pip-audit run over the project manifests."""
     if not root.is_dir():
         return []
     from slop_files import is_ignored
 
     has_manifest = any(
-        (root / name).is_file() and not is_ignored(name, globs)
-        for name in _AUDIT_MANIFESTS
+        (root / name).is_file() and not is_ignored(name, globs) for name in _AUDIT_MANIFESTS
     )
     if not has_manifest:
         return []
@@ -168,9 +187,7 @@ def check_vulnerable_dependencies(
         # skipped analysis once (analysis-coverage), never per-file.
         return []
     try:
-        proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=120, check=False
-        )
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
     except (OSError, subprocess.TimeoutExpired):
         return []
     findings: list[Finding] = []

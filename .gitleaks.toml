@@ -1,0 +1,15 @@
+# gitleaks configuration: the default ruleset plus the allowlist for the
+# synthetic credentials the contract tests carry. The AWS key, JWT, PEM
+# header and database URL literals in tests/test_round16_aislop.py are
+# the test corpus for the hardcoded-secret oracle (slop_security.py) -
+# they are AWS's documented example key and fragments assembled for the
+# format patterns, not credentials. Values never appear in workflows,
+# scripts or docs; the allowlist is the test file only.
+[extend]
+useDefault = true
+
+[allowlist]
+  description = "synthetic credentials in the security-column contract tests"
+  paths = [
+    '''tests/test_round16_aislop\.py''',
+  ]

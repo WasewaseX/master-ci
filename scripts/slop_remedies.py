@@ -317,9 +317,7 @@ REMEDIES = {
         "Model the real shape or validate at the boundary; as unknown as defeats "
         "every structural check"
     ),
-    "repeated-chained-call": (
-        "Cache the receiver or factor the chain into one named function"
-    ),
+    "repeated-chained-call": ("Cache the receiver or factor the chain into one named function"),
     "unused-css": ("Delete the class or wire it into a component; dead styles drift"),
     "innerhtml": ("Sanitize the HTML or build DOM nodes; raw assignment is an XSS sink"),
     "dangerously-set-innerhtml": (
@@ -335,12 +333,8 @@ REMEDIES = {
         "Parse untrusted input with a safe loader (yaml.safe_load, json); the legacy "
         "formatters execute attacker-chosen types"
     ),
-    "unsafe-c-call": (
-        "Use the bounds-checked form (fgets/strncpy/snprintf) or RAII containers"
-    ),
-    "hardcoded-secret": (
-        "Move the credential to a secret store and rotate the leaked value"
-    ),
+    "unsafe-c-call": ("Use the bounds-checked form (fgets/strncpy/snprintf) or RAII containers"),
+    "hardcoded-secret": ("Move the credential to a secret store and rotate the leaked value"),
     "vulnerable-dependency": (
         "Upgrade to a patched release; confirm with pip-audit after the bump"
     ),

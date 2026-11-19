@@ -1,21 +1,21 @@
 """Contract tests for the semaphore reverse-engineering tools (round-16).
 
-    Covers the documented contracts:
+Covers the documented contracts:
 
-    - promotions: config validation (structure, kebab names, existing
-        targets, condition-DSL subset, result only inside auto_promote,
-        required-with-default under auto_promote, regex compile),
-        parameter validation (required missing, undeclared, regex
-        mismatch, options), resolution overlay and the dispatch shape
-    - test reports: JUnit parsing (failure, error, skip, pass), combine
-        dedup with the flaky flag on differing statuses, failed-first
-        report ordering, mcp summary shape, exit codes incl. --epilogue
-    - insights: neutral conclusions excluded from reliability, MTTR
-        from failure to next success, p95 nearest-rank, markdown
-        rendering, --fail-under gate
-    - secrets lint: unknown name is an error, case-insensitive matching
-        with lowercase convention warning, unused declaration warning,
-        fork-PR exposure error, echo interpolation warning
+- promotions: config validation (structure, kebab names, existing
+    targets, condition-DSL subset, result only inside auto_promote,
+    required-with-default under auto_promote, regex compile),
+    parameter validation (required missing, undeclared, regex
+    mismatch, options), resolution overlay and the dispatch shape
+- test reports: JUnit parsing (failure, error, skip, pass), combine
+    dedup with the flaky flag on differing statuses, failed-first
+    report ordering, mcp summary shape, exit codes incl. --epilogue
+- insights: neutral conclusions excluded from reliability, MTTR
+    from failure to next success, p95 nearest-rank, markdown
+    rendering, --fail-under gate
+- secrets lint: unknown name is an error, case-insensitive matching
+    with lowercase convention warning, unused declaration warning,
+    fork-PR exposure error, echo interpolation warning
 """
 
 import json
@@ -84,9 +84,7 @@ def test_result_only_inside_auto_promote(tmp_path):
     entry = {
         "name": "no-auto",
         "pipeline_file": "wf.yml",
-        "parameters": {
-            "env_vars": [{"name": "X", "required": False, "default_value": "1"}]
-        },
+        "parameters": {"env_vars": [{"name": "X", "required": False, "default_value": "1"}]},
     }
     (tmp_path / "wf.yml").write_text("on: push\n")
     # A non-auto promotion cannot carry result/result_reason anywhere -
@@ -200,7 +198,11 @@ def test_combine_flags_flaky_but_keeps_gate(tmp_path):
         _write_junit(tmp_path, "a.xml", "<testcase classname='c' name='x' time='1'/>")
     )
     b = reports.compile_junit(
-        _write_junit(tmp_path, "b.xml", "<testcase classname='c' name='x' time='2'><failure>no</failure></testcase>")
+        _write_junit(
+            tmp_path,
+            "b.xml",
+            "<testcase classname='c' name='x' time='2'><failure>no</failure></testcase>",
+        )
     )
     corpus = reports.combine([a, b])
     assert corpus["totals"]["failed"] == 1
@@ -224,7 +226,9 @@ def test_report_orders_failed_first_then_slowest(tmp_path):
 
 def test_mcp_summary_shape(tmp_path):
     a = reports.compile_junit(
-        _write_junit(tmp_path, "a.xml", "<testcase classname='c' name='f'><failure>boom</failure></testcase>")
+        _write_junit(
+            tmp_path, "a.xml", "<testcase classname='c' name='f'><failure>boom</failure></testcase>"
+        )
     )
     summary = reports.mcp_summary(reports.combine([a]))
     assert summary["problems"][0]["test_id"] == "c::f"
@@ -232,7 +236,9 @@ def test_mcp_summary_shape(tmp_path):
 
 
 def test_main_exit_codes_and_epilogue(tmp_path):
-    a = _write_junit(tmp_path, "a.xml", "<testcase classname='c' name='f'><failure>x</failure></testcase>")
+    a = _write_junit(
+        tmp_path, "a.xml", "<testcase classname='c' name='f'><failure>x</failure></testcase>"
+    )
     argv = ["--report", str(a), "--json", str(tmp_path / "out.json")]
     assert reports.main(argv + ["--epilogue"]) == 0
     assert reports.main(argv) == 1

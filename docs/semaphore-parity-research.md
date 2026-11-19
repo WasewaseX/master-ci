@@ -1,4 +1,4 @@
-# Semaphore CI/CD parity research — what it does and how master-ci reverse-engineers it
+# Semaphore CI/CD parity research  -  what it does and how master-ci reverse-engineers it
 
 Research date: 2026-11-19. Source: docs.semaphore.io (Cloud edition, ~32 pages
 fetched live: pipeline YAML reference, conditions DSL, workflows, promotions,
@@ -52,7 +52,7 @@ inside `auto_promote`.
 
 **master-ci (round-16):** `scripts/sem_promotions.py` implements the model
 as repo data + a validator + a dispatch simulator. `.semaphore/promotions.yml`
-declares the two real promotions this repo has — `quality-store-pin` (the
+declares the two real promotions this repo has  -  `quality-store-pin` (the
 quality-store branch snapshot after a green main run) and `release-tag`
 (the tag promotion). The validator enforces: unique names, existing target
 files, the conditions-DSL subset (`result`, `result_reason`, `branch`,
@@ -60,7 +60,7 @@ files, the conditions-DSL subset (`result`, `result_reason`, `branch`,
 `auto_promote`), required parameters carrying a `default_value` when the
 promotion auto-promotes, and `regex_pattern` validation of supplied values.
 `promote` prints the exact `gh workflow run` command after validating every
-parameter — the manual-promotion path with no secrets printed.
+parameter  -  the manual-promotion path with no secrets printed.
 
 ## 4. Secrets
 
@@ -79,7 +79,7 @@ their consumer workflows.
 
 ## 5. Artifacts
 
-**Semaphore:** `artifact push/pull` with three namespaces — job (private),
+**Semaphore:** `artifact push/pull` with three namespaces  -  job (private),
 workflow (shared across the pipeline tree incl. promotions), project
 (long-lived deliverables, 400-day default retention).
 
@@ -92,7 +92,7 @@ code needed; the naming in upload steps keeps the same taxonomy.
 
 **Semaphore:** each job emits JUnit XML (`pytest --junitxml`), publishes in
 an `epilogue.always`, and an `after_pipeline` job runs `test-results
-gen-pipeline-report` — failed-first, slowest-first aggregation with pass
+gen-pipeline-report`  -  failed-first, slowest-first aggregation with pass
 rates. Flaky detection turns on with reports: same-commit differing
 results; the dashboard exposes pass_rate/age/disruptions filters.
 
@@ -129,7 +129,7 @@ after-pipeline reporting job on a cron.
 
 ## 9. Insights
 
-**Semaphore:** per-project metrics over the last 30 days — performance
+**Semaphore:** per-project metrics over the last 30 days  -  performance
 (median duration), reliability (pass rate **excluding** user-stopped and
 auto-cancelled runs), frequency (runs/week), MTTR; dashboards YAML;
 an API returning the same time series.

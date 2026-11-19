@@ -179,11 +179,9 @@ AS_ANY = re.compile(r"\bas\s+any\b")
 # `as unknown as X`: the double hop through unknown that defeats every
 # structural check the compiler would otherwise make.
 DOUBLE_ASSERT = re.compile(r"\bas\s+unknown\s+as\b")
-# A call chain of 3+ calls on one receiver, e.g. a.b().c().d() - the
-# normalization later in this module collapses whitespace and argument
-# bodies so the same logical chain counts once per occurrence. The
-# leading identifier rides with the match: this.x() and other.x() are
-# different receivers, not repeats of one chain.
+# A call chain of 3+ calls on one receiver, e.g. a.b().c().d(); the
+# leading identifier rides with the match so this.x() and other.x()
+# stay different receivers, not repeats of one chain.
 _CHAIN_EXPR = re.compile(
     r"[A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*\s*\(\s*[^()]{0,40}\)\s*){3,}"
 )
@@ -198,8 +196,7 @@ def _as_assertion_findings(path: Path, text: str) -> list[Finding]:
         (
             AS_ANY,
             "unsafe-type-assertion",
-            "`as any` silences the checker for this value - type it or "
-            "narrow with a guard instead",
+            "`as any` silences the checker for this value - type it or narrow with a guard instead",
         ),
         (
             DOUBLE_ASSERT,
