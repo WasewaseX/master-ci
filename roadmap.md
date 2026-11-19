@@ -728,3 +728,27 @@ over 101 source files, self-scan verdict CLEAN, and the pre-existing
 sandbox defect (the missing lizard/tree-sitter analyzer group making
 every parse "fail") diagnosed and fixed before any of the round's
 evidence was trusted.
+
+The hosted gates held the round to its own standard twice. The first
+push (70888df) red'd in three: the quality ratchet caught the round's
+own code (eight functions past the 15-cognitive budget, four mains
+duplicating one signature past the boilerplate threshold, six em-dashes
+in the research doc, one over-long comment), gitleaks caught the
+synthetic credentials the new contract tests carry, and the format
+check caught unformatted files. The second push paid the debt the
+repo's way - refactor, not re-record: metrics_for split into
+_mttr_minutes/_reliability/_recent_count, combine grew _merge_one,
+check_unused_css grew discovery/corpus/orphan helpers, the shell and
+deserialization oracles became table-driven per family, the promotion
+validators grew per-concern helpers, secrets_lint.scan grew
+_audit_one_workflow and _fork_exposure. high-cognitive 9 to 1 (the
+baseline's own), high-cyclomatic 6 to 0, deep-nesting gone, boilerplate
+gone, prose-block back to its recorded 7 - the ratchet exits 0 with
+the floor byte-identical, no baseline move. gitleaks passes with the
+documented .gitleaks.toml mechanism: the synthetic credentials are
+allowlisted by path, default rules extended, values in no workflow,
+script or doc. Hosted CI green on febc362: CI, Master CI Selftest,
+Metric Store and the Selftest Negative Harness success, the
+Guardrails red is its designed red. Seven open dependabot PRs were
+rebased onto the fixed base - their earlier reds were the ratchet
+correctly refusing an outdated base.
