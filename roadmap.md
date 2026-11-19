@@ -796,7 +796,7 @@ one true gap (18 of 19 rows are missing or partial).
 | A19 | Supply-chain analysis | `slop_deps.py`, `slop_ecosystem.py`, `vulnerable-dependency`; SBOM and license policy are docs-only | partial - batch 2 |
 | A20 | Real-world accuracy benchmark | `accuracy_benchmark.py` + labeled fixtures; real-repo corpus and holdout split missing | partial - batch 2 |
 
-### B. Review platform (CodeRabbit): 1 shipped, 6 partial, 12 missing
+### B. Review platform (CodeRabbit): 3 shipped, 5 partial, 11 missing
 
 | # | Feature | Master CI asset | Status |
 | --- | --- | --- | --- |
@@ -820,7 +820,7 @@ one true gap (18 of 19 rows are missing or partial).
 | B38 | Security finding lifecycle | SARIF out; no finding state machine | missing - batch 4 |
 | B39 | Post-merge automation | quality-store pin promotion + metric store | partial - batch 3 |
 
-### C. Pipeline model (Semaphore): 7 shipped, 2 partial, 1 missing
+### C. Pipeline model (Semaphore): 10 shipped, 1 partial, 0 missing
 
 The parity research lives in `docs/semaphore-parity-research.md`; the
 round-16 contracts are pinned by tests.
