@@ -688,3 +688,43 @@ the fixture-count pin reads 165; the tiny-fixture pin caught two
 30-line files at exactly its boundary and the fixtures were trimmed
 instead of the pin). The promotion act itself stays a reviewed decision
 per the protocol - the evidence is banked, the flip is not made here.
+
+## Round-16 - the catalog exhaustively adopted, the platform reverse-engineered (2026-11-19)
+
+Two directives, both delivered whole. First, the scanaislop catalog
+diffed rule-by-rule against the engine's 138 checks: twelve rules had
+never been adopted, and all twelve shipped in this round - the security
+column (slop_security.py: innerhtml, dangerously-set-innerhtml,
+sql-injection, shell-injection, unsafe-deserialization, unsafe-c-call,
+hardcoded-secret), the TS compiler-bypass assertions and the repeated
+call-chain identity (slop_ts_checks.py), and the two oracles that need
+the whole repository as evidence (slop_ecosystem.py: unused-css with
+its errs-alive evidence rule, vulnerable-dependency as an opt-in
+pip-audit conversion that leaves skipped analysis to the gate layer).
+Blocking grade rides the security column; the judgment calls stay
+advisory. The contract tests caught three real oracle defects before
+any push - blanked-string literals reading as non-literal commands,
+set-membership standing in for substring evidence, and chains matched
+without their receiver. The self-scan stays clean under all twelve.
+
+Second, Semaphore CI/CD researched across ~32 live doc pages and
+reverse-engineered into four contract-tested tools plus the research
+map (docs/semaphore-parity-research.md): the parameterized promotion
+model with its conditions-DSL subset and regex-validated parameters
+(.semaphore/promotions.yml declares this repo's own two promotions),
+the compile-time secret contract (sem_secrets_lint.py - which caught
+the repo's own dockerhub secrets undeclared on its first run), the
+JUnit compile/combine/pipeline-report triad with the failed-first
+slowest-first report and the flaky-overlaps-failed semantics, and the
+Insights collector reproducing Semaphore's four metrics including the
+exact cancelled-runs exclusion rule in reliability. The wiring is real:
+the compile-time contracts run in ci.yml's fixtures job, the insights
+and report run in the nightly. Skipped features (SSH debug, machine
+sizing, billing) are named skips with reasons, not silence.
+
+Regression held: 1202 tests green (up from 1113 - 48 parity-column
+contracts and 31 semaphore contracts added), ruff clean, mypy clean
+over 101 source files, self-scan verdict CLEAN, and the pre-existing
+sandbox defect (the missing lizard/tree-sitter analyzer group making
+every parse "fail") diagnosed and fixed before any of the round's
+evidence was trusted.

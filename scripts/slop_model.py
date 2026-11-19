@@ -36,6 +36,17 @@ BLOCKING_CHECKS = frozenset(
         "arch-forbidden-import",
         "arch-layer-violation",
         "arch-missing-pattern",
+        # scanaislop round-16 parity: the security column. A sink on the
+        # line is a vulnerability a reviewer fixes before merge, the same
+        # grade as the other reliability defects.
+        "innerhtml",
+        "dangerously-set-innerhtml",
+        "sql-injection",
+        "shell-injection",
+        "unsafe-deserialization",
+        "unsafe-c-call",
+        "hardcoded-secret",
+        "vulnerable-dependency",
     }
 )
 
@@ -171,6 +182,10 @@ ADVISORY_ONLY_CHECKS = frozenset(
         "cpp-null-literal",
         "cpp-using-namespace-std-in-header",
         "redundant-type-coercion",
+        "unsafe-type-assertion",
+        "double-type-assertion",
+        "repeated-chained-call",
+        "unused-css",
         "hidden-fallback",
         "duplicate-type-declaration",
         "go-library-panic",

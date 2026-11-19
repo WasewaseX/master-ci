@@ -87,3 +87,20 @@ jobs:
             echo "yamllint failed to report malformed YAML" >&2
             exit 1
           fi
+      - name: Semaphore contracts - promotions config validates
+        run: |
+          # the compile-time promotion contract: names, targets, the
+          # conditions-DSL subset, parameter regexes (round-16)
+          python3 scripts/sem_promotions.py validate
+          python3 scripts/sem_promotions.py promote quality-store-pin -p PIN_SHA=deadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+      - name: Semaphore contracts - secrets manifest lint
+        run: |
+          # the compile-time secret contract: every secrets.NAME a
+          # workflow references is declared in docs/secrets-manifest.yml
+          python3 scripts/sem_secrets_lint.py
+      - name: Semaphore tools - report and insights smoke
+        run: |
+          # the JUnit triad and the insights collector on fixture input;
+          # --epilogue keeps the designed failure out of the exit code
+          python3 scripts/sem_test_reports.py --report fixtures/junit-sample/report.xml --epilogue --print-summary
+          python3 scripts/sem_insights.py --runs fixtures/junit-sample/runs.json --print-summary

@@ -1,0 +1,5 @@
+<testsuites><testsuite name="suite1" tests="3">
+  <testcase classname="pkg.test_math" name="test_add" time="0.100"/>
+  <testcase classname="pkg.test_math" name="test_sub" time="0.500"><failure message="assert 0 == 1">AssertionError</failure></testcase>
+  <testcase classname="pkg.test_io" name="test_read" time="0.010"><skipped>needs fs</skipped></testcase>
+</testsuite></testsuites>

@@ -1734,6 +1734,49 @@ commit with regression tests.
   from a replica of their shipped rules over their production scope;
   our own floor, ratchet, suite and benchmark unchanged (1113 tests,
   110/110 fixtures).
+- **The scanaislop parity column (round-16):** the exhaustive diff
+  against the upstream catalog left twelve rules unadopted; all twelve
+  shipped with contract tests (`tests/test_round16_aislop.py`). The
+  security column (`slop_security.py`) is blocking-grade:
+  `innerhtml`, `dangerously-set-innerhtml`, `sql-injection`
+  (f-string/template/interpolated SQL), `shell-injection` (shell=True
+  with a dynamic command, exec() with interpolation, C system/popen
+  with a non-literal), `unsafe-deserialization` (pickle/marshal/
+  yaml.load without a safe loader, BinaryFormatter/SoapFormatter),
+  `unsafe-c-call` (gets/strcpy/strcat/sprintf), and `hardcoded-secret`
+  (AWS AKIA keys, JWTs, PEM private-key blocks, database URLs with
+  embedded passwords - the format oracles the naming-based
+  placeholder check cannot see). Advisory: `unsafe-type-assertion`
+  (`as any`), `double-type-assertion` (`as unknown as`),
+  `repeated-chained-call` (the same 3+ call chain counted per receiver
+  identity), `unused-css` (project-wide, errs alive on any substring
+  evidence), and `vulnerable-dependency` (opt-in pip-audit conversion
+  via MASTERCI_PIP_AUDIT=1; a skipped audit stays transparent at the
+  gate layer through analysis-coverage, never a per-file guess).
+- **The Semaphore tooling (round-16):** the reverse-engineered CI
+  platform features live in four scripts, each contract-tested in
+  `tests/test_sem_tools.py` and wired into the `fixtures` job of
+  ci.yml plus the nightly. `sem_promotions.py` (with
+  `.semaphore/promotions.yml`) validates and dispatches the
+  parameterized promotion model - names, targets, the conditions-DSL
+  subset, result only inside auto_promote, required-with-default,
+  regex-validated parameters, and the exact `gh workflow run` command
+  printed, never executed blind. `sem_secrets_lint.py` (with
+  `docs/secrets-manifest.yml`) is the compile-time secret contract:
+  an undeclared `secrets.NAME` exits 1 instead of silently resolving
+  empty at runtime, fork-PR secret consumption without a guard is an
+  error, and lowercase spellings are convention warnings (GitHub
+  secret names are case-insensitive; matching is too). It caught the
+  repo's own dockerhub secrets undeclared on its first run.
+  `sem_test_reports.py` is the JUnit compile/combine/pipeline-report
+  triad - failed-first, slowest-first markdown for the step summary,
+  the flaky flag overlapping failed (differing statuses still fail
+  the gate), `--epilogue` for the always-run reporting step.
+  `sem_insights.py` computes the four dashboard metrics from
+  `gh run list` - median/p95 duration, reliability with the
+  cancelled-runs exclusion rule reproduced exactly, runs/week, MTTR -
+  with `--fail-under` as the actionable gate. The research map and
+  every skip with its reason: `docs/semaphore-parity-research.md`.
 - **The C# accuracy column (round-15):** eleven csharp checks grew from
   one judged row to five with 55 labeled fixtures (44 positives, 11
   exemption-pinning nearest-negatives); 165/165 PASS, precision and

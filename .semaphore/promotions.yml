@@ -1,0 +1,40 @@
+# The repo's promotions, in the Semaphore model (round-16).
+#
+# A promotion is a named, parameterized start of a downstream pipeline.
+# `auto_promote.when` uses the conditions-DSL subset this repo validates
+# (sem_promotions.py): result/result_reason/branch/tag, = != =~ and/or.
+# `result` is only legal inside auto_promote - it is a post-run fact.
+#
+# Validate:   python3 scripts/sem_promotions.py validate
+# Dry-run:    python3 scripts/sem_promotions.py promote quality-store-pin \
+#               -p PIN_SHA=$(git rev-parse HEAD)
+promotions:
+  - name: quality-store-pin
+    pipeline_file: .github/workflows/metric-store.yml
+    auto_promote:
+      when: "result = 'passed' and branch = 'main'"
+    parameters:
+      env_vars:
+        - name: PIN_SHA
+          description: commit SHA the quality snapshot is pinned to
+          required: true
+          default_value: main
+          regex_pattern: '^[0-9a-f]{7,40}$|^[A-Za-z0-9._/-]+$'
+        - name: GIT_REF
+          description: ref the target workflow runs on
+          required: false
+          default_value: main
+
+  - name: release-tag
+    pipeline_file: .github/workflows/release-docker.yml
+    auto_promote: null
+    parameters:
+      env_vars:
+        - name: RELEASE_TAG
+          description: the tag to release; must be a vX.Y.Z semver
+          required: true
+          regex_pattern: '^v[0-9]+\.[0-9]+\.[0-9]+$'
+        - name: GIT_REF
+          description: ref the target workflow runs on
+          required: false
+          default_value: main

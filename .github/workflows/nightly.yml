@@ -42,6 +42,18 @@ jobs:
         run: |
           python3 scripts/ai_slop_detector.py . --max-score 8 --enforce-bloat --report-file /tmp/ai_report.md
           cat /tmp/ai_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Semaphore insights - performance, reliability, frequency, MTTR
+        run: |
+          # the Insights collector over the real run history; the
+          # exclusion rule (cancelled runs never depress reliability) is
+          # reproduced from Semaphore's reliability metric (round-16)
+          python3 scripts/sem_insights.py --print-summary --summary /tmp/insights.md --json /tmp/insights.json
+          cat /tmp/insights.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Semaphore test reports - JUnit aggregation smoke
+        run: |
+          # the compile/combine/gen-pipeline-report triad on the pinned
+          # fixture; the real per-job reports ride the flaky pipeline
+          python3 scripts/sem_test_reports.py --report fixtures/junit-sample/report.xml --epilogue --print-summary | head -20
       - name: Nightly summary
         run: |
           {

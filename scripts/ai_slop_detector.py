@@ -101,6 +101,14 @@ from slop_duplicates import (  # noqa: F401,E402
     PROVENANCE_MARKERS as PROVENANCE_MARKERS,
     scan_duplicates as scan_duplicates,
 )
+
+# scanaislop round-16 parity column: the security sinks, the ecosystem
+# oracles and the TS assertions ride the same facade contract as every
+# other public check - redundant-alias re-exports, machine-readable.
+from slop_ecosystem import (  # noqa: F401,E402
+    check_unused_css as check_unused_css,
+    check_vulnerable_dependencies as check_vulnerable_dependencies,
+)
 from slop_family import (  # noqa: F401,E402
     check_blanket_suppression as check_blanket_suppression,
     check_debug_left as check_debug_left,
@@ -214,6 +222,16 @@ from slop_scan import (  # noqa: F401,E402
     provenance_findings as provenance_findings,
     scan as scan,
     scan_code_file as scan_code_file,
+)
+from slop_security import (  # noqa: F401,E402
+    check_dangerously_set_innerhtml as check_dangerously_set_innerhtml,
+    check_hardcoded_secret as check_hardcoded_secret,
+    check_innerhtml as check_innerhtml,
+    check_security_column as check_security_column,
+    check_shell_injection as check_shell_injection,
+    check_sql_injection as check_sql_injection,
+    check_unsafe_c_call as check_unsafe_c_call,
+    check_unsafe_deserialization as check_unsafe_deserialization,
 )
 from slop_test_redundancy import check_test_redundancy as check_test_redundancy  # noqa: F401,E402
 from slop_ts_checks import check_ts_slop as check_ts_slop  # noqa: F401,E402

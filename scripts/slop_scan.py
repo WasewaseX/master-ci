@@ -35,6 +35,10 @@ from slop_debt import check_debt_metrics
 from slop_density import check_analysis_coverage, density_findings
 from slop_deps import check_unused_dependencies
 from slop_duplicates import MIN_SOURCES_FOR_INVENTORY, PROVENANCE_MARKERS, scan_duplicates
+from slop_ecosystem import (
+    check_unused_css,
+    check_vulnerable_dependencies,
+)
 from slop_family import (
     check_blanket_suppression,
     check_debug_left,
@@ -74,6 +78,7 @@ from slop_reliability import (
     check_unclosed_resource,
 )
 from slop_residue import check_residue
+from slop_security import check_security_column
 from slop_suppress import apply_inline_suppression, collect_suppression
 from slop_test_redundancy import check_test_redundancy
 from slop_ts_checks import check_ts_slop
@@ -125,6 +130,8 @@ def scan_code_file(
     findings.extend(check_blanket_suppression(path, text))
     findings.extend(check_placeholder_names(path, text))
     findings.extend(check_placeholder_credential(path, text))
+    # scanaislop round-16: the security column rides the per-file pass.
+    findings.extend(check_security_column(path, text, family, rel))
     findings.extend(check_phantom_imports(path, text, family))
     findings.extend(
         check_undeclared_imports(
@@ -288,6 +295,9 @@ def _repo_level_findings(
     findings.extend(check_unused_dependencies(root, files, globs))
     findings.extend(check_orphan_modules(root, files, globs))
     findings.extend(check_import_cycles(root, files, globs))
+    # scanaislop round-16: ecosystem oracles need the whole repo.
+    findings.extend(check_unused_css(root, files, globs))
+    findings.extend(check_vulnerable_dependencies(root, files, globs))
     findings.extend(check_class_cohesion(root, files, globs))
     facts, coverage = measure_corpus(root, files, globs)
     findings.extend(check_analysis_coverage(coverage))

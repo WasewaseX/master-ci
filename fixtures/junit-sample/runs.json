@@ -1,0 +1,7 @@
+[
+  {"workflowName":"CI","headBranch":"main","conclusion":"success","createdAt":"2026-11-18T10:00:00Z","updatedAt":"2026-11-18T10:05:00Z","event":"push","displayTitle":"t1"},
+  {"workflowName":"CI","headBranch":"main","conclusion":"failure","createdAt":"2026-11-18T11:00:00Z","updatedAt":"2026-11-18T11:03:00Z","event":"push","displayTitle":"t2"},
+  {"workflowName":"CI","headBranch":"main","conclusion":"success","createdAt":"2026-11-18T11:30:00Z","updatedAt":"2026-11-18T11:34:00Z","event":"push","displayTitle":"t3"},
+  {"workflowName":"CI","headBranch":"main","conclusion":"cancelled","createdAt":"2026-11-18T12:00:00Z","updatedAt":"2026-11-18T12:01:00Z","event":"push","displayTitle":"t4"},
+  {"workflowName":"Nightly","headBranch":"main","conclusion":"success","createdAt":"2026-11-17T02:30:00Z","updatedAt":"2026-11-17T03:10:00Z","event":"schedule","displayTitle":"n1"}
+]

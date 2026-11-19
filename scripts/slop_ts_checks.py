@@ -70,7 +70,12 @@ def check_ts_slop(path: Path, text: str, family: str, rel: str) -> list[Finding]
     findings: list[Finding] = []
     if path.suffix.lower() in TS_ONLY_EXTS:
         findings.extend(_redundant_type_coercion(path, text))
+        # Round-16 scanaislop parity: the compiler-bypass assertions are a
+        # TypeScript-only surface - plain JS has no `as` operator.
+        findings.extend(_as_assertion_findings(path, text))
     findings.extend(_hidden_fallback(path, text))
+    # Round-16: the repeated-chain oracle is file-scoped and JS-family wide.
+    findings.extend(_repeated_chained_calls(path, text))
     return findings
 
 
@@ -165,3 +170,80 @@ def _hidden_fallback(path: Path, text: str) -> list[Finding]:
                 )
             )
     return findings[:MAX_FINDINGS_PER_CHECK]
+
+
+# -- scanaislop round-16 column: assertions and chains ------------------------
+
+# `as any`: the assertion that turns off checking for the value outright.
+AS_ANY = re.compile(r"\bas\s+any\b")
+# `as unknown as X`: the double hop through unknown that defeats every
+# structural check the compiler would otherwise make.
+DOUBLE_ASSERT = re.compile(r"\bas\s+unknown\s+as\b")
+# A call chain of 3+ calls on one receiver, e.g. a.b().c().d() - the
+# normalization later in this module collapses whitespace and argument
+# bodies so the same logical chain counts once per occurrence. The
+# leading identifier rides with the match: this.x() and other.x() are
+# different receivers, not repeats of one chain.
+_CHAIN_EXPR = re.compile(
+    r"[A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*\s*\(\s*[^()]{0,40}\)\s*){3,}"
+)
+CHAIN_REPEAT_THRESHOLD = 3
+
+
+def _as_assertion_findings(path: Path, text: str) -> list[Finding]:
+    """`as any` and `as unknown as X` - the two compiler-bypass assertions."""
+    code = _drop_comments(text)
+    findings: list[Finding] = []
+    for pattern, check, message in (
+        (
+            AS_ANY,
+            "unsafe-type-assertion",
+            "`as any` silences the checker for this value - type it or "
+            "narrow with a guard instead",
+        ),
+        (
+            DOUBLE_ASSERT,
+            "double-type-assertion",
+            "`as unknown as X` routes around every structural check - "
+            "model the real shape or validate at the boundary",
+        ),
+    ):
+        for m in pattern.finditer(code):
+            findings.append(_finding(path, code, m.start(), check, message, 1))
+            if len(findings) >= MAX_FINDINGS_PER_CHECK:
+                return findings
+    return findings
+
+
+def _repeated_chained_calls(path: Path, text: str) -> list[Finding]:
+    """The same 3+ call chain on the same receiver, repeated in a file.
+
+    The oracle counts chain EXPRESSIONS, not statements: the left-hand
+    variable of each assignment differs, so the normalized chain body is
+    the identity that can repeat.
+    """
+    code = _drop_comments(text)
+    counts: dict[str, int] = {}
+    first_at: dict[str, int] = {}
+    for m in _CHAIN_EXPR.finditer(code):
+        chain = re.sub(r"\s+", "", m.group(0))
+        counts[chain] = counts.get(chain, 0) + 1
+        first_at.setdefault(chain, m.start())
+    findings: list[Finding] = []
+    for chain, n in sorted(counts.items(), key=lambda kv: -kv[1]):
+        if n < CHAIN_REPEAT_THRESHOLD:
+            continue
+        findings.append(
+            _finding(
+                path,
+                code,
+                first_at[chain],
+                "repeated-chained-call",
+                f"the same call chain repeats {n} times - cache the receiver "
+                "or factor the chain into one function",
+                1,
+            )
+        )
+        if len(findings) >= MAX_FINDINGS_PER_CHECK:
+            break
+    return findings
