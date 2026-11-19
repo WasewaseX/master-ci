@@ -166,6 +166,10 @@ REMEDIES = {
         "Delete the module or give it a consumer; a file no import, config "
         "or script mentions is unreachable weight"
     ),
+    "semantic-dead-symbol": (
+        "Delete it or wire it in; the parse tree finds no reference, and if "
+        "a framework reaches it dynamically make that registration explicit"
+    ),
     "unused-dependency": (
         "Remove the dependency from the manifest or add the import that "
         "justifies it; declared weight slows every install"

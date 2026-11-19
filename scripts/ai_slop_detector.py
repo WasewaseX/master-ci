@@ -233,6 +233,7 @@ from slop_security import (  # noqa: F401,E402
     check_unsafe_c_call as check_unsafe_c_call,
     check_unsafe_deserialization as check_unsafe_deserialization,
 )
+from slop_symbol_graph import check_semantic_dead_symbols as check_semantic_dead_symbols  # noqa: E402,F401
 from slop_test_redundancy import check_test_redundancy as check_test_redundancy  # noqa: F401,E402
 from slop_ts_checks import check_ts_slop as check_ts_slop  # noqa: F401,E402
 from slop_type_decls import check_duplicate_type_decls as check_duplicate_type_decls  # noqa: E402,F401

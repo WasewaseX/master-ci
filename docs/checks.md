@@ -1777,6 +1777,34 @@ commit with regression tests.
   cancelled-runs exclusion rule reproduced exactly, runs/week, MTTR -
   with `--fail-under` as the actionable gate. The research map and
   every skip with its reason: `docs/semaphore-parity-research.md`.
+- **The nextgen slice and the batch-1 validators (round-17):** the
+  shared versioned IR (`slop_ir.py`, IR_VERSION 1) with a native-ast
+  Python extractor (`slop_ir_python.py`) and a tree-sitter extractor
+  for TS/TSX/JS/Go (`slop_ir_treesitter.py`) feeds the cross-file
+  symbol graph (`slop_symbol_graph.py`); its `semantic-dead-symbol`
+  check (advisory, code-health) reports a private symbol whose only
+  mentions are prose - comments and strings never enter the parse-tree
+  use pool, the jurisdiction split with the textual
+  `unused-declaration` being: public names and short names stay
+  textual, private prose-kept-alive symbols go semantic. Dunder and
+  dataclass-protocol methods, Go `init`/`main` and test files are
+  exempt; parse failures ride out through the graph's
+  `parse_failures`, never a silently shrunken corpus. The measured
+  evidence - 161 files in 0.7 s, precision 1.0 on the flawed
+  positive control, all five clean controls silent - is reproducible
+  with `scripts/ir_benchmark.py --json`, and the design record with
+  the capability matrix and the Rust decision criteria lives in
+  `docs/nextgen-architecture.md`. Three batch-1 validators join the
+  sem tools: `sem_matrix_validate.py` (C42: duplicate mapping keys via
+  a refusing loader, empty or non-list dimensions, the computed
+  product against the documented 64-job ceiling, exclude-only key
+  checks - include may introduce keys per GitHub semantics - and
+  dynamic expansion reported gate-neutral, the codeql.yml pattern
+  being the reason), `sem_change_stack.py` (B23: deterministic
+  path-rule cohorts ordered foundation-first with unclassified shown)
+  and `sem_merge_risk.py` (B31: model v1 over the live severity
+  registries with evidence rows, blast-radius tiers and data gaps
+  reported as incomplete, never scored as zero risk).
 - **The C# accuracy column (round-15):** eleven csharp checks grew from
   one judged row to five with 55 labeled fixtures (44 positives, 11
   exemption-pinning nearest-negatives); 165/165 PASS, precision and

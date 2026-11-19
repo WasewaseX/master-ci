@@ -145,6 +145,11 @@ ADVISORY_ONLY_CHECKS = frozenset(
         # v2.1: the file-scale deadness oracle. A module is reported only
         # when no import, config, doc or script mentions it anywhere.
         "orphan-module",
+        # nextgen vertical slice: the parse-tree deadness oracle. Only a
+        # private symbol with zero parse-tree references is reported -
+        # comments and strings do not keep symbols alive, and the
+        # dynamic-reality escape hatches keep the verdict advisory.
+        "semantic-dead-symbol",
         # v2.0: the module dependency graph. Cycles are design debt with
         # legitimate lazy-loading escape hatches, so the finding advises.
         "import-cycle",

@@ -80,6 +80,7 @@ from slop_reliability import (
 from slop_residue import check_residue
 from slop_security import check_security_column
 from slop_suppress import apply_inline_suppression, collect_suppression
+from slop_symbol_graph import check_semantic_dead_symbols
 from slop_test_redundancy import check_test_redundancy
 from slop_ts_checks import check_ts_slop
 from slop_type_decls import check_duplicate_type_decls
@@ -292,6 +293,10 @@ def _repo_level_findings(
     findings.extend(scan_duplicates(files, root, globs))
     findings.extend(check_duplicate_type_decls(root, files, globs))
     findings.extend(check_unused_declarations(root, files, globs))
+    # nextgen vertical slice: the parse-tree deadness oracle joins the
+    # textual one - comments and strings can no longer keep a private
+    # symbol alive.
+    findings.extend(check_semantic_dead_symbols(root, files, globs))
     findings.extend(check_unused_dependencies(root, files, globs))
     findings.extend(check_orphan_modules(root, files, globs))
     findings.extend(check_import_cycles(root, files, globs))

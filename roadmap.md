@@ -752,3 +752,112 @@ Metric Store and the Selftest Negative Harness success, the
 Guardrails red is its designed red. Seven open dependabot PRs were
 rebased onto the fixed base - their earlier reds were the ratchet
 correctly refusing an outdated base.
+
+## The 50-feature reverse-engineering program (2026-11-19)
+
+The external spec lists fifty features across three reference families
+- the SonarQube/Qlty/Qodana quality engine (A1-A20), the CodeRabbit
+review platform (B21-B39) and the Semaphore pipeline model (C40-C50) -
+and demands each one either exists here or goes on the build plan. The
+status column was audited feature-by-feature against this tree on the
+date above: every "shipped" row names the module or workflow that
+carries it, every "partial" row says what is missing, and every
+"missing" row lands in a numbered batch. The audit method was grep plus
+source reads over `scripts/`, `tests/`, `docs/` and
+`.github/workflows/` - no status was copied from prose.
+
+The build order follows value and integration cost, fastest first:
+batch 1 is this round's slice plus the two validators the audit found
+missing; batches 2-4 stage the review-platform features, which are the
+one true gap (18 of 19 rows are missing or partial).
+
+### A. Quality engine (SonarQube, Qlty, Qodana): 11 shipped, 6 partial, 3 missing
+
+| # | Feature | Master CI asset | Status |
+| --- | --- | --- | --- |
+| A1 | New-code definitions and leak periods | `new_code_gate.py`, `fetch_diff_base.sh`, `slop_ratchet.py` | shipped |
+| A2 | Separate new-code quality gates | new-code gate vs total-project verdicts in the report | shipped |
+| A3 | Multi-condition gate engine | `required-quality.yml` composite + `slop_profiles.py` budgets | shipped |
+| A4 | Inheritable quality profiles | no parent/child profile merge; only engine defaults | missing - batch 2 |
+| A5 | Per-rule remediation estimates | `slop_remedies.py` registry + `slop_debt.py` effort model | shipped |
+| A6 | Independent quality dimensions | 8 dimensions in `slop_outputs.py` (architecture, code-health, reliability, maintainability, security, test-assurance, dependency-health, ai-integrity) | shipped |
+| A7 | Coverage ingestion, new-code coverage | `coverage_gate.py`, `coverage_parsers.py` | shipped |
+| A8 | Exact duplicated-block detection | `slop_duplicates.py` + `dup-block-density` (v2.18 audit D) | shipped |
+| A9 | Near-duplicate (similarity-scored) clones | only exact blocks and repeated lines; no similarity score | missing - batch 3 |
+| A10 | Cross-language class cohesion | `slop_lcom4.py` (Python AST; other families approximate) | partial - batch 3 |
+| A11 | Multi-dimensional complexity | `slop_cognitive.py`, `slop_lizard.py`, `slop_bloat.py`, `slop_density.py` | shipped |
+| A12 | Semantic dead-code detection | `slop_dead.py` (textual) + `semantic-dead-symbol` (parse-tree, round-17) | shipped |
+| A13 | Unnecessary abstraction analysis | `slop_abstraction.py` (forwarding-chain, no-behavior-class) | shipped |
+| A14 | Architecture and boundary enforcement | `slop_arch.py`, `slop_cycles.py`, `slop_coupling.py` | shipped |
+| A15 | Analyzer registry with descriptors | `slop_catalog.py` carries 151 rows; no per-analyzer version/timeout/lifecycle descriptors | partial - batch 3 |
+| A16 | File selection and analysis scope | `slop_files.py`, `path_filters.py` | shipped |
+| A17 | CodeQL integration | `codeql.yml`, `codeql_detect.py`, SARIF in the required gate | shipped |
+| A18 | Semgrep taint rule packs | `slop_security.py` sink column; interprocedural taint stays with Semgrep itself | partial - batch 4 |
+| A19 | Supply-chain analysis | `slop_deps.py`, `slop_ecosystem.py`, `vulnerable-dependency`; SBOM and license policy are docs-only | partial - batch 2 |
+| A20 | Real-world accuracy benchmark | `accuracy_benchmark.py` + labeled fixtures; real-repo corpus and holdout split missing | partial - batch 2 |
+
+### B. Review platform (CodeRabbit): 1 shipped, 6 partial, 12 missing
+
+| # | Feature | Master CI asset | Status |
+| --- | --- | --- | --- |
+| B21 | Structured PR summaries | no PR summary builder | missing - batch 2 |
+| B22 | PR walkthrough with grouped files | MCP prompts only (`mcp_prompts.py`) | missing - batch 3 |
+| B23 | Change stack / logical cohorts | `sem_change_stack.py` (round-17): path-rule cohorts, foundation-first order, unclassified shown; real dependency ordering arrives with B25 slice 2 | shipped |
+| B24 | Mermaid change diagrams | nothing; must stay optional and gate-neutral | missing - batch 4 |
+| B25 | Repository code graph | IR v1 + `slop_symbol_graph.py` shipped as the first slice | partial - batch 2 |
+| B26 | Linked-issue requirement validation | nothing | missing - batch 4 |
+| B27 | Repo coding guidelines / path instructions | `AGENTS.md` exists; no instruction engine | partial - batch 3 |
+| B28 | Persistent reviewer learnings | nothing | missing - batch 4 |
+| B29 | Custom pre-merge checks | `hook_gate.py` per-edit gate; no declarative custom-check config | partial - batch 3 |
+| B30 | Incremental review orchestration | CI re-runs only; no commit-aware review state | missing - batch 4 |
+| B31 | PR merge-risk assessment | `sem_merge_risk.py` (round-17): model v1, registry-driven severity, evidence rows, data gaps reported as incomplete | shipped |
+| B32 | PR triage queue | nothing | missing - batch 4 |
+| B33 | Reviewer and label recommendations | `label.yml` (actions/labeler v7); no reviewer derivation | partial - batch 3 |
+| B34 | CI failure diagnosis | nothing | missing - batch 2 |
+| B35 | Finishing touches / verified fixes | `fix_engine.py`, `fix_tools.py` with tiers and dry-run | shipped |
+| B36 | Cross-repository context via MCP | `mcp_server.py`, `mcp_tools.py`; no allowlisted cross-repo context | partial - batch 4 |
+| B37 | Repo-wide security deep scans | `slop_security.py` + scheduled `audit.yml` | partial - batch 3 |
+| B38 | Security finding lifecycle | SARIF out; no finding state machine | missing - batch 4 |
+| B39 | Post-merge automation | quality-store pin promotion + metric store | partial - batch 3 |
+
+### C. Pipeline model (Semaphore): 7 shipped, 2 partial, 1 missing
+
+The parity research lives in `docs/semaphore-parity-research.md`; the
+round-16 contracts are pinned by tests.
+
+| # | Feature | Master CI asset | Status |
+| --- | --- | --- | --- |
+| C40 | Pipeline schema compile-time validation | `tests/test_workflow_contracts.py`, `sem_secrets_lint.py` | shipped |
+| C41 | Pipeline DAG, global config, after-pipeline | workflow DAG + `if: always()` summary jobs | shipped |
+| C42 | Matrix expansion safety | `sem_matrix_validate.py` (round-17): duplicate keys, empty/non-list dims, product vs the documented 64 ceiling, exclude-only key checks, dynamic expansion reported gate-neutral | shipped |
+| C43 | Partial reruns / failed-job recovery | GitHub native rerun used; rerun inventory not exposed | partial - batch 3 |
+| C44 | Fail-fast, auto-cancel, concurrency | concurrency groups per workflow | shipped |
+| C45 | Dynamic init, monorepo detection, preflight | `path_filters.py` + changes jobs | shipped |
+| C46 | Parameterized promotions | `sem_promotions.py` + `.semaphore/promotions.yml` (round-16) | shipped |
+| C47 | Scoped secrets and access policy | `sem_secrets_lint.py` + `docs/secrets-manifest.yml` (round-16) | shipped |
+| C48 | Artifact lifecycles (job/workflow/project) | upload/download actions + quality-store branch as the project namespace | shipped |
+| C49 | Layered dependency caching | pip cache slice (d698f4d); Docker layer cache N/A, documented | shipped |
+| C50 | Test reports, flaky intelligence, insights | `sem_test_reports.py`, `flaky_detect.py`, `flaky_aggregate.py`, `flaky_quarantine.py`, `sem_insights.py`, `nightly.yml` | shipped |
+
+### The batch plan
+
+- **Batch 1 (this round):** the IR vertical slice (A12/B25), C42 the
+  matrix-expansion validator, B23 the change-stack cohorts, B31 the
+  merge-risk scorer. Evidence in `docs/nextgen-architecture.md`.
+- **Batch 2 - the summary and profiles round:** A4 profile
+  inheritance with three-level merge precedence, B21 PR summaries tied
+  to head SHAs, B34 CI failure diagnosis from Actions logs, A19 SBOM +
+  license policy, A20 real-repo corpus, B25 graph persistence.
+- **Batch 3 - the review-platform round:** B22 walkthroughs, B26
+  linked-issue validation, B27 instruction engine, B29 custom checks,
+  B33 reviewer derivation, B37 deep-scan schedule, A9 near-duplicate
+  similarity, A10 cross-language cohesion, A15 registry descriptors,
+  C43 rerun inventory.
+- **Batch 4 - the lifecycle round:** B28 learnings, B30 incremental
+  review state, B32 triage, B24 optional diagrams, B36 cross-repo MCP,
+  B38 security lifecycle, A18 taint pack boundaries.
+
+Every batch lands with the same contract the template holds itself to:
+tests first against the acceptance criteria, the ratchet on its own
+diff, benchmark evidence for any detector change, and no status
+promoted to shipped without the code and the numbers to point at.

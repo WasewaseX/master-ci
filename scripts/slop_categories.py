@@ -90,6 +90,7 @@ CHECK_CATEGORIES: dict[str, str] = {
     "todo-density": "code-health",
     "unused-declaration": "code-health",
     "orphan-module": "code-health",
+    "semantic-dead-symbol": "code-health",
     # Maintainability: design debt and hygiene, judged per codebase.
     "bloat-param-count": "maintainability",
     "high-cyclomatic": "maintainability",
