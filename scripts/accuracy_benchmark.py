@@ -44,7 +44,9 @@ from typing import Sequence
 from ai_slop_detector import scan as full_scan
 from fixture_benchmark import (
     DEFAULT_FIXTURES_DIR,
+    BenchRow,
     ConfigError,
+    RowResult,
     evaluate,
     load_benchmark,
 )
@@ -161,31 +163,52 @@ def load_known_fps() -> dict[tuple[str, str], str]:
     return known
 
 
+def judge_positive(
+    row: BenchRow,
+    result: RowResult,
+    entry: CheckStats,
+    violations: list[tuple[str, str, str]],
+) -> None:
+    """One judged row against its label: the shared positive kernel.
+
+    ``detected`` passes when the verdict is PASS (tp), a miss is fn
+    plus a violation; ``clean`` passes when nothing was observed (tn),
+    an observation is fp plus a violation. The violation leads with
+    the case id (``row.slug``) - the convention the holdout report and
+    the real-repo judge already use - so every positive judging path
+    is one rule, not a near-copy per caller.
+    """
+    if row.expected == "detected":
+        if result.verdict == "PASS":
+            entry.tp += 1
+        else:
+            entry.fn += 1
+            violations.append(
+                (row.slug, row.rule, f"expected detected, observed {result.observed}")
+            )
+    elif row.expected == "clean":
+        if result.verdict == "PASS":
+            entry.tn += 1  # expected clean, none observed
+        else:
+            entry.fp += 1
+            violations.append((row.slug, row.rule, f"expected clean, observed {result.observed}"))
+
+
 def judge_positives(fixtures_dir: Path, stats: dict[str, CheckStats]) -> list[tuple[str, str, str]]:
-    """The labeled fixture rows: PASS feeds TP/TN, FAIL feeds FN/FP."""
-    violations: list[tuple[str, str, str]] = []
+    """The labeled fixture rows: PASS feeds TP/TN, FAIL feeds FN/FP.
+
+    The verdict comes from the shared kernel; this report's violations
+    lead with the check id (check, slug, detail) exactly as
+    ``build_report`` unpacks them.
+    """
+    kernel: list[tuple[str, str, str]] = []
     for row in load_benchmark(fixtures_dir):
         if row.expected == "pending":
             continue
         result = evaluate(row, fixtures_dir)
         entry = stats.setdefault(row.rule, CheckStats())
-        if row.expected == "detected":
-            if result.verdict == "PASS":
-                entry.tp += 1
-            else:
-                entry.fn += 1
-                violations.append(
-                    (row.rule, row.slug, f"expected detected, observed {result.observed}")
-                )
-        elif row.expected == "clean":
-            if result.verdict == "PASS":
-                entry.tn += 1  # expected clean, none observed
-            else:
-                entry.fp += 1
-                violations.append(
-                    (row.rule, row.slug, f"expected clean, observed {result.observed}")
-                )
-    return violations
+        judge_positive(row, result, entry, kernel)
+    return [(check, case, detail) for case, check, detail in kernel]
 
 
 def judge_negatives(

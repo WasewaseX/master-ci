@@ -19,12 +19,16 @@ module closes that gap:
     file count, and the index keeps only the first ``MAX_OWNERS``
     positions per shingle - the boilerplate ``slop_duplicates``
     already judges, and it cannot flood the vote.
-- a passing alignment grows outward from its anchor while the running
-    mismatch ratio stays inside ``MISMATCH_RATIO``; the block reports
-    when ``MIN_MATCHED`` matched lines survive and the similarity -
-    matched over aligned length - clears ``SIM_THRESHOLD``. The score
-    is the evidence: the message names both locations and the
-    similarity, so a review starts from a number, not a vibe.
+- a passing alignment grows outward from each of its anchors while
+    the running mismatch ratio stays inside ``MISMATCH_RATIO``; the
+    block reports when ``MIN_MATCHED`` matched lines survive and the
+    similarity - matched over aligned length - clears
+    ``SIM_THRESHOLD``. Every anchor of an alignment gets its chance to
+    grow: a short shared preamble voting for a delta must not hide a
+    much longer copied block at the same offset, so the alignment's
+    best block wins. The score is the evidence: the message names both
+    locations and the similarity, so a review starts from a number,
+    not a vibe.
 
 Findings are capped at ``MAX_CLONES``, best similarity first, the same
 cap every repo-level check carries. A file's own overlapping regions
@@ -167,26 +171,27 @@ def _grow_block(
     return start_a, length, matched
 
 
-def _collect_clones(
+def _best_alignment_block(
     per_file: list[list[str]],
-    votes: dict[tuple[int, int, int], list[tuple[int, int]]],
-) -> list[tuple[float, int, int, int, int, int]]:
-    """Every surviving alignment: (score, file_a, start_a, file_b, start_b, length).
+    file_a: int,
+    file_b: int,
+    delta: int,
+    anchors: list[tuple[int, int]],
+) -> tuple[float, int, int, int, int, int] | None:
+    """Grow every anchor of one alignment; the best block wins.
 
-    One alignment reports once no matter how many anchors voted for it -
-    the alignment's best block wins, ties resolved by the earliest
-    start, so one clone is one row. Same-file regions that overlap
-    never accuse each other: a stride-one sweep shares most of its
-    lines with its neighbor by construction, and self-overlap is not a
-    clone.
+    Most matched evidence first, then the highest similarity, ties
+    resolved by the earliest start - a short shared preamble (an early
+    anchor whose growth stops at the first differing line) cannot hide
+    a much longer near-copy at the same delta whose anchors voted
+    later, and a tiny perfect sub-block cannot crowd out the longer
+    copy it lives inside. A candidate that misses the match floor,
+    overlaps its sibling in the same file or clears neither the
+    mismatch budget nor the similarity threshold is not a candidate.
     """
-    clones: dict[tuple[int, int, int], tuple[float, int, int, int, int, int]] = {}
-    for (file_a, file_b, delta), anchors in votes.items():
-        if len(anchors) < VOTE_FLOOR:
-            continue
-        if file_a == file_b and -delta < MIN_MATCHED:
-            continue  # overlapping self-regions, or the same region
-        anchor_a, anchor_b = min(anchors)  # one anchor per alignment, stable
+    best_key: tuple[int, float, int] | None = None
+    best_row: tuple[float, int, int, int, int, int] | None = None
+    for anchor_a, anchor_b in sorted(anchors):
         start_a, length, matched = _grow_block(
             per_file[file_a], per_file[file_b], anchor_a, anchor_b
         )
@@ -194,14 +199,39 @@ def _collect_clones(
             continue
         start_b = start_a - delta
         if file_a == file_b and start_b < start_a + length and start_a < start_b + length:
-            continue
+            continue  # overlapping self-regions, or the same region
         score = matched / length
         if score < SIM_THRESHOLD:
             continue
-        key = (file_a, file_b, delta)
-        row = (score, file_a, start_a, file_b, start_b, length)
-        if key not in clones or clones[key][0] < score:
-            clones[key] = row
+        key = (matched, score, -start_a)
+        if best_key is None or key > best_key:
+            best_key = key
+            best_row = (score, file_a, start_a, file_b, start_b, length)
+    return best_row
+
+
+def _collect_clones(
+    per_file: list[list[str]],
+    votes: dict[tuple[int, int, int], list[tuple[int, int]]],
+) -> list[tuple[float, int, int, int, int, int]]:
+    """Every surviving alignment: (score, file_a, start_a, file_b, start_b, length).
+
+    One alignment reports once no matter how many anchors voted for it,
+    but every anchor gets its chance to grow (``_best_alignment_block``),
+    so the alignment's best block is the one reported. Same-file
+    alignments whose delta overlaps by construction stay out entirely:
+    a stride-one sweep shares most of its lines with its neighbor by
+    construction, and self-overlap is not a clone.
+    """
+    clones: dict[tuple[int, int, int], tuple[float, int, int, int, int, int]] = {}
+    for (file_a, file_b, delta), anchors in votes.items():
+        if len(anchors) < VOTE_FLOOR:
+            continue
+        if file_a == file_b and -delta < MIN_MATCHED:
+            continue  # overlapping self-regions, or the same region
+        best_row = _best_alignment_block(per_file, file_a, file_b, delta, anchors)
+        if best_row is not None:
+            clones[(file_a, file_b, delta)] = best_row
     return list(clones.values())
 
 

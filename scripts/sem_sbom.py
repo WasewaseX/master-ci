@@ -5,28 +5,34 @@ The supply-chain story so far reads what is unused or vulnerable
 check) - it never answers the two questions an SBOM exists for: what
 exactly does this tree declare as its third-party set, and which of
 those declarations cross the license policy. The audit called both
-docs-only. This module makes them mechanical:
+docs-only. This module makes them mechanical; the per-ecosystem
+reading rules live in ``sem_sbom_readers.py``, this module owns the
+inventory, the policy and the report:
 
-- the inventory: every dependency declaration across the six supported
-    ecosystems (PyPI ``requirements*.txt``/``pyproject.toml``, npm
-    ``package.json``, Go ``go.mod``, Rust ``Cargo.toml``, NuGet
-    ``*.csproj``, Ruby ``Gemfile``) becomes one SPDX-2.3-shaped package
-    row - name, declared version (``NOASSERTION`` when the manifest
-    does not pin one), a purl, and the license the manifest itself
-    declares (``NOASSERTION`` when none). Declared, not resolved: the
-    version is what the manifest says, never a resolved graph - that
-    boundary stays with the lock files and the existing dependency
-    oracles.
+- the inventory: ``walk_manifests`` finds every supported manifest
+    (``requirements*.txt`` as one filename pattern - a
+    ``requirements-dev.txt`` is discovered exactly like
+    ``requirements.txt`` - plus ``pyproject.toml``, ``package.json``,
+    ``go.mod``, ``Cargo.toml``, ``Gemfile`` and ``*.csproj``), and
+    ``parse_typed_manifest`` reads each one into package rows. Every
+    dependency row carries ``NOASSERTION`` for the license - the
+    manifest's license is the project's, not its dependencies'.
+- the project license: the license a manifest declares is reported
+    separately, per manifest - an MIT application does not make its
+    unknown-license dependencies pass ``deny_unknown``, and the SPDX
+    report never asserts MIT for a dependency nobody licensed.
 - the policy: an allow/deny/``deny_unknown`` license policy judged per
     package; a package whose license is not declared is a visible
     ``NOASSERTION`` row, and under ``deny_unknown`` a violation - a
     missing license is a gap, and the policy decides whether gaps pass.
-- the honesty rule: a manifest that cannot be parsed is a recorded
-    data gap with its reason, visible in the report, never a silent
-    skip. The SBOM is deterministic - identical trees render
-    byte-identical documents (sorted rows, a content digest as the
-    namespace, a constant creation timestamp the caller may override),
-    so a diff of the SBOM shows the dependency change, not the mood.
+- the honesty rule: a manifest that cannot be parsed - or that parses
+    into a shape the reader does not accept - is a recorded data gap
+    with its reason, visible in the report, never a silent skip and
+    never an exception that stops the scan. The SBOM is deterministic -
+    identical trees render byte-identical documents (sorted rows, a
+    content digest as the namespace, a constant creation timestamp the
+    caller may override), so a diff of the SBOM shows the dependency
+    change, not the mood.
 
 Exit codes: 0 policy satisfied (or none given), 1 violations, 2
 configuration error. Advisory by default - a gate that wants the
@@ -39,58 +45,26 @@ import argparse
 import dataclasses as dc
 import hashlib
 import json
-import re
 import sys
-import tomllib
 from pathlib import Path
 from typing import Sequence
 
-NOASSERTION = "NOASSERTION"
+from sem_sbom_readers import (
+    NOASSERTION,
+    Package,
+    parse_typed_manifest,
+    walk_manifests,
+)
+
 SBOM_CREATED = "1970-01-01T00:00:00Z"
-
-CSPROJ_REF = re.compile(
-    r"<PackageReference\s+Include=\"([^\"]+)\"(?:\s+Version=\"([^\"]*)\")?\s*/?>",
-)
-GEM_REF = re.compile(r"^\s*gem\s+[\"']([^\"']+)[\"'](?:\s*,\s*[\"']([^\"']+)[\"'])?", re.MULTILINE)
-
-_NAMES = frozenset(
-    {
-        "requirements.txt",
-        "requirements-prod.txt",
-        "pyproject.toml",
-        "package.json",
-        "go.mod",
-        "Cargo.toml",
-        "Gemfile",
-    }
-)
-
-
-@dc.dataclass
-class Package:
-    """One declared dependency, SPDX-shaped fields."""
-
-    name: str
-    version: str
-    license: str
-    purl: str
-    manifest: str
-
-    def row(self) -> dict[str, object]:
-        return {
-            "name": self.name,
-            "version": self.version,
-            "license": self.license,
-            "purl": self.purl,
-            "manifest": self.manifest,
-        }
 
 
 @dc.dataclass
 class SbomResult:
-    """The inventory, the policy verdicts and the visible gaps."""
+    """The inventory, the project licenses, the verdicts and the gaps."""
 
     packages: list[Package] = dc.field(default_factory=list)
+    project_licenses: list[dict[str, str]] = dc.field(default_factory=list)
     violations: list[dict[str, str]] = dc.field(default_factory=list)
     gaps: list[dict[str, str]] = dc.field(default_factory=list)
 
@@ -99,210 +73,30 @@ class SbomResult:
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
 
 
-def _purl(ecosystem: str, name: str, version: str) -> str:
-    """The package URL, scoped npm names folded into a namespace.
-
-    NuGet package ids are case-sensitive, so theirs keep the declared
-    casing; every other ecosystem's name is declared lowercase here.
-    """
-    if ecosystem == "npm" and name.startswith("@") and "/" in name:
-        scope, _, bare = name[1:].partition("/")
-        return f"pkg:npm/{scope}/{bare}@{version}"
-    purl_name = name if ecosystem == "nuget" else name.lower()
-    base = f"pkg:{ecosystem}/{purl_name}"
-    return f"{base}@{version}" if version != NOASSERTION else base
-
-
-def _package(ecosystem: str, name: str, version: str, manifest: str) -> Package:
-    ver = version.strip() if version else NOASSERTION
-    return Package(
-        name=name,
-        version=ver,
-        license=NOASSERTION,
-        purl=_purl(ecosystem, name, ver),
-        manifest=manifest,
-    )
-
-
-def _parse_requirements(text: str, manifest: str) -> list[Package]:
-    rows: list[Package] = []
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line or line.startswith(("#", "-", ".")):
-            continue
-        match = re.match(r"^([A-Za-z0-9_.\[\]-]+)\s*(.*)$", line)
-        if not match:
-            continue
-        name = match.group(1).split("[")[0]
-        version = match.group(2).strip()
-        version = version.split(";")[0].strip().lstrip("=<>~! ")
-        rows.append(_package("pypi", name, version, manifest))
-    return rows
-
-
-def _pyproject_project_rows(doc: dict, manifest: str) -> list[Package]:
-    """PEP 621 ``[project] dependencies`` - requirement strings, versions kept."""
-    rows: list[Package] = []
-    project = doc.get("project")
-    if not isinstance(project, dict):
-        return rows
-    deps = project.get("dependencies") or []
-    for dep in deps:
-        if not isinstance(dep, str):
-            continue
-        match = re.match(r"^([A-Za-z0-9_.\[\]-]+)\s*(.*)$", dep.strip())
-        if match:
-            ver = match.group(2).strip().lstrip("=<>~! ")
-            rows.append(_package("pypi", match.group(1), ver, manifest))
-    return rows
-
-
-def _pyproject_poetry_rows(doc: dict, manifest: str) -> list[Package]:
-    """``[tool.poetry.dependencies]`` - the caret/tilde specs, verbatim minus markers."""
-    rows: list[Package] = []
-    tool = doc.get("tool")
-    poetry = tool.get("poetry") if isinstance(tool, dict) else None
-    section = poetry.get("dependencies") if isinstance(poetry, dict) else None
-    if not isinstance(section, dict):
-        return rows
-    for name, spec in section.items():
-        if name == "python":
-            continue
-        version = spec.get("version", "") if isinstance(spec, dict) else str(spec)
-        rows.append(_package("pypi", name, str(version).lstrip("^~>=< "), manifest))
-    return rows
-
-
-def _pyproject_declared_license(doc: dict) -> str:
-    """The ``[project] license`` field, PEP 621 table or plain string."""
-    project = doc.get("project")
-    license_field = project.get("license", NOASSERTION) if isinstance(project, dict) else None
-    if isinstance(license_field, dict):
-        return str(license_field.get("text", NOASSERTION))
-    return str(license_field) if license_field else NOASSERTION
-
-
-def _parse_pyproject(data: bytes, manifest: str) -> tuple[list[Package], str]:
-    doc = tomllib.loads(data.decode("utf-8"))
-    rows = _pyproject_project_rows(doc, manifest) + _pyproject_poetry_rows(doc, manifest)
-    return rows, _pyproject_declared_license(doc) or NOASSERTION
-
-
-def _parse_json_manifest(text: str, manifest: str) -> tuple[list[Package], str]:
-    doc = json.loads(text)
-    rows: list[Package] = []
-    for block in ("dependencies", "devDependencies"):
-        for name, version in (doc.get(block, {}) or {}).items():
-            rows.append(_package("npm", name, str(version), manifest))
-    declared = str(doc.get("license", "") or "").strip() or NOASSERTION
-    return rows, declared
-
-
-def _parse_go_mod(text: str, manifest: str) -> list[Package]:
-    rows: list[Package] = []
-    in_block = False
-    for raw in text.splitlines():
-        line = raw.strip()
-        if line.startswith("require ("):
-            in_block = True
-            continue
-        if in_block and line == ")":
-            in_block = False
-            continue
-        if in_block or line.startswith("require "):
-            match = re.match(r"(?:require\s+)?([A-Za-z0-9._/-]+)\s+(v[0-9A-Za-z.\-+]+)", line)
-            if match and not line.startswith("//"):
-                rows.append(_package("golang", match.group(1), match.group(2), manifest))
-    return rows
-
-
-def _parse_cargo(data: bytes, manifest: str) -> tuple[list[Package], str]:
-    doc = tomllib.loads(data.decode("utf-8"))
-    rows: list[Package] = []
-    for name, spec in (doc.get("dependencies", {}) or {}).items():
-        version = spec.get("version", "") if isinstance(spec, dict) else str(spec)
-        rows.append(_package("cargo", name, str(version), manifest))
-    declared = str((doc.get("package", {}) or {}).get("license", "") or "").strip()
-    return rows, declared or NOASSERTION
-
-
-def _parse_csproj(text: str, manifest: str) -> list[Package]:
-    return [
-        _package("nuget", match.group(1), match.group(2) or "", manifest)
-        for match in CSPROJ_REF.finditer(text)
-    ]
-
-
-def _parse_gemfile(text: str, manifest: str) -> list[Package]:
-    return [
-        _package("gem", match.group(1), match.group(2) or "", manifest)
-        for match in GEM_REF.finditer(text)
-    ]
-
-
-def _walk_manifests(root: Path) -> list[Path]:
-    """The six ecosystems' manifests, sorted, node_modules and venvs out."""
-    found: list[Path] = []
-    for path in sorted(root.rglob("*")):
-        if not path.is_file():
-            continue
-        if any(
-            part in {"node_modules", ".git", ".venv", "venv", "__pycache__"} for part in path.parts
-        ):
-            continue
-        if path.name in _NAMES or path.suffix.lower() == ".csproj":
-            found.append(path)
-    return found
-
-
 def scan_sbom(root: Path) -> SbomResult:
     """Inventory every manifest under root; unparseable ones are gaps."""
     result = SbomResult()
-    for manifest in _walk_manifests(root):
+    for manifest in walk_manifests(root):
         rel = str(manifest.relative_to(root)) if root.is_dir() else manifest.name
         try:
-            result.packages.extend(_parse_one(manifest, rel))
-        except (OSError, ValueError, tomllib.TOMLDecodeError, json.JSONDecodeError) as exc:
+            data = manifest.read_bytes()
+        except OSError as exc:
             result.gaps.append({"manifest": rel, "reason": str(exc)[:160]})
+            continue
+        text = data.decode("utf-8", errors="replace")
+        try:
+            rows, declared = parse_typed_manifest(manifest.name, data, text, rel)
+        except (OSError, ValueError) as exc:
+            # The readers raise ValueError for every handled failure class:
+            # wrong-shape documents, not-parseable XML, TOML/JSON decode
+            # errors (all ValueError subclasses), so one bad manifest is
+            # a recorded gap and the scan moves on.
+            result.gaps.append({"manifest": rel, "reason": str(exc)[:160]})
+            continue
+        result.packages.extend(rows)
+        if declared != NOASSERTION:
+            result.project_licenses.append({"manifest": rel, "license": declared})
     return result
-
-
-def _parse_one(manifest: Path, rel: str) -> list[Package]:
-    """One manifest to packages; the declared license rides on the rows."""
-    data = manifest.read_bytes()
-    text = data.decode("utf-8", errors="replace")
-    rows, declared = _parse_typed_manifest(manifest.name, data, text, rel)
-    return _stamp_license(rows, declared)
-
-
-def _parse_typed_manifest(name: str, data: bytes, text: str, rel: str) -> tuple[list[Package], str]:
-    """Dispatch one manifest by name; the license rides back with the rows."""
-    if name == "package.json":
-        return _parse_json_manifest(text, rel)
-    if name == "pyproject.toml":
-        return _parse_pyproject(data, rel)
-    if name == "Cargo.toml":
-        return _parse_cargo(data, rel)
-    return _parse_loose_manifest(name, text, rel), NOASSERTION
-
-
-def _parse_loose_manifest(name: str, text: str, rel: str) -> list[Package]:
-    """The manifests whose format carries no declared license field."""
-    if name == "go.mod":
-        return _parse_go_mod(text, rel)
-    if name == "Gemfile":
-        return _parse_gemfile(text, rel)
-    if name.startswith("requirements"):
-        return _parse_requirements(text, rel)
-    return _parse_csproj(text, rel)
-
-
-def _stamp_license(rows: list[Package], declared: str) -> list[Package]:
-    """A manifest-level license belongs to every package it declares."""
-    if declared != NOASSERTION:
-        for row in rows:
-            row.license = declared
-    return rows
 
 
 def load_policy(path: Path) -> dict[str, object]:
@@ -397,10 +191,17 @@ def build_spdx(result: SbomResult, created: str = SBOM_CREATED) -> dict[str, obj
 
 
 def render_markdown(result: SbomResult, policy: dict[str, object] | None) -> str:
-    """The human report: inventory, verdicts, gaps - all visible."""
+    """The human report: inventory, project licenses, verdicts, gaps."""
     lines = [f"# SBOM and license report ({len(result.packages)} packages)", ""]
     for package in sorted(result.packages, key=lambda p: (p.purl, p.manifest)):
-        lines.append(f"- {package.purl} - license: {package.license} ({package.manifest})")
+        lines.append(
+            f"- {package.purl} - version: {package.version} - license: "
+            f"{package.license} ({package.manifest})"
+        )
+    if result.project_licenses:
+        lines += ["", "## Project licenses (the manifests' own, not their dependencies')", ""]
+        for row in sorted(result.project_licenses, key=lambda row: row["manifest"]):
+            lines.append(f"- {row['manifest']}: {row['license']}")
     if policy is not None:
         verdict = "violations" if result.violations else "satisfied"
         lines += ["", f"## License policy: {verdict}", ""]
@@ -451,6 +252,9 @@ def main(
                     "packages": [
                         p.row() for p in sorted(result.packages, key=lambda p: (p.purl, p.manifest))
                     ],
+                    "project_licenses": sorted(
+                        result.project_licenses, key=lambda row: row["manifest"]
+                    ),
                     "violations": result.violations,
                     "gaps": result.gaps,
                 },

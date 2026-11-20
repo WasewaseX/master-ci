@@ -224,6 +224,59 @@ def test_comment_and_blank_noise_does_not_break_the_alignment(tmp_path):
     assert "similarity 1.00" in findings[0].message
 
 
+def test_a_short_preamble_does_not_hide_a_later_clone(tmp_path):
+    """Every anchor grows: the shared imports cannot suppress the block.
+
+    Two files share two import lines, diverge for a few assignments,
+    then carry a 14-line near-copy at the same offsets. Growth that
+    starts only at the earliest anchor stops at the assignments -
+    matched never reaches the floor - and the copy's later anchors,
+    which voted for the same delta, are never tried. The block wins
+    because every anchor of the alignment gets its chance.
+    """
+    imports = ["import json", "import os"]
+    diverge_a = ["left_a = 1", "left_b = 2", "left_c = 3", "left_d = 4"]
+    diverge_b = ["right_a = 11", "right_b = 12", "right_c = 13", "right_d = 14"]
+    core = [
+        "def shared(items, out):",
+        "    total = 0",
+        "    for item in items:",
+        "        if not item.get('id'):",
+        "            continue",
+        "        total += item.get('size', 0)",
+        "        out.write(str(item['id']))",
+        "        out.write(', ')",
+        "    if total < 0:",
+        "        raise ValueError('negative total')",
+        "    out.write(str(total))",
+        "    return total",
+        "out.flush()",
+        "return len(items)",
+    ]
+    copied_a = list(core)
+    copied_b = list(core)
+    copied_b[1] = "    total = 0  # variant"
+    copied_b[9] = "        raise ValueError('total is negative')"
+    left = _write(
+        tmp_path,
+        "preamble_left.py",
+        "\n".join(imports + diverge_a + copied_a) + "\n",
+    )
+    right = _write(
+        tmp_path,
+        "preamble_right.py",
+        "\n".join(imports + diverge_b + copied_b) + "\n",
+    )
+    findings = _one(tmp_path, [left, right])
+    assert len(findings) == 1, "the 14-line near-copy is a clone whatever voted first"
+    message = findings[0].message
+    assert "preamble_right.py:" in message
+    assert findings[0].path.endswith("preamble_left.py")
+    similarity = float(message.split("similarity ")[1].split(" over")[0])
+    length = int(message.split("over ")[1].split(" aligned")[0])
+    assert similarity >= 0.85 and length >= 14
+
+
 def test_fixture_trees_judge_through_the_probe(tmp_path):
     root = Path(__file__).resolve().parents[1] / "fixtures" / "bench"
     detected = check_near_duplicates(

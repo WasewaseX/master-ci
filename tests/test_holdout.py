@@ -11,7 +11,11 @@ The documented contracts, test-pinned:
     a guessed pass;
 - the labels: ``detected`` needs the check's finding, ``clean`` needs
     its absence, and a disagreeing label is a violation, not a
-    relabeled pass;
+    relabeled pass; a label naming a check the registry does not know
+    is refused at load - a typo is never a vacuous clean row;
+- the counts: one case per fixture slug, the case the split manifest
+    names, split labels read from that same manifest (never re-hashed
+    under a default ratio), so training and holdout evidence never mix;
 - exit codes: 0 clean, 1 violations, 2 configuration error.
 """
 
@@ -98,12 +102,27 @@ def test_manifest_provenance_fields_are_fail_closed(tmp_path):
 
 
 def test_manifest_labels_are_fail_closed(tmp_path):
-    for labels in ({}, {"debug-print": "maybe"}, {"": "detected"}):
+    for labels in ({}, {"debug-print": "maybe"}, {"": "detected"}, {"debug-prnit": "clean"}):
         repo = _valid_repo([{"path": "clean_py", "labels": labels}])
         with pytest.raises(holdout.CorpusError):
             holdout.load_real_corpus(
                 _manifest(tmp_path, {"schema": "accuracy-real-v1", "repos": [repo]})
             )
+
+
+def test_unknown_check_ids_are_refused_not_judged(tmp_path):
+    """A typo check id is refused at load, never a vacuous clean row.
+
+    ``debug-prnit`` can never disagree with a scan - no finding carries
+    that id - so judging it always scores a correct clean result. The
+    registry gate turns the typo into a configuration error.
+    """
+    repo = _valid_repo([{"path": "clean_py", "labels": {"debug-prnit": "clean"}}])
+    with pytest.raises(holdout.CorpusError) as exc:
+        holdout.load_real_corpus(
+            _manifest(tmp_path, {"schema": "accuracy-real-v1", "repos": [repo]})
+        )
+    assert "not a live check id" in str(exc.value)
 
 
 def test_valid_manifest_loads(tmp_path):
@@ -186,11 +205,82 @@ def test_run_holdout_judges_and_splits(tmp_path):
     splits = report["splits"]
     assert "py-print-debug" in splits
     assert splits["py-print-debug"] == holdout.split_case("py-print-debug", 30)
-    rows = report["fixture_rows"]["debug-print"]
-    assert rows["tp"] >= 1 and rows["fn"] == 0 and rows["tn"] >= 1
-    assert rows["split"] == splits["py-print-debug"]
+    rows = report["fixture_rows"]
+    assert "py-print-debug" in rows, "cases are fixture slugs, the ids the manifest names"
+    assert "debug-print" not in rows, "check names are not cases"
+    case_rows = rows["py-print-debug"]
+    assert case_rows["tp"] >= 1 and case_rows["fn"] == 0
+    assert case_rows["split"] == splits["py-print-debug"]
     assert not report["gaps"]
     assert "Split manifest" in text and "py-print-debug" in text
+
+
+def test_every_judged_row_lands_in_exactly_one_slug_case():
+    """One slug, one case: no slug's counts absorb another slug's results.
+
+    Keying by check merges fixtures that name the same rule - two
+    fixtures in different splits become one case whose split is a hash
+    of the check's name - and the evidence stops measuring either half.
+    """
+    from fixture_benchmark import load_benchmark
+
+    fixtures_dir = _repo_fixtures()
+    rows = load_benchmark(fixtures_dir)
+    _, report, _ = holdout.run_holdout(fixtures_dir, None, 30)
+    case_rows = report["fixture_rows"]
+    assert set(case_rows) == {row.slug for row in rows}
+    assert all(
+        counts["tp"] + counts["fp"] + counts["fn"] + counts["tn"] == 1
+        for counts in case_rows.values()
+    )
+    assert sum(c["tp"] + c["fp"] + c["fn"] + c["tn"] for c in case_rows.values()) == len(rows)
+
+
+def test_row_labels_come_from_the_reported_manifest_not_a_rehash():
+    """`--ratio 0` labels every row train, `--ratio 100` every row holdout.
+
+    The rows' split labels come from the already-computed manifest the
+    report ships; re-hashing each case under the default 30 percent
+    would contradict that manifest on the extreme ratios.
+    """
+    fixtures_dir = _repo_fixtures()
+    for ratio in (0, 100):
+        _, report, _ = holdout.run_holdout(fixtures_dir, None, ratio)
+        expected = "train" if ratio == 0 else "holdout"
+        assert all(split == expected for split in report["splits"].values()), ratio
+        assert all(counts["split"] == expected for counts in report["fixture_rows"].values()), ratio
+        assert all(
+            counts["split"] == report["splits"][case]
+            for case, counts in report["fixture_rows"].items()
+        ), ratio
+
+
+def test_train_and_holdout_evidence_stay_separated():
+    """Both halves are measured: neither split absorbs the other's rows.
+
+    The default ratio's manifest puts cases in both splits, and the
+    per-case counts must follow that assignment - a combined count
+    keyed by check would empty one half entirely.
+    """
+    fixtures_dir = _repo_fixtures()
+    _, report, _ = holdout.run_holdout(fixtures_dir, None, 30)
+    splits = report["splits"]
+    assert set(splits.values()) == {"train", "holdout"}, "both halves exist at ratio 30"
+    for split in ("train", "holdout"):
+        cases = [case for case, row_split in splits.items() if row_split == split]
+        judged = [
+            case
+            for case in cases
+            if case in report["fixture_rows"]
+            and (
+                report["fixture_rows"][case]["tp"]
+                + report["fixture_rows"][case]["fp"]
+                + report["fixture_rows"][case]["fn"]
+                + report["fixture_rows"][case]["tn"]
+            )
+            > 0
+        ]
+        assert judged, f"the {split} half keeps its own judged evidence"
 
 
 def test_run_holdout_reports_real_rows_and_gaps(tmp_path):

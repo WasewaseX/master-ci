@@ -19,12 +19,16 @@ named fixture that is not vendored yet is a recorded data gap, visible
 in every report, never a guessed pass: a corpus entry that promises
 evidence it does not carry is not evidence.
 
-What is judged: the fixture-benchmark rows split by slug, and every
-vendored real-repo fixture judged per label (``detected`` needs the
-check's finding present, ``clean`` needs it absent, ai-integrity
+What is judged: the fixture-benchmark rows judged per fixture slug -
+the case the split manifest names is the case the counts name - and
+every vendored real-repo fixture judged per label (``detected`` needs
+the check's finding present, ``clean`` needs it absent, ai-integrity
 prose judgments stay out of clean rows exactly as in the accuracy
-benchmark). The report records the split manifest, per-split per-check
-counts, the real rows and the gaps - the artifact a widening PR
+benchmark). A manifest label naming a check the registry does not
+know (``debug-prnit``) is refused at load, not judged into a vacuous
+clean row. The report records the split manifest, per-case counts
+labeled from that same manifest (never a re-hash under a different
+ratio), the real rows and the gaps - the artifact a widening PR
 attaches.
 
 Exit codes: 0 no violations and no unexpected findings, 1 any label
@@ -40,12 +44,13 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
-from accuracy_benchmark import CheckStats, judge_positives
+from accuracy_benchmark import CheckStats, evaluate, judge_positive
 from ai_slop_detector import scan as full_scan
 from fixture_bench_probes import ConfigError
 from fixture_benchmark import load_benchmark
 from slop_categories import CHECK_CATEGORIES
 from slop_files import load_phrases
+from slop_model import REMEDIES
 
 REPO = Path(__file__).resolve().parents[1]
 REAL_CORPUS = REPO / "benchmarks" / "accuracy" / "corpus-real.json"
@@ -113,13 +118,21 @@ def _validate_repo_identity(entry: dict[str, object], path: Path) -> None:
 
 
 def _validate_fixture_labels(fixture: dict[str, object], path: Path) -> None:
-    """Every label names a check and a verb the schema knows."""
+    """Every label names a live check and a verb the schema knows.
+
+    The check registry (``slop_model.REMEDIES``) is the gate: a typo
+    such as ``debug-prnit`` would otherwise be judged as a clean row
+    that can never disagree - no finding carries an id that does not
+    exist - and a corpus that scores vacuous rows is not evidence.
+    """
     labels = fixture.get("labels")
     if not isinstance(labels, dict) or not labels:
         raise CorpusError(f"{path}: fixture {fixture.get('path')} needs labels")
     for check, verb in labels.items():
         if not isinstance(check, str) or not check:
             raise CorpusError(f"{path}: labels need non-empty check ids")
+        if check not in REMEDIES:
+            raise CorpusError(f"{path}: label {check!r} is not a live check id")
         if verb not in LABEL_VERBS:
             raise CorpusError(f"{path}: label {check}:{verb!r} must be detected or clean")
 
@@ -243,13 +256,33 @@ def _build_report(
         "salt": SALT,
         "ratio": ratio,
         "splits": {case: splits[case] for case in sorted(splits)},
-        "fixture_rows": _counts(stats),
-        "real_rows": _counts(real_stats),
+        "fixture_rows": _counts(stats, splits),
+        "real_rows": _counts(real_stats, splits),
         "gaps": gaps,
         "violations": [
             {"case": case, "check": check, "detail": detail} for case, check, detail in violations
         ],
     }
+
+
+def _judge_fixture_rows(rows: Sequence, fixtures_dir: Path, ledger: _Ledger) -> None:
+    """The fixture-benchmark rows, judged per fixture slug.
+
+    The case is ``row.slug`` - the id the split manifest assigns - so a
+    slug's counts never merge another slug's results, and training and
+    holdout evidence stay on their own sides of the cut. Keying by
+    check (``row.rule``) instead would mix both splits under one name
+    and split the evidence by a hash of the check's label. The verdict
+    itself comes from the shared positive kernel
+    (``accuracy_benchmark.judge_positive``) - one judging rule for
+    every caller, no near-copy per module.
+    """
+    for row in rows:
+        if row.expected == "pending":
+            continue
+        result = evaluate(row, fixtures_dir)
+        entry = ledger.stats.setdefault(row.slug, CheckStats())
+        judge_positive(row, result, entry, ledger.violations)
 
 
 def run_holdout(
@@ -265,24 +298,30 @@ def run_holdout(
         repos = load_real_corpus(real_manifest)
         case_ids.extend(_real_case_ids(repos))
     splits = split_cases(case_ids, ratio)
-    stats: dict[str, CheckStats] = {}
-    violations = judge_positives(fixtures_dir, stats)
+    ledger = _Ledger()
+    _judge_fixture_rows(rows, fixtures_dir, ledger)
     gaps: list[dict[str, str]] = []
     real_stats: dict[str, CheckStats] = {}
     if real_manifest is not None:
         real_stats, real_violations, gaps = judge_real_rows(repos, REAL_CORPUS.parent)
-        violations += real_violations
-    report = _build_report(ratio, splits, stats, real_stats, gaps, violations)
+        ledger.violations += real_violations
+    report = _build_report(ratio, splits, ledger.stats, real_stats, gaps, ledger.violations)
     text = _render(report)
-    return text, report, 1 if violations else 0
+    return text, report, 1 if ledger.violations else 0
 
 
-def _counts(stats: dict[str, CheckStats]) -> dict[str, dict[str, object]]:
-    """Per-case counts, split folded in, deterministic order."""
+def _counts(stats: dict[str, CheckStats], splits: dict[str, str]) -> dict[str, dict[str, object]]:
+    """Per-case counts, the assigned split folded in, deterministic order.
+
+    The split comes from the already-computed manifest - the same map
+    the report's ``splits`` field prints - never from re-hashing the
+    case under a default ratio, which would contradict the very
+    manifest the report ships (``--ratio 0`` labels no row holdout).
+    """
     out: dict[str, dict[str, object]] = {}
     for case, entry in sorted(stats.items()):
         out[case] = {
-            "split": split_case(case),
+            "split": splits[case],
             "tp": entry.tp,
             "fp": entry.fp,
             "fn": entry.fn,

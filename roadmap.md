@@ -761,18 +761,38 @@ were fixed - the learnings writer now obeys its loader's contracts,
 the diagnoser keeps every learned fix and counts unknown lines per
 line across jobs. Round-19 then landed four more roadmap items:
 
-- **A19 - SBOM and license policy** (`sem_sbom.py`): six ecosystems,
-  SPDX-2.3-shaped deterministic documents (digest-named, constant
-  creation stamp, sorted rows), declared licenses or NOASSERTION,
-  fail-closed policy with allow/deny/deny_unknown and a
-  contradiction-is-config-error rule; unparseable manifests are data
-  gaps. Ten contract tests pin the shapes, the determinism, the exit
-  codes (0/1/2) and the gap behavior.
+- **A19 - SBOM and license policy** (`sem_sbom.py` + `sem_sbom_readers.py`):
+  six ecosystems, SPDX-2.3-shaped deterministic documents (digest-named,
+  constant creation stamp, sorted rows), fail-closed policy with
+  allow/deny/deny_unknown and a contradiction-is-config-error rule;
+  unparseable manifests are data gaps. The third greptile pass held the
+  readers to their own claims and the contracts were corrected: the
+  declared version spec stays verbatim (only an exact pin reaches a
+  purl as a version), purls follow each ecosystem's identity rules
+  (npm scopes keep the percent-encoded at-sign, Go module paths and
+  NuGet ids keep their declared casing), dependency licenses stay
+  NOASSERTION while each manifest's own license is reported separately
+  as a project license, every declared section is read (npm's four
+  tables, PEP 621 optional-dependencies, PEP 735 dependency-groups,
+  Poetry main/dev/groups, Cargo main/dev/build/target with
+  ``package =`` aliases resolved), discovery matches the advertised
+  requirements filename pattern, csproj rows parse by element and
+  attribute names (attribute order, quoting, extra attributes and
+  child Version elements all parse), and wrong-shape manifests are
+  recorded gaps instead of crashes. Twenty contract tests pin the
+  corrected shapes, the determinism, the exit codes (0/1/2) and the
+  gap behavior.
 - **A20 - the holdout split** (`sem_holdout.py`): sha256(salt:id)
   splits, purity and disjointness test-pinned, the accuracy-real-v1
   manifest fail-closed (schema, provenance, 40-hex commit, label
-  verbs), missing vendored fixtures recorded as gaps, present ones
-  judged per label. The manifest ships with zero repos and the row
+  verbs, and labels validated against the live check registry - a
+  typo check id is a configuration error, never a vacuous clean row),
+  missing vendored fixtures recorded as gaps, present ones judged per
+  label through the positive-verdict kernel shared with the accuracy
+  benchmark. Judging is per fixture slug - the case the split
+  manifest names is the case the counts name - and every row's split
+  label comes from that same manifest, never a re-hash under a
+  different ratio. The manifest ships with zero repos and the row
   stays partial - no real-world claim without a vendored corpus.
 - **A9 - near-duplicate clones** (`slop_similarity.py`): pair-shingle
   anchors vote on alignments, blocks grow inside a mismatch ratio, the
@@ -813,6 +833,41 @@ accuracy benchmark exit 0 with the clean controls clean, the fixture
 benchmark 167/167 pass, the ratchet exit 0, the self-scan verdict
 CLEAN grade A exit 0, and hosted CI verified by step name after the
 push.
+
+## Round-19.5 - the third greptile pass held the inventory round to its own claims (2026-11-21)
+
+PR #24's review returned twenty-six findings, all real, and every one
+of them a case of a module not believing its own docstring - the
+reader promised the advertised manifests and read fewer, promised
+declared values and altered them, promised a complete inventory and
+skipped sections, stamped the project's license onto its
+dependencies, re-hashed splits under a default ratio, judged a typo
+label as a vacuous clean row, and grew only the first anchor of an
+alignment. The fixes (all on round-19, per finding a regression test
+that encodes the review's own focused check): the SBOM readers moved
+to `sem_sbom_readers.py` and now parse by shape and name - verbatim
+specs with pin-only purls, per-ecosystem purl identity, NOASSERTION
+dependency licenses with project licenses reported separately, every
+declared section read, the advertised requirements pattern matched,
+csproj by element/attribute, wrong-shape documents recorded as gaps;
+the holdout judges per fixture slug with split labels read from the
+computed manifest and labels refused outside the live check registry,
+sharing one positive-verdict kernel with the accuracy benchmark (the
+detector's own near-duplicate check caught the round's first draft
+duplicating `judge_positives` - the kernel is the fix); the similarity
+oracle grows every anchor of an alignment and keeps the best block
+(most matched evidence first, then score, then earliest start); the
+push-branch-filter test compares entries unchanged and its docstring
+now records what the byte-level verification showed - prevention,
+not a shipped-outage fix. The round's own lesson went into the
+learnings store: twelve bug-class lessons recorded through the
+validated write path, the store's first real evidence.
+
+Regression held: 1440 tests green, ruff check and format clean, mypy
+clean over 223 source files, the accuracy benchmark exit 0 with the
+clean controls clean, the fixture benchmark 167/167 pass, the
+self-scan verdict CLEAN grade A at its baseline counts (13 findings,
+none new), and the learnings store loads clean through the loader.
 
 ## The 50-feature reverse-engineering program (2026-11-19)
 
@@ -856,8 +911,8 @@ A-rows; the C column has none left).
 | A16 | File selection and analysis scope | `slop_files.py`, `path_filters.py` | shipped |
 | A17 | CodeQL integration | `codeql.yml`, `codeql_detect.py`, SARIF in the required gate | shipped |
 | A18 | Semgrep taint rule packs | `slop_security.py` sink column; interprocedural taint stays with Semgrep itself | partial - batch 4 |
-| A19 | Supply-chain analysis | `slop_deps.py`, `slop_ecosystem.py`, `vulnerable-dependency`, plus `sem_sbom.py` (round-19): an SPDX-2.3-shaped SBOM over the six supported manifests (PyPI requirements/pyproject incl. poetry, npm package.json, go.mod, Cargo.toml, csproj, Gemfile) with declared versions verbatim, purls (scoped npm folded into a namespace, NuGet casing preserved), manifest-declared licenses, digest-named deterministic documents (identical trees render byte-identical), and a fail-closed allow/deny/deny_unknown license policy judged per package - an unparseable manifest is a recorded data gap, never a silent skip; resolution stays with the lock files | shipped |
-| A20 | Real-world accuracy benchmark | `accuracy_benchmark.py` + labeled fixtures; the holdout split shipped in round-19 (`sem_holdout.py`): a case's split is a pure sha256 function of salt and id (two runs agree, no case in both), judged through the same labeled rows with per-split counts in a holdout-report-v1 artifact; the real-repo corpus protocol is implemented fail-closed (`benchmarks/accuracy/corpus-real.json`, accuracy-real-v1: upstream URL, exact 40-hex commit, labels written before the engine runs) and the manifest ships empty - a named-but-unvendored fixture is a recorded data gap, never a guessed pass; zero real repos are vendored yet, so real-world accuracy stays unproven | partial - batch 4 |
+| A19 | Supply-chain analysis | `slop_deps.py`, `slop_ecosystem.py`, `vulnerable-dependency`, plus `sem_sbom.py` + `sem_sbom_readers.py` (round-19, contracts corrected under the third greptile pass): an SPDX-2.3-shaped SBOM over the six supported manifests (PyPI requirements*/pyproject incl. PEP 621 optional-dependencies and PEP 735 dependency-groups and Poetry main/dev/groups, npm package.json with all four dependency tables, go.mod, Cargo.toml incl. dev/build/target tables with `package =` aliases resolved, csproj parsed by element and attribute names, Gemfile) with declared version specs verbatim (ranges keep their operators; a purl carries a version only when the spec pins exactly one), purls by ecosystem identity (npm scopes keep the percent-encoded at-sign, Go module paths and NuGet ids keep declared casing), dependency licenses at NOASSERTION with each manifest's own license reported separately as a project license (an MIT application never licenses its dependencies), digest-named deterministic documents (identical trees render byte-identical), and a fail-closed allow/deny/deny_unknown license policy judged per package - an unparseable or wrong-shape manifest is a recorded data gap, never a silent skip and never a stopped scan; resolution stays with the lock files | shipped |
+| A20 | Real-world accuracy benchmark | `accuracy_benchmark.py` + labeled fixtures; the holdout split shipped in round-19 (`sem_holdout.py`): a case's split is a pure sha256 function of salt and id (two runs agree, no case in both), judging is per fixture slug - the case the split manifest names is the case the counts name, each row's split label read from that same manifest (never a re-hash) - with per-case counts in a holdout-report-v1 artifact and labels validated against the live check registry before judging; the real-repo corpus protocol is implemented fail-closed (`benchmarks/accuracy/corpus-real.json`, accuracy-real-v1: upstream URL, exact 40-hex commit, labels written before the engine runs) and the manifest ships empty - a named-but-unvendored fixture is a recorded data gap, never a guessed pass; zero real repos are vendored yet, so real-world accuracy stays unproven | partial - batch 4 |
 
 ### B. Review platform (CodeRabbit): 6 shipped, 7 partial, 6 missing
 
@@ -870,7 +925,7 @@ A-rows; the C column has none left).
 | B25 | Repository code graph | IR v1 + `slop_symbol_graph.py` (first slice); graph persistence shipped in round-18: versioned JSON bundles (graph schema + IR version, both refused on mismatch), use counts and parse failures stored, def sites rebuilt from the files - the loaded graph accuses exactly what the built graph accused | shipped |
 | B26 | Linked-issue requirement validation | nothing | missing - batch 4 |
 | B27 | Repo coding guidelines / path instructions | `AGENTS.md` exists; no instruction engine | partial - batch 3 |
-| B28 | Persistent reviewer learnings | `sem_ci_learnings.py` (slice, round-18): versioned learnings-v1 store of failure-signature lessons (pattern, the remediation that fixed it, the review that taught it), fail-closed loading, deterministic deduplicated recording, `--learnings` integration in `sem_ci_diagnose.py` with `learned` confidence; the writer is held to the loader's own contracts (required-field rule before any write, rendered document re-parsed through the loader before disk, refusals leave the file byte-unchanged); the cross-review memory lifecycle stays open | partial |
+| B28 | Persistent reviewer learnings | `sem_ci_learnings.py` (slice, round-18): versioned learnings-v1 store of failure-signature lessons (pattern, the remediation that fixed it, the review that taught it), fail-closed loading, deterministic deduplicated recording, `--learnings` integration in `sem_ci_diagnose.py` with `learned` confidence; the writer is held to the loader's own contracts (required-field rule before any write, rendered document re-parsed through the loader before disk, refusals leave the file byte-unchanged); the store now carries its first real evidence - the twelve bug-class lessons the pr-24 review taught, each recorded through the validated write path (`.github/master-ci-learnings.json`) - and the cross-review memory lifecycle stays open | partial |
 | B29 | Custom pre-merge checks | `hook_gate.py` per-edit gate; no declarative custom-check config | partial - batch 3 |
 | B30 | Incremental review orchestration | CI re-runs only; no commit-aware review state | missing - batch 4 |
 | B31 | PR merge-risk assessment | `sem_merge_risk.py` (round-17): model v1, registry-driven severity, evidence rows, data gaps reported as incomplete | shipped |

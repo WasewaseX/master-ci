@@ -2442,15 +2442,20 @@ def test_quality_cpp_summary_names_every_project_outcome(master_ci_text: str):
 
 
 def test_push_branch_filters_are_real_lists():
-    """A mangled ``branches: ain]`` is a valid YAML scalar - and a silent hole.
+    """A mangled ``branches`` value that is still a valid YAML scalar is a silent hole.
 
-    v2.14.0 shipped the Master CI Selftest with ``branches: ain]`` (the
-    ``[main]`` list lost its opening bracket): the workflow parsed, every
-    gate stayed green, and pushes to main stopped triggering the
-    selftest because the filter named a branch that does not exist. The
-    contract: every ``on.push.branches`` / ``on.pull_request.branches``
-    filter is a YAML list of real branch names - a scalar filter is a
-    misconfiguration, not a branch.
+    A scalar such as ``ain]`` - a list whose opening bracket was eaten
+    by a rendering artifact - parses cleanly, every gate stays green,
+    and the trigger quietly stops matching any branch. This test is
+    preventive: the repository never shipped such a filter (the
+    mangling that drew attention to the shape was a display artifact
+    in a review, and the workflow files were byte-verified clean), and
+    the contract exists so one can never ship for real. The contract:
+    every ``on.push.branches`` / ``on.pull_request.branches`` filter is
+    a YAML list of real branch names - a scalar filter is a
+    misconfiguration, not a branch, and each entry is compared
+    unchanged, because stripping brackets before matching would bless
+    exactly the mangling this test exists to catch.
     """
     real_branches = {
         line.split()[-1]
@@ -2471,7 +2476,6 @@ def test_push_branch_filters_are_real_lists():
                 f"{path.name}: on.{event}.branches must be a YAML list of branch names"
             )
             for branch in branches:
-                stripped = branch.strip("[]")
-                assert stripped in real_branches, (
+                assert isinstance(branch, str) and branch in real_branches, (
                     f"{path.name}: on.{event}.branches names {branch!r}, which does not exist"
                 )
