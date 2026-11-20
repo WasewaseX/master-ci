@@ -24,6 +24,7 @@ from sem_pr_summary import (  # noqa: E402
     is_stale,
     main,
     parse_findings,
+    parse_findings_document,
     render_markdown,
 )
 
@@ -55,6 +56,36 @@ def test_blocking_and_advisory_split_comes_from_the_registry():
     )
     assert summary.blocking_count == 1  # chatbot-residue is registry-blocking
     assert summary.advisory_count == 1  # ai-prose is registry-advisory
+
+
+def test_reported_severity_decides_not_the_registry():
+    # a profile downgraded bare-except to advisory: the document says so
+    row = dict(_finding("bare-except", "a.py", 1), severity="advisory")
+    summary = build_summary([row], SHA, 1)
+    assert summary.blocking_count == 0
+    assert summary.advisory_count == 1
+    assert summary.blocking == []
+
+
+def test_reported_escalation_is_honored_too():
+    # an --enforce-bloat run reports its escalations as blocking severity
+    row = dict(_finding("bloat-long-file", "a.py", 1), severity="blocking")
+    summary = build_summary([row], SHA, 1)
+    assert summary.blocking_count == 1
+    assert summary.blocking[0]["check"] == "bloat-long-file"
+
+
+def test_rows_without_severity_fall_back_to_the_registry():
+    # older inputs carried no severity field; the registry still answers
+    summary = build_summary([_finding("bare-except", "a.py", 1)], SHA, 1)
+    assert summary.blocking_count == 1
+    assert summary.blocking[0]["check"] == "bare-except"
+
+
+def test_clean_scan_is_not_a_data_gap():
+    summary = build_summary([], SHA, 0, findings_available=True)
+    assert summary.findings_available is True
+    assert "no findings input" not in summary.data_gaps
 
 
 def test_dimensions_come_from_the_live_category_registry():
@@ -152,6 +183,21 @@ def test_parse_findings_accepts_bare_list_and_wrapped():
     assert parse_findings("{}") == []
 
 
+def test_parse_findings_document_distinguishes_clean_from_missing():
+    rows, available = parse_findings_document(json.dumps({"findings": []}))
+    assert rows == []
+    assert available is True  # a valid document with zero rows: clean scan
+    rows, available = parse_findings_document(json.dumps([]))
+    assert rows == []
+    assert available is True
+    rows, available = parse_findings_document("{}")
+    assert rows == []
+    assert available is False  # not a findings document: the gap is real
+    rows, available = parse_findings_document("")
+    assert rows == []
+    assert available is False  # no input at all
+
+
 # --- CLI ------------------------------------------------------------------------
 
 
@@ -163,6 +209,29 @@ def test_cli_renders_markdown_from_a_file(capsys, tmp_path):
     assert rc == 0
     assert SHA in out
     assert "bare-except" in out
+
+
+def test_cli_clean_scan_is_zero_counts_without_a_data_gap(capsys, tmp_path):
+    payload = tmp_path / "clean.json"
+    payload.write_text(json.dumps({"findings": []}), encoding="utf-8")
+    rc = main(["--findings", str(payload), "--head-sha", SHA])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "**0** blocking / **0** advisory" in out
+    assert "no findings input" not in out
+
+
+def test_cli_absent_input_stays_a_data_gap(capsys):
+    import io
+
+    sys.stdin = io.StringIO("")
+    try:
+        rc = main(["--findings", "-", "--head-sha", SHA])
+    finally:
+        sys.stdin = sys.__stdin__
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "no findings input" in out
 
 
 def test_cli_json_output_is_the_summary_record(capsys):

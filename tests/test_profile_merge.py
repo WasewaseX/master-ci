@@ -136,6 +136,32 @@ def test_merged_never_escalates_above_advisory_by_construction():
     assert merge_profiles([child, base]).severities["ai-vocab"] == "advisory"
 
 
+def test_merged_scope_patterns_get_the_loader_checks():
+    # a constructed spec cannot smuggle an uncompilable glob past the merge
+    forged = ProfileSpec(name="bad", scope_excludes={"*": ("[abc]",)})
+    with pytest.raises(ValueError, match="not a supported pattern"):
+        merge_profiles([forged])
+
+
+def test_merged_scope_pattern_rejects_a_negation():
+    forged = ProfileSpec(name="bad", scope_excludes={"*": ("!generated/**",)})
+    with pytest.raises(ValueError, match="include-only"):
+        merge_profiles([forged])
+
+
+def test_merged_scope_pattern_rejects_an_empty_glob():
+    forged = ProfileSpec(name="bad", scope_excludes={"*": ("   ",)})
+    with pytest.raises(ValueError, match="non-empty"):
+        merge_profiles([forged])
+
+
+def test_merged_scope_pattern_error_names_the_key():
+    forged = ProfileSpec(name="bad", scope_excludes={"*": ("[abc]",)})
+    with pytest.raises(ValueError, match=r"merged profile: scope '\*'") as exc:
+        merge_profiles([forged])
+    assert "[abc]" in str(exc.value)
+
+
 # --- fail-closed chain loading -------------------------------------------------
 
 

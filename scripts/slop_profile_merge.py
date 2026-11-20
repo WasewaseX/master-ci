@@ -36,7 +36,7 @@ import json
 import sys
 from pathlib import Path
 from types import MappingProxyType
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from slop_categories import CHECK_CATEGORIES
 from slop_profiles import (
@@ -45,6 +45,7 @@ from slop_profiles import (
     VALID_SEVERITIES,
     ProfileSpec,
     load_profile,
+    validate_scope_glob,
 )
 
 
@@ -80,9 +81,9 @@ def merge_profiles(chain: list[ProfileSpec]) -> ProfileSpec:
     return merged
 
 
-def _validate_merged(profile: ProfileSpec) -> None:
-    """Re-run the registries' invariants over a constructed spec."""
-    for check, severity in profile.severities.items():
+def _validate_severities(severities: Mapping[str, str]) -> None:
+    """Severity keys are registry ids; values stay in the legal set."""
+    for check, severity in severities.items():
         if check not in CHECK_CATEGORIES:
             raise ValueError(f"merged profile: unknown check id '{check}' in severities")
         if severity not in VALID_SEVERITIES:
@@ -90,10 +91,20 @@ def _validate_merged(profile: ProfileSpec) -> None:
                 f"merged profile: illegal severity {severity!r} for '{check}'"
                 f" (valid: {sorted(VALID_SEVERITIES)})"
             )
-    for key in profile.scope_excludes:
+
+
+def _validate_scopes(scope_excludes: Mapping[str, tuple[str, ...]]) -> None:
+    """Scope keys are registry ids or '*'; every glob passes the loader's checks."""
+    for key, patterns in scope_excludes.items():
         if key != "*" and key not in CHECK_CATEGORIES:
             raise ValueError(f"merged profile: unknown scope key '{key}'")
-    for check, value in profile.budgets.items():
+        for pattern in patterns:
+            validate_scope_glob(pattern, f"merged profile: scope '{key}'")
+
+
+def _validate_budgets(budgets: Mapping[str, float]) -> None:
+    """Budget keys are budget-capable ids; values are positive numbers."""
+    for check, value in budgets.items():
         if check not in SHIPPED_BUDGETS:
             raise ValueError(
                 f"merged profile: unknown budget id '{check}'"
@@ -101,6 +112,13 @@ def _validate_merged(profile: ProfileSpec) -> None:
             )
         if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
             raise ValueError(f"merged profile: budget '{check}' must be positive, got {value!r}")
+
+
+def _validate_merged(profile: ProfileSpec) -> None:
+    """Re-run the registries' invariants over a constructed spec."""
+    _validate_severities(profile.severities)
+    _validate_scopes(profile.scope_excludes)
+    _validate_budgets(profile.budgets)
 
 
 def load_profile_chain(paths: list[Path]) -> ProfileSpec:

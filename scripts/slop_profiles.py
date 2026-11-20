@@ -307,22 +307,31 @@ def _scopes(path: Path, raw: object) -> dict[str, tuple[str, ...]]:
     return out
 
 
-def _scope_pattern(path: Path, key: str, pattern: object) -> str:
-    """One validated scope glob: non-empty, include-only, compilable."""
+def validate_scope_glob(pattern: object, context: str) -> str:
+    """One validated scope glob: non-empty, include-only, compilable.
+
+    Shared by the document loader and the chain merge so a constructed
+    spec cannot dodge the pattern rules the loader enforces. ``context``
+    names the profile and scope key in the error message; the raised
+    ValueError is the configuration-error class either way.
+    """
     if not isinstance(pattern, str) or not pattern.strip():
-        raise ValueError(f"profile {path}: scope '{key}' globs must be non-empty strings")
+        raise ValueError(f"{context} globs must be non-empty strings")
     if pattern.startswith("!"):
         raise ValueError(
-            f"profile {path}: scope '{key}' glob '{pattern}': scopes are include-only, "
+            f"{context} glob '{pattern}': scopes are include-only, "
             "a negation would silently re-include what another glob silenced"
         )
     try:
         _compiled(pattern)
     except UnsupportedPatternError as exc:
-        raise ValueError(
-            f"profile {path}: scope '{key}' glob '{pattern}' is not a supported pattern: {exc}"
-        ) from exc
+        raise ValueError(f"{context} glob '{pattern}' is not a supported pattern: {exc}") from exc
     return pattern
+
+
+def _scope_pattern(path: Path, key: str, pattern: object) -> str:
+    """One validated scope glob in a loaded profile document."""
+    return validate_scope_glob(pattern, f"profile {path}: scope '{key}'")
 
 
 def _budgets(path: Path, raw: object) -> dict[str, float]:

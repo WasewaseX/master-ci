@@ -68,6 +68,46 @@ def test_log_unmatched_lines_are_silence_not_guesses():
     assert diagnose_log("Step succeeded in 4.2s\nUploading artifact").failures == []
 
 
+@pytest.mark.parametrize(
+    "line",
+    [
+        "fatal: unable to access 'https://github.com/owner/repo.git/'",
+        "Error: Process completed with exit code 1",
+        "##[error]Node process exited with a failure",
+        "Process completed with exit code 127",
+    ],
+)
+def test_clear_failures_without_signature_stay_as_unclassified_evidence(line):
+    diagnosis = diagnose_log(line)
+    assert diagnosis.kinds == ["unclassified"]
+    assert diagnosis.unclassified == 1
+    assert line in diagnosis.failures[0].evidence[0]
+
+
+def test_unknown_failures_group_into_one_unclassified_cause():
+    text = "fatal: unable to access repository\nError: Process completed with exit code 1"
+    diagnosis = diagnose_log(text)
+    assert diagnosis.unclassified == 2
+    assert len(diagnosis.failures) == 1
+    assert len(diagnosis.failures[0].evidence) == 2
+
+
+def test_zero_exit_code_is_progress_not_failure():
+    assert diagnose_log("Process completed with exit code 0").failures == []
+
+
+def test_progress_lines_stay_silent_next_to_generic_failures():
+    text = "\n".join(
+        [
+            "Step succeeded in 4.2s",
+            "Uploading artifact",
+            "Cache restored from key",
+            "Process completed with exit code 0",
+        ]
+    )
+    assert diagnose_log(text).failures == []
+
+
 def test_log_remediation_is_attached():
     diagnosis = diagnose_log("would reformat scripts/a.py")
     assert "ruff format" in diagnosis.failures[0].remediation
@@ -87,6 +127,33 @@ def test_log_multiple_failures_deduplicate_into_one_cause():
     assert len(diagnosis.failures[0].evidence) == 2
 
 
+# --- Actions log wrappers -----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "2026-11-20T10:00:00Z FAILED tests/test_x.py::test_one - AssertionError",
+        "2026-11-20T10:00:00.0000000Z FAILED tests/test_x.py::test_one - AssertionError",
+        "build\tLint YAML\t2026-11-20T10:00:00.0000000Z FAILED tests/test_x.py::test_one",
+    ],
+)
+def test_actions_log_prefixes_no_longer_hide_pytest_failures(line):
+    assert diagnose_log(line).kinds == ["pytest"]
+
+
+def test_prefixed_clear_failure_is_still_preserved_as_unclassified():
+    line = "2026-11-20T10:00:00Z fatal: unable to access repository"
+    diagnosis = diagnose_log(line)
+    assert diagnosis.kinds == ["unclassified"]
+    assert "fatal: unable to access repository" in diagnosis.failures[0].evidence[0]
+
+
+def test_tab_without_timestamp_does_not_swallow_the_message():
+    # a tab inside real output must not eat the rest of the line
+    assert diagnose_log("make\techo FAILED but not a test").failures == []
+
+
 # --- jobs-json mode ----------------------------------------------------------------
 
 
@@ -101,6 +168,15 @@ def test_failed_step_matched_by_name_is_exact():
     diagnosis = diagnose_jobs(payload)
     assert diagnosis.kinds == ["ruff-format"]
     assert diagnosis.failures[0].confidence == "exact"
+
+
+def test_lint_yaml_step_name_is_classified_by_the_workflow_spelling():
+    # the repository's own step is named "Lint YAML" (master-ci.yml)
+    payload = json.dumps({"jobs": [_job("quality", "failure", [_step("Lint YAML", "failure")])]})
+    diagnosis = diagnose_jobs(payload)
+    assert diagnosis.kinds == ["yamllint"]
+    assert diagnosis.failures[0].confidence == "exact"
+    assert "yamllint ." in diagnosis.failures[0].remediation
 
 
 def test_successful_and_skipped_steps_are_never_failures():
@@ -218,3 +294,54 @@ def test_cli_missing_input_file_exits_two(tmp_path, capsys):
     rc = main(["--log", str(tmp_path / "absent.log")])
     assert rc == 2
     assert "not found" in capsys.readouterr().err
+
+
+def test_cli_learnings_store_classifies_with_learned_confidence(tmp_path, capsys):
+    store = tmp_path / "learnings.json"
+    store.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "learnings": [
+                    {
+                        "kind": "epic-flake",
+                        "pattern": r"epic .* failed to start",
+                        "remediation": "restart the epic runner, then rerun",
+                        "source": "greptile review, round-18",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    log = tmp_path / "job.log"
+    log.write_text("epic deploy failed to start this morning\n", encoding="utf-8")
+    rc = main(["--log", str(log), "--learnings", str(store)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "epic-flake" in out
+    assert "learned" in out
+    assert "restart the epic runner" in out
+
+
+def test_cli_unlearned_failure_stays_unclassified(tmp_path, capsys):
+    store = tmp_path / "empty.json"
+    store.write_text(json.dumps({"version": 1, "learnings": []}), encoding="utf-8")
+    log = tmp_path / "job.log"
+    log.write_text("fatal: unable to access repository\n", encoding="utf-8")
+    rc = main(["--log", str(log), "--learnings", str(store)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "unclassified" in out
+    assert "fatal: unable to access repository" in out
+
+
+def test_cli_bad_learnings_store_refuses(tmp_path, capsys):
+    store = tmp_path / "bad.json"
+    store.write_text('{"version": 99, "learnings": []}', encoding="utf-8")
+    log = tmp_path / "job.log"
+    log.write_text("anything\n", encoding="utf-8")
+    rc = main(["--log", str(log), "--learnings", str(store)])
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "refused" in captured.err
