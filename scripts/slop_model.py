@@ -237,6 +237,10 @@ ADVISORY_ONLY_CHECKS = frozenset(
         # - both advisory like every other budget.
         "long-but-cohesive",
         "redundant-test",
+        # round-19 (roadmap A9): the similarity-scored near-duplicate -
+        # a measurement with the score as evidence, advisory like the
+        # other budgets; the exact end stays with the duplication checks.
+        "near-duplicate-clone",
     }
 )
 

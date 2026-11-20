@@ -1,0 +1,5 @@
+{
+  "schema": "accuracy-real-v1",
+  "note": "Real public repositories enter per the accuracy README's widening protocol: vendored read-only under benchmarks/accuracy/corpus-real/, one entry per repo with its upstream URL and the exact 40-hex commit it was vendored at, per-check labels written before the engine runs. Empty until a widening PR vendors the first repo - a named fixture without its vendored tree is a data gap, never a judged row.",
+  "repos": []
+}

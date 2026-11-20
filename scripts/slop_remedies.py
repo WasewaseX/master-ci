@@ -70,6 +70,10 @@ REMEDIES = {
     "redundant-test": (
         "Delete the twin or vary what it asserts; identical bodies prove one behavior N times"
     ),
+    # round-19 (roadmap A9): the similarity-scored near-duplicate.
+    "near-duplicate-clone": (
+        "Extract the shared block into one module and import it; keep the variation explicit"
+    ),
     "bare-except": "Catch the specific exception and handle or re-raise it",
     "broad-except": (
         "Catch the specific exception type, re-raise, or declare the broad catch with # noqa"

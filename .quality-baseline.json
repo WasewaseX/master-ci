@@ -5,12 +5,16 @@
         "analysis-coverage": 1,
         "high-cognitive": 1,
         "hotspot-risk": 1,
+        "near-duplicate-clone": 3,
         "prose-block": 7
       },
       "identities": [
         ".|analysis-coverage|.|5a43116e3000c9e9af610eebe9faaa7f71bc0a9dabb4bc984dc4ca033e35236c",
         ".|high-cognitive|scripts/flaky_aggregate.py|aaa4612799b8f3e2bd98d83f2f6185d97459f922e6785be38fd563bb5d53c028",
         ".|hotspot-risk|scripts/mcp_tools.py|84222450611597fa1459f61fbb0ec6788741c99ae46529db22966f73102ddeca",
+        ".|near-duplicate-clone|scripts/accuracy_benchmark.py|33e15d1e9bbf3a602cc660f2c85ed93aa442d81e02feeb1b137beaad3657e5d7",
+        ".|near-duplicate-clone|scripts/fixture_bench_round8.py|2ccf7247751eceb09579ecdfca55af2c8e046619a7c1563598caa5b720dd0d24",
+        ".|near-duplicate-clone|tests/test_new_code_gate.py|efd442236eb293a79a1ca0530e7cfbcfe5b596334f389d6c4b854a9237bb3e26",
         ".|prose-block|scripts/ai_slop_detector.py|f782e05121ed2a59bdd0d1a2c23c6dacf50e489f9ba3a4336b1ed32ed38c0768",
         ".|prose-block|scripts/slop_corpus.py|5d94d14ca3deadb3994186a98da8ff5c683d44cfc5da97c64f71bd01db20441e",
         ".|prose-block|scripts/slop_imports.py|7ec440d238e6e778a5e7771b3a34b568c845b4abbf3860e8454d91c7d38bdad4",

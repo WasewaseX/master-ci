@@ -2436,3 +2436,42 @@ def test_quality_cpp_summary_names_every_project_outcome(master_ci_text: str):
         "always() && steps.detect.outputs.tool"
         in _quality_cpp_step_ifs(master_ci_text)["Report per-project outcomes"]
     ), "a mid-loop crash must still render the rows already written"
+
+
+# --- round-19: the push-branch filters are lists, not scalars ----------------
+
+
+def test_push_branch_filters_are_real_lists():
+    """A mangled ``branches: ain]`` is a valid YAML scalar - and a silent hole.
+
+    v2.14.0 shipped the Master CI Selftest with ``branches: ain]`` (the
+    ``[main]`` list lost its opening bracket): the workflow parsed, every
+    gate stayed green, and pushes to main stopped triggering the
+    selftest because the filter named a branch that does not exist. The
+    contract: every ``on.push.branches`` / ``on.pull_request.branches``
+    filter is a YAML list of real branch names - a scalar filter is a
+    misconfiguration, not a branch.
+    """
+    real_branches = {
+        line.split()[-1]
+        for line in subprocess.run(
+            ["git", "branch", "--list", "--all"], capture_output=True, text=True, check=True
+        ).stdout.splitlines()
+    }
+    real_branches.update({"main", "master"})
+    for path in WORKFLOWS:
+        doc = load(path)
+        on = doc.get(True) or doc.get("on") or {}
+        for event in ("push", "pull_request"):
+            branch_config = on.get(event) if isinstance(on, dict) else None
+            if not branch_config or "branches" not in branch_config:
+                continue
+            branches = branch_config["branches"]
+            assert isinstance(branches, list) and branches, (
+                f"{path.name}: on.{event}.branches must be a YAML list of branch names"
+            )
+            for branch in branches:
+                stripped = branch.strip("[]")
+                assert stripped in real_branches, (
+                    f"{path.name}: on.{event}.branches names {branch!r}, which does not exist"
+                )

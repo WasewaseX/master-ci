@@ -1,0 +1,7 @@
+{
+  "engine": "slop_similarity",
+  "expected": "clean",
+  "reason": "the two exporters share only their signatures - the bodies differ",
+  "rule": "near-duplicate-clone",
+  "slug": "near-duplicate-clone-clean"
+}

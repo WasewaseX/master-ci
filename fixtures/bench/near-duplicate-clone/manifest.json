@@ -1,0 +1,7 @@
+{
+  "engine": "slop_similarity",
+  "expected": "detected",
+  "reason": "two renderers share the same block with two lines of variation",
+  "rule": "near-duplicate-clone",
+  "slug": "near-duplicate-clone"
+}

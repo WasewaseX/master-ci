@@ -75,6 +75,7 @@ CHECK_CATEGORIES: dict[str, str] = {
     "unreachable-code": "code-health",
     "constant-condition": "code-health",
     "boilerplate-duplication": "code-health",
+    "near-duplicate-clone": "code-health",
     "duplicate-import": "code-health",
     "phantom-import": "code-health",
     "bloat-long-file": "code-health",

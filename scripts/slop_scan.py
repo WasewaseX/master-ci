@@ -79,6 +79,7 @@ from slop_reliability import (
 )
 from slop_residue import check_residue
 from slop_security import check_security_column
+from slop_similarity import check_near_duplicates
 from slop_suppress import apply_inline_suppression, collect_suppression
 from slop_symbol_graph import check_semantic_dead_symbols
 from slop_test_redundancy import check_test_redundancy
@@ -291,6 +292,8 @@ def _repo_level_findings(
     """
     findings: list[Finding] = []
     findings.extend(scan_duplicates(files, root, globs))
+    # round-19 (A9): the similarity-scored end of the clone spectrum.
+    findings.extend(check_near_duplicates(root, files, globs))
     findings.extend(check_duplicate_type_decls(root, files, globs))
     findings.extend(check_unused_declarations(root, files, globs))
     # nextgen vertical slice: the parse-tree deadness oracle joins the
