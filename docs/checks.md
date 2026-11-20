@@ -1860,3 +1860,26 @@ commit with regression tests.
   `sem_ci_learnings.py`, a versioned learnings store with fail-closed
   loading and deterministic recording, applied by the diagnoser with
   `learned` confidence via `--learnings`.
+- **The greptile review round two (round-18):** a second Greptile pass
+  found three contract bugs in the new learnings memory and diagnoser,
+  each fixed and test-pinned, and the class of bug is now a named
+  contract. `sem_ci_learnings.py` holds its writer to its loader's own
+  contracts before disk is touched: the loader's required-field rule
+  runs first (a lesson with no `--source`, or no `--pattern` - which
+  compiles empty and would otherwise slip through - is refused with
+  exit 2), and the rendered store is re-parsed through the loader's
+  parsing path before the bytes land, so a record the loader would
+  reject can never reach the file and poison every later load;
+  refusals leave the existing store byte-unchanged.
+  `sem_ci_diagnose.py` obeys merge parity: job-report merges group on
+  kind + confidence + remediation, so two lessons of one kind that
+  teach different fixes stay separate causes instead of the first fix
+  swallowing the second, and an unclassified cause carries its
+  evidence count with it - two failed jobs with one `fatal:` line each
+  now report `unclassified: 2`, exactly what log mode reports for the
+  same lines, instead of one. The invariant itself is test-pinned as a
+  parity test: the same unknown lines through jobs JSON and through
+  the raw log must produce the same count and the same kinds. The
+  signature table itself moved to `sem_ci_signatures.py` (pure matchers
+  and remediations), keeping `sem_ci_diagnose.py` under the 400-line
+  hygiene ceiling by the same split the scan pipeline made before it.

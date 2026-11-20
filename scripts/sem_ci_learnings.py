@@ -14,6 +14,13 @@ The contracts, all test-pinned:
 an empty remediation or an uncompilable pattern raises before any
 diagnosis runs - a memory that cannot be trusted must refuse loudly,
 never silently classify with half a lesson.
+- The writer is held to the loader's own contracts before disk is
+touched. The loader's required-field rule runs first - a lesson with
+an empty source, or an empty pattern (which compiles and would
+otherwise slip through), is refused - and the rendered document is
+parsed back through the loader's parsing path, so the store only ever
+grows by bytes the loader accepts. Any refusal leaves the existing
+file byte-unchanged.
 - Deterministic recording. Lessons are deduplicated on (kind, pattern),
 a re-recorded lesson updates its remediation and source in place, the
 list is sorted by kind then pattern, and identical inputs produce
@@ -42,6 +49,28 @@ from typing import Sequence
 
 LEARNINGS_SCHEMA_VERSION = 1
 
+_REQUIRED_FIELDS = ("kind", "pattern", "remediation", "source")
+
+
+def _missing_fields(kind: object, pattern: object, remediation: object, source: object) -> str:
+    """The loader's required-field rule, shared by the loader and the writer.
+
+    The writer runs the same rule before touching the store, so a
+    lesson the loader would refuse - an empty source, or an empty
+    pattern, which compiles and would otherwise slip through - never
+    reaches disk and never breaks the store it lands in.
+    """
+    return ", ".join(
+        name
+        for name, value in (
+            ("kind", kind),
+            ("pattern", pattern),
+            ("remediation", remediation),
+            ("source", source),
+        )
+        if not value
+    )
+
 
 @dc.dataclass(frozen=True)
 class Learning:
@@ -62,11 +91,9 @@ def _learning_from_row(row: object, path: Path) -> Learning:
     """Validate one store row and compile its pattern (fail-closed)."""
     if not isinstance(row, dict):
         raise ValueError(f"learnings {path}: each entry must be an object")
-    missing = [
-        field for field in ("kind", "pattern", "remediation", "source") if not row.get(field)
-    ]
+    missing = _missing_fields(*(row.get(field) for field in _REQUIRED_FIELDS))
     if missing:
-        raise ValueError(f"learnings {path}: entry missing {', '.join(missing)}")
+        raise ValueError(f"learnings {path}: entry missing {missing}")
     raw_pattern = str(row["pattern"])
     try:
         compiled = re.compile(raw_pattern)
@@ -83,15 +110,27 @@ def _learning_from_row(row: object, path: Path) -> Learning:
     )
 
 
-def load_learnings(path: Path) -> tuple[Learning, ...]:
-    """Load the store fail-closed: wrong schema or bad lesson refuses."""
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
+def _parse_store(text: str, origin: Path) -> tuple[Learning, ...]:
+    """The loader's parsing path, shared by reads and by writes.
+
+    ``record_learning`` re-parses its rendered document through this
+    same path before writing, so the writer cannot emit a store the
+    loader would refuse - the contract that keeps one bad record from
+    poisoning every later load and diagnosis.
+    """
+    data = json.loads(text)
     if not isinstance(data, dict) or data.get("version") != LEARNINGS_SCHEMA_VERSION:
-        raise ValueError(f"learnings {path}: expected version {LEARNINGS_SCHEMA_VERSION}")
+        raise ValueError(f"learnings {origin}: expected version {LEARNINGS_SCHEMA_VERSION}")
     rows = data.get("learnings")
     if not isinstance(rows, list):
-        raise ValueError(f"learnings {path}: 'learnings' must be a list")
-    return tuple(_learning_from_row(row, Path(path)) for row in rows)
+        raise ValueError(f"learnings {origin}: 'learnings' must be a list")
+    return tuple(_learning_from_row(row, origin) for row in rows)
+
+
+def load_learnings(path: Path) -> tuple[Learning, ...]:
+    """Load the store fail-closed: wrong schema or bad lesson refuses."""
+    origin = Path(path)
+    return _parse_store(origin.read_text(encoding="utf-8"), origin)
 
 
 def _store_document(learnings: Sequence[Learning]) -> dict:
@@ -114,11 +153,22 @@ def _store_document(learnings: Sequence[Learning]) -> dict:
 def record_learning(path: Path, kind: str, pattern: str, remediation: str, source: str) -> str:
     """One lesson in, the whole store rewritten deterministically.
 
+    The loader's required-field rule runs before anything is read or
+    written - a lesson missing its source, or its pattern (which
+    compiles empty and would otherwise slip through), is refused with
+    the existing file untouched. The rendered document is then parsed
+    back through the loader's own parsing path; only a store the
+    loader accepts reaches disk, so the writer can never poison the
+    memory it grows.
+
     Duplicate (kind, pattern) updates the remediation and source in
     place - the newer lesson wins, the pattern does not grow twice.
     Returns the byte-stable rendered document; identical content always
     renders to identical bytes.
     """
+    missing = _missing_fields(kind, pattern, remediation, source)
+    if missing:
+        raise ValueError(f"lesson missing {missing}")
     try:
         compiled = re.compile(pattern)
     except re.error as exc:
@@ -137,6 +187,7 @@ def record_learning(path: Path, kind: str, pattern: str, remediation: str, sourc
     }
     kept[(learning.kind, learning.pattern)] = learning
     rendered = json.dumps(_store_document(list(kept.values())), indent=1)
+    _parse_store(rendered, store_path)  # the writer must eat its own output
     store_path.write_text(rendered + "\n", encoding="utf-8")
     return rendered
 

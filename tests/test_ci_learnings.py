@@ -121,6 +121,100 @@ def test_recording_an_uncompilable_lesson_refuses(tmp_path):
     assert not store.exists()
 
 
+# --- the writer is held to the loader's contracts (greptile round 2) -------------
+
+
+def test_recording_without_source_refuses_and_leaves_the_store_unchanged(tmp_path):
+    # a valid kind/pattern/remediation with no source must not write an
+    # empty source the loader rejects on the next load
+    store = tmp_path / "s.json"
+    record_learning(store, "epic-flake", "epic .* failed", "rerun", "review")
+    before = store.read_text(encoding="utf-8")
+    with pytest.raises(ValueError, match="missing source"):
+        record_learning(store, "other-flake", "other .* failed", "rerun", "")
+    assert store.read_text(encoding="utf-8") == before
+
+
+def test_recording_without_pattern_refuses_and_leaves_the_store_unchanged(tmp_path):
+    # the trap: an empty pattern compiles, so the compile check alone
+    # never caught it - the loader's required-field rule runs first now
+    store = tmp_path / "s.json"
+    record_learning(store, "epic-flake", "epic .* failed", "rerun", "review")
+    before = store.read_text(encoding="utf-8")
+    with pytest.raises(ValueError, match="missing pattern"):
+        record_learning(store, "other-flake", "", "rerun", "review")
+    assert store.read_text(encoding="utf-8") == before
+
+
+def test_recording_without_kind_or_remediation_refuses(tmp_path):
+    store = tmp_path / "s.json"
+    record_learning(store, "epic-flake", "epic .* failed", "rerun", "review")
+    before = store.read_text(encoding="utf-8")
+    with pytest.raises(ValueError, match="missing kind"):
+        record_learning(store, "", "epic .* failed", "rerun", "review")
+    with pytest.raises(ValueError, match="missing remediation"):
+        record_learning(store, "epic-flake", "epic .* failed", "", "review")
+    assert store.read_text(encoding="utf-8") == before
+
+
+def test_every_written_store_loads_back(tmp_path):
+    # the writer must eat its own output: each record re-parses the
+    # rendered document through the loader before the bytes land
+    store = tmp_path / "s.json"
+    record_learning(store, "zz-flake", "z .* failed", "fix z", "r1")
+    record_learning(store, "aa-flake", "a .* failed", "fix a", "r2")
+    lessons = load_learnings(store)
+    assert [lesson.kind for lesson in lessons] == ["aa-flake", "zz-flake"]
+
+
+def test_cli_record_without_source_refuses_and_keeps_the_store(tmp_path, capsys):
+    store = tmp_path / "s.json"
+    record_learning(store, "epic-flake", "epic .* failed", "rerun", "review")
+    before = store.read_text(encoding="utf-8")
+    rc = main(
+        [
+            "--store",
+            str(store),
+            "--record",
+            "--kind",
+            "epic-flake",
+            "--pattern",
+            "epic .* failed",
+            "--remediation",
+            "rerun",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "refused" in captured.err
+    assert "source" in captured.err
+    assert store.read_text(encoding="utf-8") == before
+
+
+def test_cli_record_without_pattern_refuses_and_keeps_the_store(tmp_path, capsys):
+    store = tmp_path / "s.json"
+    record_learning(store, "epic-flake", "epic .* failed", "rerun", "review")
+    before = store.read_text(encoding="utf-8")
+    rc = main(
+        [
+            "--store",
+            str(store),
+            "--record",
+            "--kind",
+            "epic-flake",
+            "--remediation",
+            "rerun",
+            "--source",
+            "review",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "refused" in captured.err
+    assert "pattern" in captured.err
+    assert store.read_text(encoding="utf-8") == before
+
+
 def test_empty_store_is_valid(tmp_path):
     assert load_learnings(_store(tmp_path / "s.json", [])) == ()
 
