@@ -22,13 +22,17 @@ log line matched, ``learned`` when a reviewer-learnings store matched,
 timestamp and ``gh run view --log``'s job/step tabs) are stripped
 before matching, because a signature matches the message, not the
 wrapper. A diagnosis is advisory - the gate stays the gate, this only
-reads what already happened.
+reads what already happened. Merging job reports obeys the same
+honesty: unknown lines are counted per line, not per job (a jobs
+report agrees with the log report on the same lines), and lessons
+that teach different fixes stay separate causes - a merge never
+drops a count or a fix.
 
 Signature table: ruff check, ruff format, mypy, pytest, yamllint,
 markdown-lint, the file-too-large hygiene ceiling, the quality ratchet
-and the pin-lag watchdog - each mapping to the exact remediation
-documented in docs/checks.md. The table grows with the gates; an
-unknown tool is not a wrong answer, it is an honest one.
+and the pin-lag watchdog - the table lives in sem_ci_signatures.py and
+grows with the gates; an unknown tool is not a wrong answer, it is an
+honest one.
 """
 
 from __future__ import annotations
@@ -42,24 +46,18 @@ from pathlib import Path
 from typing import Sequence
 
 from sem_ci_learnings import Learning, load_learnings
+from sem_ci_signatures import (
+    TOOL_NAME_KINDS,
+    classify_step,
+    classify_text,
+    looks_like_failure,
+    remediation as _remediation,
+    strip_actions_prefix as _strip_actions_prefix,
+)
 
 _FAILED_CONCLUSIONS = frozenset({"failure", "timed_out"})
 _NEUTRAL_CONCLUSIONS = frozenset({"success", "skipped", "neutral", "cancelled"})
 
-# Lines that read as a failure even though no signature names them:
-# preserved as unclassified evidence, while progress lines stay silence.
-_GENERIC_FAILURES: tuple[re.Pattern[str], ...] = (
-    re.compile(r"##\[error\]"),
-    re.compile(r"\bfatal:\s"),
-    re.compile(r"^Error:\s"),
-    re.compile(r"Process completed with exit code (?!0\b)\d+"),
-)
-
-# The runner timestamp prefix on downloaded Actions log lines.
-_RUNNER_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\s+")
-
-# Linter kinds whose tool-name lines are not evidence by themselves.
-_TOOL_NAME_KINDS = frozenset({"markdown-lint", "yamllint"})
 _FAIL_WORD = re.compile(r"error|failed|warn", re.IGNORECASE)
 
 
@@ -68,7 +66,7 @@ class Cause:
     """One classified failure: kind, how it was matched, the fix."""
 
     kind: str
-    confidence: str  # 'exact' | 'textual' | 'unclassified'
+    confidence: str  # 'exact' | 'textual' | 'learned' | 'unclassified'
     evidence: list[str] = dc.field(default_factory=list)
     remediation: str = ""
 
@@ -85,121 +83,6 @@ class Diagnosis:
         return [c.kind for c in self.failures]
 
 
-_SIGNATURES: tuple[tuple[str, tuple[re.Pattern[str], ...], str], ...] = (
-    (
-        "ruff-format",
-        (re.compile(r"would reformat", re.IGNORECASE),),
-        "run `ruff format .` locally and commit the reformatted files",
-    ),
-    (
-        "ruff",
-        (
-            re.compile(r"(?:^|: ?)[EFW]\d{3} "),
-            re.compile(r"ruff check failed", re.IGNORECASE),
-        ),
-        "run `ruff check .` locally, fix the named violations",
-    ),
-    (
-        "mypy",
-        (
-            re.compile(
-                r"error: (?:Cannot find|Incompatible|Missing|Function|Argument)", re.IGNORECASE
-            ),
-            re.compile(r"Found \d+ error", re.IGNORECASE),
-        ),
-        "run `mypy --ignore-missing-imports .` locally and fix the named errors",
-    ),
-    (
-        "pytest",
-        (re.compile(r"^(?:FAILED|ERROR) tests/"),),
-        "run the failing test locally; a green suite never excuses a red one",
-    ),
-    (
-        "file-too-large",
-        (re.compile(r"file-too-large|file too large", re.IGNORECASE),),
-        "split the file below the 400-line ceiling or document the suppression in docs/checks.md",
-    ),
-    (
-        "quality-ratchet",
-        (re.compile(r"quality ratchet|baseline (?:drift|regression)", re.IGNORECASE),),
-        "fix the new findings or re-record the baseline deliberately; never lower the floor silently",
-    ),
-    (
-        "pin-lag",
-        (re.compile(r"pin lag|pin-lag", re.IGNORECASE),),
-        "see the pin-lag watchdog section in docs/checks.md",
-    ),
-    (
-        "yamllint",
-        (re.compile(r"yaml\s*lint|lint\s*yaml", re.IGNORECASE),),
-        "run `yamllint .` locally and fix the named lines",
-    ),
-    (
-        "markdown-lint",
-        (re.compile(r"markdown-lint|markdownlint", re.IGNORECASE),),
-        "run the markdown linter locally and fix the named files",
-    ),
-)
-
-_STEP_NAME_MATCHERS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("ruff-format", re.compile(r"ruff\s*format", re.IGNORECASE)),
-    ("ruff", re.compile(r"ruff\s*(?:check|lint)", re.IGNORECASE)),
-    ("mypy", re.compile(r"mypy", re.IGNORECASE)),
-    ("pytest", re.compile(r"pytest|python tests|unit tests", re.IGNORECASE)),
-    ("file-too-large", re.compile(r"file[- ]too[- ]large|hygiene", re.IGNORECASE)),
-    ("yamllint", re.compile(r"yaml\s*lint|lint\s*yaml", re.IGNORECASE)),
-    ("markdown-lint", re.compile(r"markdown", re.IGNORECASE)),
-    ("quality-ratchet", re.compile(r"ratchet", re.IGNORECASE)),
-    ("pin-lag", re.compile(r"pin\s*lag", re.IGNORECASE)),
-)
-
-
-def _classify_text(text: str) -> tuple[str, re.Pattern[str]] | None:
-    """The first signature whose pattern matches the text."""
-    for kind, patterns, _ in _SIGNATURES:
-        for pattern in patterns:
-            if pattern.search(text):
-                return kind, pattern
-    return None
-
-
-def _classify_step(step_name: str) -> str | None:
-    """The step name is authoritative: exact confidence on a match."""
-    for kind, matcher in _STEP_NAME_MATCHERS:
-        if matcher.search(step_name):
-            return kind
-    return None
-
-
-def _remediation(kind: str) -> str:
-    for entry_kind, _, remediation in _SIGNATURES:
-        if entry_kind == kind:
-            return remediation
-    return ""
-
-
-def _strip_actions_prefix(line: str) -> str:
-    """Strip the Actions log wrapper: gh's job/step tabs, then the timestamp.
-
-    Downloaded Actions logs read ``2026-11-20T10:00:00Z FAILED tests/...``
-    and ``gh run view --log`` prepends ``job<TAB>step<TAB>`` before the
-    timestamp; signatures match the message, not the wrapper. The tab
-    segment is taken only when its tail carries a runner timestamp, so a
-    tab inside real output cannot swallow the message.
-    """
-    core = line
-    if "\t" in core:
-        tail = core.rsplit("\t", 1)[1]
-        if _RUNNER_TIMESTAMP.match(tail):
-            core = tail
-    return _RUNNER_TIMESTAMP.sub("", core, count=1).strip()
-
-
-def _looks_like_failure(core: str) -> bool:
-    """True for lines that clearly failed without naming a known tool."""
-    return any(pattern.search(core) for pattern in _GENERIC_FAILURES)
-
-
 def _match_learning(learnings: tuple[Learning, ...], core: str) -> Learning | None:
     """The first learning whose compiled pattern matches the line."""
     for learning in learnings:
@@ -209,9 +92,19 @@ def _match_learning(learnings: tuple[Learning, ...], core: str) -> Learning | No
 
 
 def _append_learned(diagnosis: "Diagnosis", kind: str, remediation: str, evidence: str) -> None:
-    """Group a learned signature's hits, carrying the learning's remediation."""
+    """Group a learned signature's hits that share one fix.
+
+    Lessons of one kind may carry different remediations, so the merge
+    key includes the fix: two lessons that teach different remediations
+    stay separate causes, each with its own evidence, instead of the
+    first fix swallowing the second.
+    """
     for cause in diagnosis.failures:
-        if cause.kind == kind and cause.confidence == "learned":
+        if (
+            cause.kind == kind
+            and cause.confidence == "learned"
+            and cause.remediation == remediation
+        ):
             cause.evidence.append(evidence)
             return
     diagnosis.failures.append(
@@ -228,16 +121,16 @@ def _line_hit(core: str, learnings: tuple[Learning, ...]) -> tuple[str, str, str
     linter-tool-name line is only evidence when it also reads as a
     failure - the tool naming itself is not a failure of the tool.
     """
-    hit = _classify_text(core)
+    hit = classify_text(core)
     if hit is not None:
         kind = hit[0]
-        if kind in _TOOL_NAME_KINDS and not _FAIL_WORD.search(core):
+        if kind in TOOL_NAME_KINDS and not _FAIL_WORD.search(core):
             return None
         return kind, "textual", _remediation(kind)
     learning = _match_learning(learnings, core)
     if learning is not None:
         return learning.kind, "learned", learning.remediation
-    if _looks_like_failure(core):
+    if looks_like_failure(core):
         return "unclassified", "unclassified", ""
     return None
 
@@ -287,7 +180,7 @@ def _job_causes(job: dict, diagnosis: "Diagnosis", learnings: tuple[Learning, ..
     """Classify one failed job into diagnosis; True when anything matched."""
     matched_any = False
     for name in _failed_steps(job):
-        kind = _classify_step(name)
+        kind = classify_step(name)
         _append(diagnosis, kind, "exact" if kind else None, f"step '{name}'")
         matched_any = matched_any or kind is not None
     excerpt = str(job.get("log_excerpt", "") or "")
@@ -345,14 +238,27 @@ def _append(diagnosis: Diagnosis, kind: str | None, confidence: str | None, evid
 
 
 def _append_existing(diagnosis: Diagnosis, cause: Cause) -> None:
-    """Merge a sub-diagnosis's causes, keeping remediations attached."""
+    """Merge a sub-diagnosis's causes, keeping every fix and count.
+
+    Causes merge only when kind, confidence and remediation all agree,
+    so lessons that teach different fixes stay separate across jobs;
+    an unclassified cause brings its evidence count with it, so a
+    merged jobs report counts every unknown line exactly as log mode
+    does - two jobs with one ``fatal:`` line each report two, not one.
+    """
     for existing in diagnosis.failures:
-        if existing.kind == cause.kind and existing.confidence == cause.confidence:
+        if (
+            existing.kind == cause.kind
+            and existing.confidence == cause.confidence
+            and existing.remediation == cause.remediation
+        ):
             existing.evidence.extend(cause.evidence)
+            if existing.kind == "unclassified":
+                diagnosis.unclassified += len(cause.evidence)
             return
     diagnosis.failures.append(cause)
     if cause.kind == "unclassified":
-        diagnosis.unclassified += 1
+        diagnosis.unclassified += len(cause.evidence)
 
 
 def render_markdown(diagnosis: Diagnosis) -> str:

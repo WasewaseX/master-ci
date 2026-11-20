@@ -11,6 +11,7 @@ signature match is still reported - as unknown, loudly.
 """
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -26,6 +27,7 @@ from sem_ci_diagnose import (  # noqa: E402
     main,
     render_markdown,
 )
+from sem_ci_learnings import Learning  # noqa: E402
 
 
 def _job(name: str, conclusion: str, steps: list[dict], log_excerpt: str = "") -> dict:
@@ -246,6 +248,138 @@ def test_single_job_object_without_jobs_wrapper_is_accepted():
 def test_malformed_jobs_json_raises_jsondecodeerror():
     with pytest.raises(json.JSONDecodeError):
         diagnose_jobs("{ broken")
+
+
+# --- merge parity (greptile round 2) -------------------------------------------------
+
+
+def _lesson(kind: str, pattern: str, remediation: str) -> Learning:
+    return Learning(
+        kind=kind,
+        pattern=pattern,
+        remediation=remediation,
+        source="greptile review",
+        compiled=re.compile(pattern),
+    )
+
+
+def test_lessons_of_one_kind_with_different_fixes_stay_separate():
+    restart = _lesson("epic-flake", r"epic .* failed to start", "restart the runner, then rerun")
+    purge = _lesson("epic-flake", r"epic .* cache corrupt", "purge the shard cache")
+    text = "epic deploy failed to start\nepic shard cache corrupt"
+    diagnosis = diagnose_log(text, (restart, purge))
+    learned = [c for c in diagnosis.failures if c.confidence == "learned"]
+    assert len(learned) == 2
+    assert all(c.kind == "epic-flake" for c in learned)
+    assert {c.remediation for c in learned} == {
+        "restart the runner, then rerun",
+        "purge the shard cache",
+    }
+    assert len(learned[0].evidence) == 1 and len(learned[1].evidence) == 1
+
+
+def test_lessons_sharing_one_fix_still_group():
+    one = _lesson("epic-flake", r"epic a failed", "rerun")
+    two = _lesson("epic-flake", r"epic b failed", "rerun")
+    diagnosis = diagnose_log("epic a failed\nepic b failed", (one, two))
+    learned = [c for c in diagnosis.failures if c.confidence == "learned"]
+    assert len(learned) == 1
+    assert len(learned[0].evidence) == 2
+
+
+def test_jobs_merge_keeps_lessons_with_different_fixes_separate():
+    # two jobs, each excerpt hitting a different lesson of the same
+    # kind: merging the job reports keeps both fixes, not the first
+    restart = _lesson("epic-flake", r"epic .* failed to start", "restart the runner, then rerun")
+    purge = _lesson("epic-flake", r"epic .* cache corrupt", "purge the shard cache")
+    payload = json.dumps(
+        {
+            "jobs": [
+                _job("job-a", "failure", [], log_excerpt="epic deploy failed to start"),
+                _job("job-b", "failure", [], log_excerpt="epic shard cache corrupt"),
+            ]
+        }
+    )
+    diagnosis = diagnose_jobs(payload, (restart, purge))
+    learned = [c for c in diagnosis.failures if c.confidence == "learned"]
+    assert len(learned) == 2
+    assert {c.remediation for c in learned} == {
+        "restart the runner, then rerun",
+        "purge the shard cache",
+    }
+
+
+def test_jobs_mode_counts_every_unknown_line_not_one_per_job():
+    # greptile's example: two failed jobs with one fatal line each
+    # report two unknown lines, the same as log mode - not one
+    payload = json.dumps(
+        {
+            "jobs": [
+                _job("net-a", "failure", [], log_excerpt="fatal: unable to access repository"),
+                _job("net-b", "failure", [], log_excerpt="fatal: unable to access repository"),
+            ]
+        }
+    )
+    diagnosis = diagnose_jobs(payload)
+    assert diagnosis.unclassified == 2
+    assert len(diagnosis.failures) == 1
+    assert len(diagnosis.failures[0].evidence) == 2
+
+
+def test_unknown_counts_survive_mixed_jobs():
+    payload = json.dumps(
+        {
+            "jobs": [
+                _job(
+                    "net-a",
+                    "failure",
+                    [],
+                    log_excerpt="fatal: unable to access repository\nfatal: not a git repository",
+                ),
+                _job("net-b", "failure", [], log_excerpt="fatal: authentication failed"),
+            ]
+        }
+    )
+    assert diagnose_jobs(payload).unclassified == 3
+
+
+def test_jobs_and_log_modes_agree_on_unknown_counts():
+    # the merge-parity invariant: the same unknown lines through jobs
+    # JSON and through the raw log must produce the same count
+    lines = ["fatal: unable to access repository", "Error: Process completed with exit code 1"]
+    log_diagnosis = diagnose_log("\n".join(lines))
+    payload = json.dumps(
+        {
+            "jobs": [
+                _job("a", "failure", [], log_excerpt=lines[0]),
+                _job("b", "failure", [], log_excerpt=lines[1]),
+            ]
+        }
+    )
+    jobs_diagnosis = diagnose_jobs(payload)
+    assert log_diagnosis.unclassified == 2
+    assert jobs_diagnosis.unclassified == log_diagnosis.unclassified
+    assert jobs_diagnosis.kinds == log_diagnosis.kinds == ["unclassified"]
+
+
+def test_merging_unknown_into_classified_job_causes_keeps_the_count():
+    # an unmatched failed step plus unknown excerpt lines on one job:
+    # the step row and the line rows all count
+    payload = json.dumps(
+        {
+            "jobs": [
+                _job(
+                    "deploy",
+                    "failure",
+                    [_step("Deploy widgets", "failure")],
+                    log_excerpt="fatal: unable to access repository",
+                )
+            ]
+        }
+    )
+    diagnosis = diagnose_jobs(payload)
+    assert diagnosis.unclassified == 2
+    assert len(diagnosis.failures[0].evidence) == 2
 
 
 # --- render and CLI ------------------------------------------------------------------
