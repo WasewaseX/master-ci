@@ -13,7 +13,7 @@ extend-exclude = ["_ci", "fixtures"]
 # it that check reports nothing rather than guessing.
 scanner = [
     "pyyaml>=6.0",
-    "lizard>=1.17",
+    "lizard>=1.25.0",
     "tree-sitter>=0.21",
     "tree-sitter-language-pack>=0.6",
 ]
