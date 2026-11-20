@@ -769,16 +769,16 @@ was grep plus source reads over `scripts/`, `tests/`, `docs/` and
 The build order follows value and integration cost, fastest first:
 batch 1 is this round's slice plus the two validators the audit found
 missing; batches 2-4 stage the review-platform features, which are the
-one true gap (18 of 19 rows are missing or partial).
+one true gap (13 of 19 rows are missing or partial after round-18).
 
-### A. Quality engine (SonarQube, Qlty, Qodana): 11 shipped, 6 partial, 3 missing
+### A. Quality engine (SonarQube, Qlty, Qodana): 14 shipped, 5 partial, 1 missing
 
 | # | Feature | Master CI asset | Status |
 | --- | --- | --- | --- |
 | A1 | New-code definitions and leak periods | `new_code_gate.py`, `fetch_diff_base.sh`, `slop_ratchet.py` | shipped |
 | A2 | Separate new-code quality gates | new-code gate vs total-project verdicts in the report | shipped |
 | A3 | Multi-condition gate engine | `required-quality.yml` composite + `slop_profiles.py` budgets | shipped |
-| A4 | Inheritable quality profiles | no parent/child profile merge; only engine defaults | missing - batch 2 |
+| A4 | Inheritable quality profiles | `slop_profile_merge.py` (round-18): base -> project -> local chains, child-wins severities and budgets per key, scope-excludes union (a child never re-includes), every document loaded fail-closed and the merged output re-validated against the registries; scan-flag integration stays with the next slice | shipped |
 | A5 | Per-rule remediation estimates | `slop_remedies.py` registry + `slop_debt.py` effort model | shipped |
 | A6 | Independent quality dimensions | 8 dimensions in `slop_outputs.py` (architecture, code-health, reliability, maintainability, security, test-assurance, dependency-health, ai-integrity) | shipped |
 | A7 | Coverage ingestion, new-code coverage | `coverage_gate.py`, `coverage_parsers.py` | shipped |
@@ -796,15 +796,15 @@ one true gap (18 of 19 rows are missing or partial).
 | A19 | Supply-chain analysis | `slop_deps.py`, `slop_ecosystem.py`, `vulnerable-dependency`; SBOM and license policy are docs-only | partial - batch 2 |
 | A20 | Real-world accuracy benchmark | `accuracy_benchmark.py` + labeled fixtures; real-repo corpus and holdout split missing | partial - batch 2 |
 
-### B. Review platform (CodeRabbit): 3 shipped, 5 partial, 11 missing
+### B. Review platform (CodeRabbit): 6 shipped, 6 partial, 7 missing
 
 | # | Feature | Master CI asset | Status |
 | --- | --- | --- | --- |
-| B21 | Structured PR summaries | no PR summary builder | missing - batch 2 |
+| B21 | Structured PR summaries | `sem_pr_summary.py` (round-18): schema-v1 summaries stamped with the head SHA they describe (a missing SHA is refused at build), registry-dimension counts, blocking rows with locations, data gaps recorded as gaps; `--check-stale` answers whether the summary still matches a head, exit 1 when stale | shipped |
 | B22 | PR walkthrough with grouped files | MCP prompts only (`mcp_prompts.py`) | missing - batch 3 |
 | B23 | Change stack / logical cohorts | `sem_change_stack.py` (round-17): path-rule cohorts, foundation-first order, unclassified shown; real dependency ordering arrives with B25 slice 2 | shipped |
 | B24 | Mermaid change diagrams | nothing; must stay optional and gate-neutral | missing - batch 4 |
-| B25 | Repository code graph | IR v1 + `slop_symbol_graph.py` shipped as the first slice | partial - batch 2 |
+| B25 | Repository code graph | IR v1 + `slop_symbol_graph.py` (first slice); graph persistence shipped in round-18: versioned JSON bundles (graph schema + IR version, both refused on mismatch), use counts and parse failures stored, def sites rebuilt from the files - the loaded graph accuses exactly what the built graph accused | shipped |
 | B26 | Linked-issue requirement validation | nothing | missing - batch 4 |
 | B27 | Repo coding guidelines / path instructions | `AGENTS.md` exists; no instruction engine | partial - batch 3 |
 | B28 | Persistent reviewer learnings | nothing | missing - batch 4 |
@@ -813,7 +813,7 @@ one true gap (18 of 19 rows are missing or partial).
 | B31 | PR merge-risk assessment | `sem_merge_risk.py` (round-17): model v1, registry-driven severity, evidence rows, data gaps reported as incomplete | shipped |
 | B32 | PR triage queue | nothing | missing - batch 4 |
 | B33 | Reviewer and label recommendations | `label.yml` (actions/labeler v7); no reviewer derivation | partial - batch 3 |
-| B34 | CI failure diagnosis | nothing | missing - batch 2 |
+| B34 | CI failure diagnosis | `sem_ci_diagnose.py` (round-18): signature table over this repo's own gates (ruff, ruff-format, mypy, pytest, yamllint, markdown-lint, file-too-large, ratchet, pin-lag) driven from Actions jobs JSON or raw logs; step-name matches are exact, log matches textual, no match stays unclassified with evidence, cancelled/skipped work is claimed as nothing | shipped |
 | B35 | Finishing touches / verified fixes | `fix_engine.py`, `fix_tools.py` with tiers and dry-run | shipped |
 | B36 | Cross-repository context via MCP | `mcp_server.py`, `mcp_tools.py`; no allowlisted cross-repo context | partial - batch 4 |
 | B37 | Repo-wide security deep scans | `slop_security.py` + scheduled `audit.yml` | partial - batch 3 |
@@ -844,10 +844,14 @@ round-16 contracts are pinned by tests.
 - **Batch 1 (this round):** the IR vertical slice (A12/B25), C42 the
   matrix-expansion validator, B23 the change-stack cohorts, B31 the
   merge-risk scorer. Evidence in `docs/nextgen-architecture.md`.
-- **Batch 2 - the summary and profiles round:** A4 profile
-  inheritance with three-level merge precedence, B21 PR summaries tied
-  to head SHAs, B34 CI failure diagnosis from Actions logs, A19 SBOM +
-  license policy, A20 real-repo corpus, B25 graph persistence.
+- **Batch 2 - the summary and profiles round (round-18 landed four of
+  six):** A4 profile
+  inheritance with three-level merge precedence (`slop_profile_merge.py`),
+  B21 PR summaries tied to head SHAs (`sem_pr_summary.py`), B34 CI
+  failure diagnosis (`sem_ci_diagnose.py`), B25 graph persistence
+  (`save_graph`/`load_graph` bundles). Still open in this batch: A19
+  SBOM + license policy, A20 real-repo corpus - neither is claimed as
+  done.
 - **Batch 3 - the review-platform round:** B22 walkthroughs, B26
   linked-issue validation, B27 instruction engine, B29 custom checks,
   B33 reviewer derivation, B37 deep-scan schedule, A9 near-duplicate

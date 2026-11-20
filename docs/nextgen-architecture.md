@@ -90,6 +90,22 @@ regression test. This is the acceptance criterion "framework entry
 points are recognized" proven by the gate catching its own false
 positive.
 
+### Round-18: the graph bundle (persistence slice shipped)
+
+Slice 2's first half landed in round-18: `save_graph`/`load_graph` in
+`slop_symbol_graph.py` persist the whole graph as a JSON bundle that is
+versioned twice - `graph_schema` for the bundle layout and `ir_version`
+for the stored file records - and a reader refuses either mismatch, so
+a stale cache can never silently mix with new extractors' output.
+`use_counts` and `parse_failures` are stored explicitly (recomputing
+them would need the sources, and the point of persistence is to answer
+without them); `def_sites` are rebuilt from the stored files. The
+acceptance test pins the honesty property: the loaded graph accuses
+exactly the symbols the built graph accused, on the flawed fixture.
+What is still open from slice 2: content-hash keyed incremental refresh
+and module-path-qualified def sites - neither is implemented and both
+stay on the staged list.
+
 ## 3. The language capability matrix
 
 Built from `EXTRACTORS` in `slop_ir.py` plus the live check families.

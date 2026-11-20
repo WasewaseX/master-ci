@@ -1811,3 +1811,29 @@ commit with regression tests.
   recall 1.00 on every widened column, and twenty-four checks now carry
   promotion-ready evidence. The promotion flip stays a reviewed act per
   the corpus protocol; the accuracy report is the artifact it attaches.
+- **The batch-2 sem tools and the graph bundle (round-18):** four
+  batch-2 features landed with their contracts test-pinned in
+  `tests/test_profile_merge.py`, `tests/test_pr_summary.py`,
+  `tests/test_ci_diagnose.py` and the persistence block of
+  `tests/test_ir_symbol_graph.py`. `slop_profile_merge.py` (A4) merges
+  base -> project -> local profile chains with child-wins severities
+  and budgets per key and a scope-excludes union that can never
+  re-include a parent's silence; every document is loaded fail-closed
+  and the merged spec is re-validated against the same registries, so
+  inheritance adds no escalation path. `sem_pr_summary.py` (B21)
+  renders schema-v1 PR summaries stamped with the head SHA they
+  describe - a missing SHA is refused at build time, `--check-stale`
+  answers freshness with exit 1 when the summary no longer matches the
+  current head, missing inputs are recorded as data gaps and the
+  render is byte-deterministic. `sem_ci_diagnose.py` (B34) classifies
+  failed runs from Actions jobs JSON or raw logs against a signature
+  table this repository's own gates taught it; step-name matches are
+  `exact`, log matches `textual`, no match stays `unclassified` with
+  the evidence preserved, and cancelled or skipped jobs are claimed as
+  nothing. Graph persistence (B25 slice 2) adds `save_graph`/
+  `load_graph` bundles versioned twice - graph schema and IR version,
+  each refused on mismatch - with use counts and parse failures
+  stored and def sites rebuilt from the files, so the loaded graph
+  accuses exactly what the built graph accused. The remaining batch-2
+  items (A19 SBOM + license policy, A20 real-repo corpus) are still
+  open and are claimed by nothing.
