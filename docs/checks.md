@@ -1837,3 +1837,26 @@ commit with regression tests.
   accuses exactly what the built graph accused. The remaining batch-2
   items (A19 SBOM + license policy, A20 real-repo corpus) are still
   open and are claimed by nothing.
+- **The greptile review round (round-18):** a Greptile review of the
+  branch found six contract bugs, each now fixed and test-pinned.
+  `sem_pr_summary.py` reads blocking-ness from the finding's reported
+  severity (a profile-downgraded `bare-except` can no longer be listed
+  as blocking, an `--enforce-bloat` escalation can no longer be lost,
+  and rows without a severity keep the registry answer), and the CLI
+  threads `findings_available` from `parse_findings_document`, so
+  `{"findings": []}` renders as a clean scan instead of a data gap.
+  `sem_ci_diagnose.py` strips Actions log wrappers (the runner
+  timestamp and `gh run view --log`'s job/step tabs) before matching -
+  a prefixed `FAILED tests/...` line now classifies - accepts the
+  workflow's own `Lint YAML` step spelling, and keeps clear failure
+  lines (`fatal:`, `Error:`, Actions error annotations, non-zero
+  exit-code wrappers) as `unclassified` evidence instead of dropping
+  them, while progress lines and zero exit codes stay silence.
+  `slop_profile_merge.py` validates every merged scope glob through
+  the loader's shared `validate_scope_glob` (non-empty, include-only,
+  compilable), so a constructed spec cannot smuggle an unsupported
+  pattern into a scan. The Greptile lesson itself - a reviewer's
+  findings must survive into future runs - landed as the B28 slice:
+  `sem_ci_learnings.py`, a versioned learnings store with fail-closed
+  loading and deterministic recording, applied by the diagnoser with
+  `learned` confidence via `--learnings`.

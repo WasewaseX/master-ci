@@ -10,12 +10,19 @@ one remediation that class actually needs - all without guessing.
 
 The honesty rule is the module's spine. A failure that matches no
 signature is reported as ``unclassified`` with its evidence preserved,
-never forced into the nearest bucket. ``confidence`` states how the
+never forced into the nearest bucket - and a line that reads clearly as
+a failure (Actions error annotations, ``fatal:`` lines, ``Error:``
+prefixes, a non-zero ``Process completed with exit code`` wrapper) keeps
+its evidence as unclassified even when no signature names it, while
+ordinary progress lines stay silence. ``confidence`` states how the
 call was made: ``exact`` when the failed step's own name matched the
 signature (the step name is authoritative), ``textual`` when only a
-log line matched, ``unclassified`` when neither did. A diagnosis is
-advisory - the gate stays the gate, this only reads what already
-happened.
+log line matched, ``learned`` when a reviewer-learnings store matched,
+``unclassified`` when neither did. Actions log wrappers (the runner
+timestamp and ``gh run view --log``'s job/step tabs) are stripped
+before matching, because a signature matches the message, not the
+wrapper. A diagnosis is advisory - the gate stays the gate, this only
+reads what already happened.
 
 Signature table: ruff check, ruff format, mypy, pytest, yamllint,
 markdown-lint, the file-too-large hygiene ceiling, the quality ratchet
@@ -34,8 +41,26 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
+from sem_ci_learnings import Learning, load_learnings
+
 _FAILED_CONCLUSIONS = frozenset({"failure", "timed_out"})
 _NEUTRAL_CONCLUSIONS = frozenset({"success", "skipped", "neutral", "cancelled"})
+
+# Lines that read as a failure even though no signature names them:
+# preserved as unclassified evidence, while progress lines stay silence.
+_GENERIC_FAILURES: tuple[re.Pattern[str], ...] = (
+    re.compile(r"##\[error\]"),
+    re.compile(r"\bfatal:\s"),
+    re.compile(r"^Error:\s"),
+    re.compile(r"Process completed with exit code (?!0\b)\d+"),
+)
+
+# The runner timestamp prefix on downloaded Actions log lines.
+_RUNNER_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\s+")
+
+# Linter kinds whose tool-name lines are not evidence by themselves.
+_TOOL_NAME_KINDS = frozenset({"markdown-lint", "yamllint"})
+_FAIL_WORD = re.compile(r"error|failed|warn", re.IGNORECASE)
 
 
 @dc.dataclass
@@ -106,7 +131,7 @@ _SIGNATURES: tuple[tuple[str, tuple[re.Pattern[str], ...], str], ...] = (
     ),
     (
         "yamllint",
-        (re.compile(r"yamllint", re.IGNORECASE),),
+        (re.compile(r"yaml\s*lint|lint\s*yaml", re.IGNORECASE),),
         "run `yamllint .` locally and fix the named lines",
     ),
     (
@@ -122,7 +147,7 @@ _STEP_NAME_MATCHERS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("mypy", re.compile(r"mypy", re.IGNORECASE)),
     ("pytest", re.compile(r"pytest|python tests|unit tests", re.IGNORECASE)),
     ("file-too-large", re.compile(r"file[- ]too[- ]large|hygiene", re.IGNORECASE)),
-    ("yamllint", re.compile(r"yaml\s*lint", re.IGNORECASE)),
+    ("yamllint", re.compile(r"yaml\s*lint|lint\s*yaml", re.IGNORECASE)),
     ("markdown-lint", re.compile(r"markdown", re.IGNORECASE)),
     ("quality-ratchet", re.compile(r"ratchet", re.IGNORECASE)),
     ("pin-lag", re.compile(r"pin\s*lag", re.IGNORECASE)),
@@ -153,23 +178,99 @@ def _remediation(kind: str) -> str:
     return ""
 
 
-def diagnose_log(text: str) -> Diagnosis:
-    """Classify a raw log: every matching line becomes evidence."""
+def _strip_actions_prefix(line: str) -> str:
+    """Strip the Actions log wrapper: gh's job/step tabs, then the timestamp.
+
+    Downloaded Actions logs read ``2026-11-20T10:00:00Z FAILED tests/...``
+    and ``gh run view --log`` prepends ``job<TAB>step<TAB>`` before the
+    timestamp; signatures match the message, not the wrapper. The tab
+    segment is taken only when its tail carries a runner timestamp, so a
+    tab inside real output cannot swallow the message.
+    """
+    core = line
+    if "\t" in core:
+        tail = core.rsplit("\t", 1)[1]
+        if _RUNNER_TIMESTAMP.match(tail):
+            core = tail
+    return _RUNNER_TIMESTAMP.sub("", core, count=1).strip()
+
+
+def _looks_like_failure(core: str) -> bool:
+    """True for lines that clearly failed without naming a known tool."""
+    return any(pattern.search(core) for pattern in _GENERIC_FAILURES)
+
+
+def _match_learning(learnings: tuple[Learning, ...], core: str) -> Learning | None:
+    """The first learning whose compiled pattern matches the line."""
+    for learning in learnings:
+        if learning.compiled.search(core):
+            return learning
+    return None
+
+
+def _append_learned(diagnosis: "Diagnosis", kind: str, remediation: str, evidence: str) -> None:
+    """Group a learned signature's hits, carrying the learning's remediation."""
+    for cause in diagnosis.failures:
+        if cause.kind == kind and cause.confidence == "learned":
+            cause.evidence.append(evidence)
+            return
+    diagnosis.failures.append(
+        Cause(kind=kind, confidence="learned", evidence=[evidence], remediation=remediation)
+    )
+
+
+def _line_hit(core: str, learnings: tuple[Learning, ...]) -> tuple[str, str, str] | None:
+    """(kind, confidence, remediation) for one log line; None is silence.
+
+    Signatures match first, the reviewer-learnings store second, and a
+    line that clearly reads as a failure without either becomes
+    unclassified evidence; ordinary progress lines are silence. A
+    linter-tool-name line is only evidence when it also reads as a
+    failure - the tool naming itself is not a failure of the tool.
+    """
+    hit = _classify_text(core)
+    if hit is not None:
+        kind = hit[0]
+        if kind in _TOOL_NAME_KINDS and not _FAIL_WORD.search(core):
+            return None
+        return kind, "textual", _remediation(kind)
+    learning = _match_learning(learnings, core)
+    if learning is not None:
+        return learning.kind, "learned", learning.remediation
+    if _looks_like_failure(core):
+        return "unclassified", "unclassified", ""
+    return None
+
+
+def diagnose_log(text: str, learnings: tuple[Learning, ...] = ()) -> "Diagnosis":
+    """Classify a raw log: every matching line becomes evidence.
+
+    Each line gets one verdict from ``_line_hit``; unclassified
+    evidence is grouped into one cause and counted - never dropped -
+    while ordinary progress lines stay silence.
+    """
     diagnosis = Diagnosis()
+    stray: list[str] = []
     for lineno, line in enumerate(text.splitlines(), start=1):
         stripped = line.strip()
         if not stripped:
             continue
-        hit = _classify_text(stripped)
-        kind = hit[0] if hit else None
-        if kind == "markdown-lint" or kind == "yamllint":
-            # tool-name lines name the linter, not a failure: only treat
-            # them as evidence when the line also reads as a failure
-            if not re.search(r"error|failed|warn", stripped, re.IGNORECASE):
-                continue
-        if kind is None:
+        evidence = f"line {lineno}: {stripped[:200]}"
+        hit = _line_hit(_strip_actions_prefix(stripped), learnings)
+        if hit is None:
             continue
-        _append(diagnosis, kind, "textual", f"line {lineno}: {stripped[:200]}")
+        kind, confidence, remediation = hit
+        if kind == "unclassified":
+            stray.append(evidence)
+        elif confidence == "learned":
+            _append_learned(diagnosis, kind, remediation, evidence)
+        else:
+            _append(diagnosis, kind, confidence, evidence)
+    if stray:
+        diagnosis.failures.append(
+            Cause(kind="unclassified", confidence="unclassified", evidence=stray)
+        )
+        diagnosis.unclassified += len(stray)
     return diagnosis
 
 
@@ -182,7 +283,7 @@ def _failed_steps(job: dict) -> list[str]:
     ]
 
 
-def _job_causes(job: dict, diagnosis: "Diagnosis") -> bool:
+def _job_causes(job: dict, diagnosis: "Diagnosis", learnings: tuple[Learning, ...] = ()) -> bool:
     """Classify one failed job into diagnosis; True when anything matched."""
     matched_any = False
     for name in _failed_steps(job):
@@ -191,7 +292,7 @@ def _job_causes(job: dict, diagnosis: "Diagnosis") -> bool:
         matched_any = matched_any or kind is not None
     excerpt = str(job.get("log_excerpt", "") or "")
     if excerpt.strip():
-        for cause in diagnose_log(excerpt).failures:
+        for cause in diagnose_log(excerpt, learnings).failures:
             _append_existing(diagnosis, cause)
             matched_any = True
     if not matched_any:
@@ -204,7 +305,7 @@ def _job_causes(job: dict, diagnosis: "Diagnosis") -> bool:
     return matched_any
 
 
-def diagnose_jobs(payload: str) -> "Diagnosis":
+def diagnose_jobs(payload: str, learnings: tuple[Learning, ...] = ()) -> "Diagnosis":
     """Classify the Actions jobs JSON: failed steps first, log text second.
 
     The payload is the API's ``{"jobs": [...]}`` (or a single job
@@ -222,7 +323,7 @@ def diagnose_jobs(payload: str) -> "Diagnosis":
             continue
         if str(job.get("conclusion", "")) not in _FAILED_CONCLUSIONS:
             continue
-        _job_causes(job, diagnosis)
+        _job_causes(job, diagnosis, learnings)
     return diagnosis
 
 
@@ -279,14 +380,26 @@ def render_markdown(diagnosis: Diagnosis) -> str:
 
 
 def main(argv: Sequence[str] | None = None, /) -> int:
-    """CLI: --jobs-json (Actions jobs JSON) or --log (raw text), '-' stdin."""
+    """CLI: --jobs-json (Actions jobs JSON) or --log (raw text), '-' stdin.
+
+    ``--learnings`` names a reviewer-learnings store applied after the
+    signature table; a store that cannot be loaded refuses the run.
+    """
     parser = argparse.ArgumentParser(description="diagnose a failed CI run from jobs JSON or logs")
     parser.add_argument("--jobs-json", default=None, help="Actions jobs JSON file, or - for stdin")
     parser.add_argument("--log", default=None, help="raw log text file, or - for stdin")
+    parser.add_argument("--learnings", default=None, help="reviewer-learnings JSON store to apply")
     parser.add_argument("--json", action="store_true", help="machine-readable output")
     args = parser.parse_args(argv)
     if bool(args.jobs_json) == bool(args.log):
         parser.error("exactly one of --jobs-json or --log is required")
+    learnings: tuple[Learning, ...] = ()
+    if args.learnings is not None:
+        try:
+            learnings = load_learnings(Path(args.learnings))
+        except (ValueError, OSError) as exc:
+            print(f"ci-diagnose: learnings store refused: {exc}", file=sys.stderr)
+            return 2
     source = args.jobs_json or args.log
     if source == "-":
         text = sys.stdin.read()
@@ -296,7 +409,10 @@ def main(argv: Sequence[str] | None = None, /) -> int:
         print(f"ci-diagnose: input file not found: {source}", file=sys.stderr)
         return 2
     try:
-        diagnosis = diagnose_jobs(text) if args.jobs_json is not None else diagnose_log(text)
+        if args.jobs_json is not None:
+            diagnosis = diagnose_jobs(text, learnings)
+        else:
+            diagnosis = diagnose_log(text, learnings)
     except json.JSONDecodeError as exc:
         print(f"ci-diagnose: malformed jobs JSON: {exc}", file=sys.stderr)
         return 2

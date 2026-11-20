@@ -16,7 +16,12 @@ detector's findings by the live registry's dimensions (never a second
 taxonomy), names every blocking finding with its location, prices the
 dimension counts, and reports missing inputs as data gaps - findings
 input absent is a gap, never a silent zero (the sem_merge_risk rule).
-A low count is not proof of safety and the markdown says so.
+Blocking-ness follows each finding's reported severity - the document
+writes the severity the scan actually enforced, so a profile-downgraded
+check reads advisory and an ``--enforce-bloat`` escalation reads
+blocking - with the registry only as the fallback for older rows. A
+valid but empty findings document is a clean scan, not a data gap; a
+low count is not proof of safety and the markdown says so.
 
 Schema version 1; render is byte-deterministic for identical inputs so
 a re-run cannot churn the comment.
@@ -65,14 +70,45 @@ class PrSummary:
     data_gaps: list[str] = dc.field(default_factory=list)
 
 
-def parse_findings(payload: str) -> list[dict]:
-    """Findings from the detector's JSON: a bare list or {"findings": []}."""
+def parse_findings_document(payload: str) -> tuple[list[dict], bool]:
+    """(rows, available) from the detector JSON; the pair is the contract.
+
+    A bare list or ``{"findings": [...]}`` is a valid findings document
+    even when the list is empty - that emptiness is a legitimately clean
+    scan, not a missing input, and the summary must not record it as a
+    data gap. Anything that is not such a document (an empty payload, a
+    bare object without findings) reports ``available`` False so the
+    gap is recorded; malformed JSON raises and the caller refuses.
+    """
+    if not payload.strip():
+        return [], False
     data = json.loads(payload)
     if isinstance(data, list):
-        return [f for f in data if isinstance(f, dict)]
+        return [f for f in data if isinstance(f, dict)], True
     if isinstance(data, dict) and isinstance(data.get("findings"), list):
-        return [f for f in data["findings"] if isinstance(f, dict)]
-    return []
+        return [f for f in data["findings"] if isinstance(f, dict)], True
+    return [], False
+
+
+def parse_findings(payload: str) -> list[dict]:
+    """Findings from the detector's JSON: a bare list or {"findings": []}."""
+    return parse_findings_document(payload)[0]
+
+
+def _reported_severity_is_blocking(finding: dict) -> bool:
+    """The reported severity decides; the registry only backs older rows.
+
+    The findings document writes the severity the scan enforced - a
+    profile-downgraded ``bare-except`` reports advisory, an
+    ``--enforce-bloat`` run reports its escalations - so a summary that
+    re-derived blocking-ness from the live registry would mislabel both.
+    Rows from older inputs that carry no severity keep the registry
+    answer, which is all the fallback exists for.
+    """
+    severity = str(finding.get("severity", "")).strip().lower()
+    if severity in {"blocking", "advisory"}:
+        return severity == "blocking"
+    return is_blocking(str(finding.get("check", "")))
 
 
 def _tally_findings(summary: PrSummary, findings: list[dict]) -> None:
@@ -83,7 +119,7 @@ def _tally_findings(summary: PrSummary, findings: list[dict]) -> None:
         check = str(finding.get("check", ""))
         if not check:
             continue
-        if is_blocking(check):
+        if _reported_severity_is_blocking(finding):
             summary.blocking_count += 1
             blocking_rows.append(
                 {
@@ -204,8 +240,14 @@ def main(argv: Sequence[str] | None = None, /) -> int:
     else:
         payload = ""
     try:
-        findings = parse_findings(payload) if payload.strip() else []
-        summary = build_summary(findings, args.head_sha, args.changed, args.coverage_known)
+        findings, findings_available = parse_findings_document(payload)
+        summary = build_summary(
+            findings,
+            args.head_sha,
+            args.changed,
+            args.coverage_known,
+            findings_available=findings_available,
+        )
     except ValueError as exc:
         print(f"pr-summary refused: {exc}", file=sys.stderr)
         return 2

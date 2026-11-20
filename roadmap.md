@@ -778,7 +778,7 @@ one true gap (13 of 19 rows are missing or partial after round-18).
 | A1 | New-code definitions and leak periods | `new_code_gate.py`, `fetch_diff_base.sh`, `slop_ratchet.py` | shipped |
 | A2 | Separate new-code quality gates | new-code gate vs total-project verdicts in the report | shipped |
 | A3 | Multi-condition gate engine | `required-quality.yml` composite + `slop_profiles.py` budgets | shipped |
-| A4 | Inheritable quality profiles | `slop_profile_merge.py` (round-18): base -> project -> local chains, child-wins severities and budgets per key, scope-excludes union (a child never re-includes), every document loaded fail-closed and the merged output re-validated against the registries; scan-flag integration stays with the next slice | shipped |
+| A4 | Inheritable quality profiles | `slop_profile_merge.py` (round-18): base -> project -> local chains, child-wins severities and budgets per key, scope-excludes union (a child never re-includes), every document loaded fail-closed and the merged output re-validated against the registries - scope keys and every scope glob through the loader's own pattern checks, so a constructed spec cannot smuggle an uncompilable pattern into a scan; scan-flag integration stays with the next slice | shipped |
 | A5 | Per-rule remediation estimates | `slop_remedies.py` registry + `slop_debt.py` effort model | shipped |
 | A6 | Independent quality dimensions | 8 dimensions in `slop_outputs.py` (architecture, code-health, reliability, maintainability, security, test-assurance, dependency-health, ai-integrity) | shipped |
 | A7 | Coverage ingestion, new-code coverage | `coverage_gate.py`, `coverage_parsers.py` | shipped |
@@ -796,24 +796,24 @@ one true gap (13 of 19 rows are missing or partial after round-18).
 | A19 | Supply-chain analysis | `slop_deps.py`, `slop_ecosystem.py`, `vulnerable-dependency`; SBOM and license policy are docs-only | partial - batch 2 |
 | A20 | Real-world accuracy benchmark | `accuracy_benchmark.py` + labeled fixtures; real-repo corpus and holdout split missing | partial - batch 2 |
 
-### B. Review platform (CodeRabbit): 6 shipped, 6 partial, 7 missing
+### B. Review platform (CodeRabbit): 6 shipped, 7 partial, 6 missing
 
 | # | Feature | Master CI asset | Status |
 | --- | --- | --- | --- |
-| B21 | Structured PR summaries | `sem_pr_summary.py` (round-18): schema-v1 summaries stamped with the head SHA they describe (a missing SHA is refused at build), registry-dimension counts, blocking rows with locations, data gaps recorded as gaps; `--check-stale` answers whether the summary still matches a head, exit 1 when stale | shipped |
+| B21 | Structured PR summaries | `sem_pr_summary.py` (round-18): schema-v1 summaries stamped with the head SHA they describe (a missing SHA is refused at build), registry-dimension counts, blocking rows with locations, data gaps recorded as gaps; `--check-stale` answers whether the summary still matches a head, exit 1 when stale; blocking-ness follows each finding's reported severity (the registry only backs older rows without one, so profile downgrades and `--enforce-bloat` escalations read as reported), and a valid-but-empty findings document is a clean scan, not a data gap | shipped |
 | B22 | PR walkthrough with grouped files | MCP prompts only (`mcp_prompts.py`) | missing - batch 3 |
 | B23 | Change stack / logical cohorts | `sem_change_stack.py` (round-17): path-rule cohorts, foundation-first order, unclassified shown; real dependency ordering arrives with B25 slice 2 | shipped |
 | B24 | Mermaid change diagrams | nothing; must stay optional and gate-neutral | missing - batch 4 |
 | B25 | Repository code graph | IR v1 + `slop_symbol_graph.py` (first slice); graph persistence shipped in round-18: versioned JSON bundles (graph schema + IR version, both refused on mismatch), use counts and parse failures stored, def sites rebuilt from the files - the loaded graph accuses exactly what the built graph accused | shipped |
 | B26 | Linked-issue requirement validation | nothing | missing - batch 4 |
 | B27 | Repo coding guidelines / path instructions | `AGENTS.md` exists; no instruction engine | partial - batch 3 |
-| B28 | Persistent reviewer learnings | nothing | missing - batch 4 |
+| B28 | Persistent reviewer learnings | `sem_ci_learnings.py` (slice, round-18): versioned learnings-v1 store of failure-signature lessons (pattern, the remediation that fixed it, the review that taught it), fail-closed loading, deterministic deduplicated recording, `--learnings` integration in `sem_ci_diagnose.py` with `learned` confidence; the cross-review memory lifecycle stays open | partial |
 | B29 | Custom pre-merge checks | `hook_gate.py` per-edit gate; no declarative custom-check config | partial - batch 3 |
 | B30 | Incremental review orchestration | CI re-runs only; no commit-aware review state | missing - batch 4 |
 | B31 | PR merge-risk assessment | `sem_merge_risk.py` (round-17): model v1, registry-driven severity, evidence rows, data gaps reported as incomplete | shipped |
 | B32 | PR triage queue | nothing | missing - batch 4 |
 | B33 | Reviewer and label recommendations | `label.yml` (actions/labeler v7); no reviewer derivation | partial - batch 3 |
-| B34 | CI failure diagnosis | `sem_ci_diagnose.py` (round-18): signature table over this repo's own gates (ruff, ruff-format, mypy, pytest, yamllint, markdown-lint, file-too-large, ratchet, pin-lag) driven from Actions jobs JSON or raw logs; step-name matches are exact, log matches textual, no match stays unclassified with evidence, cancelled/skipped work is claimed as nothing | shipped |
+| B34 | CI failure diagnosis | `sem_ci_diagnose.py` (round-18): signature table over this repo's own gates (ruff, ruff-format, mypy, pytest, yamllint, markdown-lint, file-too-large, ratchet, pin-lag) driven from Actions jobs JSON or raw logs; step-name matches are exact (including the workflow's own "Lint YAML" spelling), log matches textual, learnings matches learned, no match stays unclassified with evidence - clear failure lines without a signature (Actions error annotations, `fatal:`, `Error:`, non-zero exit-code wrappers) are preserved as unclassified evidence while progress lines stay silence, Actions log prefixes (runner timestamp, `gh run view --log` job/step tabs) are stripped before matching, and cancelled/skipped work is claimed as nothing | shipped |
 | B35 | Finishing touches / verified fixes | `fix_engine.py`, `fix_tools.py` with tiers and dry-run | shipped |
 | B36 | Cross-repository context via MCP | `mcp_server.py`, `mcp_tools.py`; no allowlisted cross-repo context | partial - batch 4 |
 | B37 | Repo-wide security deep scans | `slop_security.py` + scheduled `audit.yml` | partial - batch 3 |
@@ -857,7 +857,9 @@ round-16 contracts are pinned by tests.
   B33 reviewer derivation, B37 deep-scan schedule, A9 near-duplicate
   similarity, A10 cross-language cohesion, A15 registry descriptors,
   C43 rerun inventory.
-- **Batch 4 - the lifecycle round:** B28 learnings, B30 incremental
+- **Batch 4 - the lifecycle round:** B28 learnings (the store and the
+  `learned`-confidence diagnosis slice landed in round-18; the full
+  cross-review lifecycle remains), B30 incremental
   review state, B32 triage, B24 optional diagrams, B36 cross-repo MCP,
   B38 security lifecycle, A18 taint pack boundaries.
 
