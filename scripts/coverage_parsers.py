@@ -186,7 +186,7 @@ def _parse_xml(path: Path) -> CoverageReport:
     """Dispatch on the root tag: Cobertura says ``coverage``, JaCoCo says
     ``report`` - two dialects that share nothing but angle brackets."""
     try:
-        root = ET.parse(path).getroot()
+        root = defusedxml.etree.ElementTree.parse(path).getroot()
     except (OSError, ET.ParseError) as exc:
         raise CoverageGateError(f"unparseable coverage report {path}: {exc}") from exc
     if root.tag == "report":
