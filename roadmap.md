@@ -788,9 +788,9 @@ The round paid its own ratchet, the second time in three rounds the
 repo's gates caught the round's own code: seven functions past the
 cognitive/cyclomatic/nesting budgets, one chained-dict-get, one
 environment URL baked into the SBOM namespace (rebuilt as a spec-valid
-URN), the test preamble repeated past the boilerplate floor (the
-round-13 conftest convention was ignored by the four new test modules
-- they were migrated off it), and both CLI signature groups pushed to
+URN), the test preamble repeated past the boilerplate floor because
+the four new test modules ignored the round-13 conftest convention
+(they were migrated off it), and both CLI signature groups pushed to
 ten identical lines. Every row was paid by refactor, not re-record -
 the single baseline move is the new check's own three advisory rows,
 the documented catalog-adoption path: `near-duplicate-clone` joins the
