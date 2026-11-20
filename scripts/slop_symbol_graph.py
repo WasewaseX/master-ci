@@ -20,18 +20,31 @@ corpus; this module never claims coverage a language does not have.
 
 from __future__ import annotations
 
+import json
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from slop_dead import _cap
 from slop_files import is_ignored, is_test_path
-from slop_ir import FileIR, SymbolIR, language_of
+from slop_ir import (
+    IR_VERSION,
+    FileIR,
+    SymbolIR,
+    file_ir_from_dict,
+    file_ir_to_dict,
+    language_of,
+)
 from slop_ir_python import extract_python
 from slop_ir_treesitter import extract_treesitter
 from slop_model import Finding
 
 MAX_SEMANTIC_DEAD = 8
+
+#: Persistence (roadmap B25 slice 2): a graph bundle is versioned twice -
+#: bundle schema and IR version - and a reader refuses any other version,
+#: so a stale cache never silently mixes with new extractors' output.
+GRAPH_SCHEMA_VERSION = 1
 
 #: The noise floor, matched to the orphan-module stem rule: names shorter
 #: than four characters are noise - single letters collide with math and
@@ -172,6 +185,54 @@ def _dead_candidates(graph: SymbolGraph, root: Path) -> list[tuple[FileIR, Symbo
         out.extend((ir, sym) for sym in ir.symbols if _candidate_symbol(sym, graph))
     out.sort(key=lambda pair: (pair[0].path, pair[1].line, pair[1].name))
     return out
+
+
+def save_graph(graph: SymbolGraph, path: Path) -> None:
+    """Persist the graph bundle: schema + IR version, files, uses, failures.
+
+    The def sites are rebuilt from the stored files on load, so the
+    bundle carries each file's own IR version stamp (per
+    ``file_ir_to_dict``) plus the bundle-level ``graph_schema``.
+    ``use_counts`` is stored explicitly: recomputing it would require
+    the sources, and the point of persistence is to answer without
+    them.
+    """
+    payload = {
+        "graph_schema": GRAPH_SCHEMA_VERSION,
+        "ir_version": IR_VERSION,
+        "files": [file_ir_to_dict(ir) for ir in graph.files.values()],
+        "use_counts": dict(graph.use_counts),
+        "parse_failures": [[str(p), str(e)] for p, e in graph.parse_failures],
+    }
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def load_graph(path: Path) -> SymbolGraph:
+    """Read a graph bundle; either version mismatch raises, never mixes."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("graph_schema") != GRAPH_SCHEMA_VERSION:
+        raise ValueError(
+            f"graph schema mismatch: bundle carries {data.get('graph_schema')!r}, "
+            f"reader expects {GRAPH_SCHEMA_VERSION}"
+        )
+    if data.get("ir_version") != IR_VERSION:
+        raise ValueError(
+            f"IR version mismatch: bundle carries {data.get('ir_version')!r}, "
+            f"reader expects {IR_VERSION}"
+        )
+    graph = SymbolGraph()
+    for file_data in data.get("files", []):
+        ir = file_ir_from_dict(file_data)
+        graph.files[ir.path] = ir
+        for sym in ir.symbols:
+            graph.def_sites.setdefault(sym.name, []).append((ir.path, sym.line))
+    graph.use_counts = Counter(
+        {str(name): int(count) for name, count in data.get("use_counts", {}).items()}
+    )
+    graph.parse_failures = [
+        (str(failed), str(error)) for failed, error in data.get("parse_failures", [])
+    ]
+    return graph
 
 
 def check_semantic_dead_symbols(

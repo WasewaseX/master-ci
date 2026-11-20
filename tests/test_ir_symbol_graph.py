@@ -10,14 +10,19 @@ failures surface instead of shrinking the corpus silently.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 from slop_ir import IR_VERSION, file_ir_from_dict, file_ir_to_dict, language_of
 from slop_symbol_graph import (
+    GRAPH_SCHEMA_VERSION,
     MAX_SEMANTIC_DEAD,
+    _dead_candidates,
     build_symbol_graph,
     check_semantic_dead_symbols,
+    load_graph,
+    save_graph,
 )
 
 try:
@@ -262,3 +267,76 @@ def test_regression_fixture_flags_comment_kept_alive_symbol():
         pytest.skip("flawed_python fixture not present")
     findings = check_semantic_dead_symbols(root, sorted(root.rglob("*.py")), [])
     assert any("_audit_helper_only" in m for m in _messages(findings))
+
+
+# --- graph persistence (roadmap B25 slice 2) --------------------------------
+
+
+def test_graph_save_load_roundtrip_preserves_deadness(tmp_path):
+    """The loaded graph must accuse exactly what the built graph accused."""
+    src = _write(
+        tmp_path,
+        "deadmod.py",
+        "def _audit_helper_only():\n    return 1\n\n\ndef _used_elsewhere():\n    return 2\n",
+    )
+    caller = _write(
+        tmp_path, "caller.py", "from deadmod import _used_elsewhere\n\n_used_elsewhere()\n"
+    )
+    files = [src, caller]
+    globs: list[str] = []
+    built = build_symbol_graph(tmp_path, files, globs)
+    bundle = tmp_path / "graph.json"
+    save_graph(built, bundle)
+    loaded = load_graph(bundle)
+    assert check_semantic_dead_symbols(tmp_path, files, globs) == check_semantic_dead_symbols(
+        tmp_path, files, globs
+    )  # sanity: the oracle is deterministic on the sources
+    assert _dead_names(built, tmp_path) == _dead_names(loaded, tmp_path)
+    assert dict(loaded.use_counts) == dict(built.use_counts)
+    assert loaded.parse_failures == built.parse_failures
+
+
+def _dead_names(graph, root: Path) -> list[tuple[str, int, str]]:
+    return [(ir.path, sym.line, sym.name) for ir, sym in _dead_candidates(graph, root)]
+
+
+def test_graph_bundle_carries_both_version_stamps(tmp_path):
+    src = _write(tmp_path, "m.py", "def f():\n    return 1\n")
+    graph = build_symbol_graph(tmp_path, [src], [])
+    bundle = tmp_path / "graph.json"
+    save_graph(graph, bundle)
+    data = json.loads(bundle.read_text(encoding="utf-8"))
+    assert data["graph_schema"] == GRAPH_SCHEMA_VERSION
+    assert data["ir_version"] == IR_VERSION
+
+
+def test_graph_bundle_refuses_a_foreign_schema(tmp_path):
+    src = _write(tmp_path, "m.py", "def f():\n    return 1\n")
+    bundle = tmp_path / "graph.json"
+    save_graph(build_symbol_graph(tmp_path, [src], []), bundle)
+    data = json.loads(bundle.read_text(encoding="utf-8"))
+    data["graph_schema"] = GRAPH_SCHEMA_VERSION + 1
+    bundle.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ValueError, match="graph schema mismatch"):
+        load_graph(bundle)
+
+
+def test_graph_bundle_refuses_a_foreign_ir_version(tmp_path):
+    src = _write(tmp_path, "m.py", "def f():\n    return 1\n")
+    bundle = tmp_path / "graph.json"
+    save_graph(build_symbol_graph(tmp_path, [src], []), bundle)
+    data = json.loads(bundle.read_text(encoding="utf-8"))
+    data["ir_version"] = IR_VERSION + 1
+    bundle.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ValueError, match="IR version mismatch"):
+        load_graph(bundle)
+
+
+def test_parse_failures_survive_the_roundtrip(tmp_path):
+    broken = _write(tmp_path, "broken.py", "def f(:\n    return\n")
+    graph = build_symbol_graph(tmp_path, [broken], [])
+    assert graph.parse_failures  # the failure was recorded at build time
+    bundle = tmp_path / "graph.json"
+    save_graph(graph, bundle)
+    loaded = load_graph(bundle)
+    assert loaded.parse_failures == graph.parse_failures
