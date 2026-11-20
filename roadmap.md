@@ -856,15 +856,34 @@ sharing one positive-verdict kernel with the accuracy benchmark (the
 detector's own near-duplicate check caught the round's first draft
 duplicating `judge_positives` - the kernel is the fix); the similarity
 oracle grows every anchor of an alignment and keeps the best block
-(most matched evidence first, then score, then earliest start); the
+(most matched evidence first, then score, then earliest start), and
+the growth reuses the walk instead of repeating it - growing one
+anchor pair is an integer random walk, so a dense alignment answers
+every anchor's stop from the diagonal's prefixed gauge
+(`4 x misses - offset`, range-min/range-max lookups) and returns the
+identical best block the re-walk returned, at one pass instead of one
+walk per anchor line (the 4,000-line near-copy pair that cost ~1.8s
+of re-walking is judged in 0.04s, and the equivalence is pinned by a
+seeded differential test on every diagonal shape plus a wall-clock
+budget); the csproj reader maps the codec class too - an unknown
+declared encoding reaches ElementTree as `LookupError`, not
+`ParseError`, and now lands in the recorded-gap class with the rest,
+pinned by a hostile-manifest battery through `scan_sbom` (every
+failure class each parser can raise: nothing escapes, unreadable
+manifests are gaps with reasons, readable ones stay rows); the
 push-branch-filter test compares entries unchanged and its docstring
 now records what the byte-level verification showed - prevention,
-not a shipped-outage fix. The round's own lesson went into the
-learnings store: twelve bug-class lessons recorded through the
-validated write path, the store's first real evidence.
+not a shipped-outage fix. The round's lessons went into the learnings
+store through the validated write path: twelve bug-class lessons from
+the review, then two more from the findings the first fixes missed -
+an exception surface must cover every class a parser can raise
+(`encoding-exception-surface`), and a per-candidate regrowth is
+quadratic work for what a prefixed walk answers by query
+(`quadratic-anchor-regrowth`) - fourteen lessons, the store's first
+real evidence.
 
-Regression held: 1440 tests green, ruff check and format clean, mypy
-clean over 223 source files, the accuracy benchmark exit 0 with the
+Regression held: 1449 tests green, ruff check and format clean, mypy
+clean over the source tree, the accuracy benchmark exit 0 with the
 clean controls clean, the fixture benchmark 167/167 pass, the
 self-scan verdict CLEAN grade A at its baseline counts (13 findings,
 none new), and the learnings store loads clean through the loader.

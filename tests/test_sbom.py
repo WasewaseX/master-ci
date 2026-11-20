@@ -443,3 +443,104 @@ def test_report_json_carries_project_licenses_gaps_and_violations(tmp_path):
         "Cargo.toml": "Apache-2.0",
         "pyproject.toml": "MIT",
     }
+
+
+# --- round-19 greptile pass: the scan boundary survives every failure class ----
+
+
+def test_unknown_encoding_csproj_is_a_recorded_gap(tmp_path):
+    """An encoding ElementTree cannot honor raises LookupError, not ParseError.
+
+    ``<?xml version="1.0" encoding="unknown-encoding"?>`` is well-formed
+    XML whose codec does not exist: ``ET.fromstring`` escapes the
+    ``ParseError`` handler as ``LookupError``, and ``LookupError`` is
+    not a ``ValueError`` - one such manifest used to stop the whole
+    inventory before its reports were written. The reader now maps the
+    codec failure to the recorded-gap class like every other XML
+    failure, and the scan carries on.
+    """
+    (tmp_path / "Broken.csproj").write_bytes(
+        b'<?xml version="1.0" encoding="unknown-encoding"?><Project />'
+    )
+    _write(tmp_path / "requirements.txt", "requests==2.31.0\n")
+    result = sbom.scan_sbom(tmp_path)
+    assert [p.purl for p in result.packages] == ["pkg:pypi/requests@2.31.0"]
+    assert len(result.gaps) == 1
+    assert result.gaps[0]["manifest"] == "Broken.csproj"
+    assert "encoding" in result.gaps[0]["reason"] or "XML" in result.gaps[0]["reason"]
+
+
+def test_scan_sbom_survives_any_hostile_manifest(tmp_path):
+    """The scan boundary is exception-proof: every hostile input is a row or a gap.
+
+    The greptile pass found two failure classes that escaped the
+    handled set one at a time - a wrong-shape JSON document
+    (``AttributeError``) and an unknown XML encoding (``LookupError``).
+    The gate is the property, not the two examples: a battery of
+    hostile manifests - every failure class each parser can raise,
+    plus payloads built to trip decoders, registries and shape checks -
+    goes through ``scan_sbom``, and nothing may escape. Manifests no
+    reader can accept are visible gaps with reasons; manifests that a
+    reader can still read stay rows. The healthy manifest beside them
+    always parses.
+    """
+    _write(tmp_path / "requirements.txt", "requests==2.31.0\n")
+    unreadable = {
+        # csproj failure classes: not-XML, unknown codec, wrong-declared encoding
+        "A.csproj": ("<this is not xml", "text"),
+        "B.csproj": (
+            b'<?xml version="1.0" encoding="unknown-encoding"?><Project />',
+            "bytes",
+        ),
+        "C.csproj": (
+            b'<?xml version="1.0" encoding="utf-16"?><Project><Name>zz</Name></Project>',
+            "bytes",
+        ),
+        # package.json failure classes: not-JSON, wrong top-level shape,
+        # wrong section shape
+        "package.json": ("{not json", "text"),
+        "broken/package.json": ("[]", "text"),
+        "broken/deep/package.json": (json.dumps({"dependencies": ["lodash"]}), "text"),
+        "broken/null/package.json": (
+            json.dumps({"dependencies": None, "devDependencies": 3}),
+            "text",
+        ),
+        "empty/package.json": ("", "text"),
+        # toml failure classes: not-TOML
+        "pyproject.toml": ("[project\nthis is not toml", "text"),
+        "Cargo.toml": ("not toml at all =", "text"),
+        # empty csproj is not XML at all
+        "empty/App.csproj": ("", "text"),
+    }
+    # payloads no reader can mistake for declarations, but that stay
+    # readable - they may parse to nothing, they may not stop the scan
+    readable_weird = {
+        "broken/table/Cargo.toml": "[dependencies]\nserde = 12\n",
+        "requirements-dev.txt": "requests[socks]>=2.0; python_version<'3.11'\n\x00\x01binary\n",
+        "Gemfile": "gem \x00 broken\n",
+        "go.mod": "require (\n\tthis line is not a require\n",
+        "empty/Cargo.toml": "",
+    }
+    for name, (payload, kind) in unreadable.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if kind == "bytes":
+            path.write_bytes(payload)
+        else:
+            path.write_text(payload, encoding="utf-8")
+    for name, payload in readable_weird.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(payload, encoding="utf-8")
+
+    result = sbom.scan_sbom(tmp_path)  # must not raise, whatever it finds
+    assert sorted(p.purl for p in result.packages) == [
+        "pkg:cargo/serde@12",  # the integer version stays a declaration
+        "pkg:pypi/requests",  # the -dev file's ranged requirement, extras split off
+        "pkg:pypi/requests@2.31.0",
+    ], "the healthy and readable-weird manifests still parse"
+    gap_names = {gap["manifest"] for gap in result.gaps}
+    assert gap_names == set(unreadable), (
+        f"every manifest no reader accepts is a visible gap: {sorted(gap_names)}"
+    )
+    assert all(gap["reason"] for gap in result.gaps), "each gap carries its reason"

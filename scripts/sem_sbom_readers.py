@@ -381,12 +381,14 @@ def _parse_csproj(data: bytes, manifest: str) -> list[Package]:
 
     Attribute order, quoting style, extra attributes (``PrivateAssets``)
     and a child ``<Version>`` element all parse - one textual layout is
-    not a contract. Content that is not XML raises ValueError, a
-    recorded gap.
+    not a contract. Content that is not XML - or declares an encoding
+    the Python codec registry does not know, which ElementTree reports
+    as ``LookupError``, not ``ParseError`` - raises ValueError, the
+    recorded-gap class; one malformed manifest never stops the scan.
     """
     try:
         root = ET.fromstring(data)
-    except ET.ParseError as exc:
+    except (ET.ParseError, LookupError) as exc:
         raise ValueError(f"{manifest}: not parseable XML: {exc}") from exc
     rows: list[Package] = []
     for element in root.iter():

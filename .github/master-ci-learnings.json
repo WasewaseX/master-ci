@@ -26,6 +26,12 @@
    "source": "greptile pr-24 findings 5/14: requirements-dev.txt and requirements-test.txt were never parsed and produced no gap"
   },
   {
+   "kind": "encoding-exception-surface",
+   "pattern": "unknown encoding|LookupError|ET\\.ParseError as exc|escape[sd]? (the |both )?handler",
+   "remediation": "a parser boundary maps every failure class it can raise to the handled class before the scan entry: ElementTree reports an unknown declared encoding as LookupError, not ParseError (and LookupError is not a ValueError), so catch (ET.ParseError, LookupError) at the reader and pin the property with a hostile-input battery through scan_sbom - every unreadable manifest a gap with a reason, nothing escapes - not one crafted example",
+   "source": "pr-24 round-19 finding 2: one csproj declaring encoding=unknown-encoding stopped the whole inventory"
+  },
+  {
    "kind": "no-invented-history",
    "pattern": "docstring (says|claims).*(shipped|stopped)|incident that never happened",
    "remediation": "tests document contracts, not invented incidents; any artifact a review shows is byte-verified against disk before it enters release history",
@@ -42,6 +48,12 @@
    "pattern": "pkg:npm/(types|node)|purl.*lowercased|scope lost its @",
    "remediation": "npm scoped names keep the %40 escape, Go module paths and NuGet ids keep declared casing; identity rules are per ecosystem, never one shared lowercase",
    "source": "greptile pr-24 findings 10/19: @types/node became pkg:npm/types/node"
+  },
+  {
+   "kind": "quadratic-anchor-regrowth",
+   "pattern": "grow[s]? every anchor|one growth per anchor|long clones? stall|1\\.8s|quadruples with (their |the )?length",
+   "remediation": "growing one anchor is an integer random walk (match -1, mismatch +3, alive while 4*misses - k <= 2): prefix the diagonal once as G[v] = 4*misses - v and every anchor's stop becomes a last-under / first-over range query - identical blocks, no per-anchor re-walk; pin the optimization with a seeded differential test against the direct walk on every diagonal shape plus a wall-clock budget on a 4,000-line near-copy pair",
+   "source": "pr-24 round-19 finding 1: two 4,000-line near-copies took ~1.8s of repeated growth during every scan"
   },
   {
    "kind": "registry-validate-labels",

@@ -13,13 +13,26 @@ The documented contracts, test-pinned:
 - one clone reports once no matter how many anchors voted for it, and
     the findings cap holds at MAX_CLONES best-similarity rows;
 - identical inputs give identical findings - stable hashes, sorted
-    candidates, no dict-order dependence.
+    candidates, no dict-order dependence;
+- the prefix-gauge fast path returns the identical best block the
+    per-anchor walk returns, on seeded random diagonals of every shape
+    (the equivalence is the gate: the optimization must never change
+    which block wins), and a long near-copy no longer pays one walk
+    per anchor line - the 4,000-line pair that took ~1.8s of
+    re-walking is judged in its budget.
 """
 
+import random
+import time
 from pathlib import Path
 
+import pytest
 from slop_similarity import (  # noqa: E402
     MAX_CLONES,
+    _best_alignment_block,
+    _best_block_by_queries,
+    _grow_block,
+    _qualifying_row,
     check_near_duplicates,
 )
 
@@ -289,3 +302,157 @@ def test_fixture_trees_judge_through_the_probe(tmp_path):
     )
     assert len(detected) == 1 and detected[0].check == "near-duplicate-clone"
     assert clean == []
+
+
+# --- round-19 greptile pass: the fast path must be the walk -------------------
+
+
+def _drift_periodic(right: list[str], rng: random.Random) -> list[str]:
+    """One differing line every four - the every-4th-line drift shape."""
+    for i in range(0, len(right), 4):
+        right[i] = right[i] + "  # adjusted"
+    return right
+
+
+def _drift_staircase(right: list[str], rng: random.Random) -> list[str]:
+    """Long exact runs separated by single-line breaks."""
+    for start in range(6, len(right), 13):
+        right[start] = f"value {start} = altered_{start}(data)"
+    return right
+
+
+def _drift_sparse(right: list[str], rng: random.Random) -> list[str]:
+    """Mostly different lines, a few shared runs left behind."""
+    return [
+        f"other {i} = unique_{rng.randrange(10_000)}()" if rng.random() > 0.25 else line
+        for i, line in enumerate(right)
+    ]
+
+
+def _drift_random(right: list[str], rng: random.Random) -> list[str]:
+    """Scattered noise over mostly-shared lines."""
+    return [
+        f"other {i} = unique_{rng.randrange(10_000)}()" if rng.random() > 0.6 else line
+        for i, line in enumerate(right)
+    ]
+
+
+_SHAPE_DRIFTS = {
+    "all-match": lambda right, rng: right,
+    "periodic": _drift_periodic,
+    "staircase": _drift_staircase,
+    "sparse": _drift_sparse,
+    "random": _drift_random,
+}
+
+
+def _shaped_pair(rng: random.Random, n: int, shape: str) -> tuple[list[str], list[str]]:
+    """One diagonal of a given shape: the same lines, some replaced."""
+    left = [f"value {i} = step_{i}(data)" for i in range(n)]
+    return left, _SHAPE_DRIFTS[shape](list(left), rng)
+
+
+def _anchors_for(left: list[str], right: list[str], delta: int) -> list[tuple[int, int]]:
+    """The real anchor pairs the shingles would vote for one alignment."""
+    pairs = []
+    for i in range(max(0, delta), min(len(left) - 1, len(right) - 1 + delta)):
+        if left[i] == right[i - delta] and left[i + 1] == right[i + 1 - delta]:
+            pairs.append((i, i - delta))
+    return pairs
+
+
+def _walk_best(
+    left: list[str], right: list[str], delta: int, pairs: list[tuple[int, int]], same: bool
+):
+    """Grow every anchor directly - the semantics the fast path must keep."""
+    rows = []
+    file_a = 0
+    file_b = 0 if same else 1
+    for anchor_a, anchor_b in sorted(pairs):
+        start_a, length, matched = _grow_block(left, right, anchor_a, anchor_b)
+        row = _qualifying_row(file_a, file_b, delta, start_a, length, matched)
+        if row is not None:
+            rows.append((matched, row[0], -start_a, row))
+    if not rows:
+        return None
+    return max(rows)[-1]
+
+
+def _trial_pair(rng: random.Random, shape: str, trial: int):
+    """One random diagonal: lines, delta, the anchors that vote, same-file flag."""
+    n = rng.choice([2, 3, 7, 25, 60, 120])
+    left, right = _shaped_pair(rng, n, shape)
+    if shape == "staircase" and trial % 2 == 0:
+        right = right[: max(2, n - rng.randrange(5))]  # differing lengths
+    delta = rng.choice([0, 0, 0, 1, -1, 2, -2, 5, -5])
+    pairs = _anchors_for(left, right, delta)
+    return left, right, delta, pairs, rng.random() < 0.3
+
+
+@pytest.mark.parametrize("shape", ["all-match", "periodic", "staircase", "sparse", "random"])
+def test_the_query_path_returns_the_walks_best_block_on_random_diagonals(shape):
+    """Every anchor's stop from the gauge equals every anchor's stop walked.
+
+    The gate for the round's performance fix: the prefix-gauge path
+    replaced one walk per anchor with two prefix lookups per anchor.
+    An optimization that changed which block wins would change which
+    clone reports - so seeded diagonals of every shape (exact runs,
+    periodic single-line drift, sparse matches, random noise, empty
+    anchors, differing file lengths, same-file overlap filters) must
+    give the query path the very best row the direct walk picks.
+    """
+    rng = random.Random(20261121)
+    for trial in range(40):
+        left, right, delta, pairs, same = _trial_pair(rng, shape, trial)
+        expected = _walk_best(left, right, delta, pairs, same)
+        got = _best_block_by_queries(
+            left, right, delta, sorted({a for a, _ in pairs}), 0, 0 if same else 1
+        )
+        assert got == expected, (
+            f"seed trial {trial} ({shape}, n={len(left)}, delta={delta}, "
+            f"{len(pairs)} anchors, same={same}): query path diverged from the walk"
+        )
+
+
+def test_dense_alignments_take_the_gauge_and_sparse_ones_keep_the_walk(monkeypatch):
+    """The threshold routes dense alignments to the gauge, sparse to the walk."""
+    lines = [f"line {i}" for i in range(40)]
+    per_file = [lines, lines]
+    dense = [(i, i) for i in range(30)]
+    sparse = [(i, i) for i in range(8)]
+    forced_walk = _best_alignment_block(per_file, 0, 1, 0, dense)
+    monkeypatch.setattr("slop_similarity._DIRECT_WALK_ANCHORS", 0)
+    forced_gauge = _best_alignment_block(per_file, 0, 1, 0, dense)
+    assert forced_walk == forced_gauge, "routing must not change the winner"
+    monkeypatch.setattr("slop_similarity._DIRECT_WALK_ANCHORS", 10_000)
+    assert _best_alignment_block(per_file, 0, 1, 0, sparse) is not None
+
+
+def test_a_long_near_copy_is_one_gauge_pass_not_one_walk_per_anchor(tmp_path):
+    """The 4,000-line near-copy pair that took ~1.8s of re-walking.
+
+    A long near-copy votes roughly one anchor per copied line, so
+    growing every anchor re-walked the whole block once per anchor -
+    quadratic in the copy's length, ~1.8s for a 4,000-line pair. The
+    gauge answers every anchor's stop from one prefixed pass; the pair
+    still reports (the same block, most matched evidence first) inside
+    a budget the re-walking path cannot meet.
+    """
+    n = 4000
+    lines = [f"row = transform_{i}(payload, {i})" for i in range(n)]
+    left = tmp_path / "big_left.py"
+    right = tmp_path / "big_right.py"
+    left.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    drifted = list(lines)
+    for i in range(0, n, 4):
+        drifted[i] = drifted[i] + "  # adjusted"
+    right.write_text("\n".join(drifted) + "\n", encoding="utf-8")
+    started = time.perf_counter()
+    findings = check_near_duplicates(None, [left, right])
+    elapsed = time.perf_counter() - started
+    assert len(findings) == 1, "the long near-copy is still one clone"
+    message = findings[0].message
+    score = float(message.split("similarity ")[1].split(" over")[0])
+    length = int(message.split("over ")[1].split(" aligned")[0])
+    assert score >= 0.7 and length >= 3000, f"the block survived: {score} over {length}"
+    assert elapsed < 1.0, f"the long pair took {elapsed:.2f}s - the re-walk is back"
