@@ -8,6 +8,12 @@
       "source": "greptile pr-24 findings 11/20: serde1 = { package = \"serde\" } reported an unrelated crate named serde1"
     },
     {
+      "kind": "committed-text-final-newline",
+      "pattern": "wrong line endings or no final newline|MD047|single-trailing-newline|docs? job.*lint markdown.*fail",
+      "remediation": "a tool that appends to or rewrites a committed text file must byte-verify the tail after the write - final newline (MD047), line endings, indentation - before the commit; an in-place string replace that drops the file's trailing newline reds the docs and hygiene jobs on the same push",
+      "source": "hosted docs+hygiene red on round-19.6 commit 1a7cf53: the checks.md capability bullet was appended by a python replace whose replacement string ended without the newline the file previously carried - MD047 and 'wrong line endings or no final newline' failed both jobs and ci-success aggregated the red"
+    },
+    {
       "kind": "declared-values-verbatim",
       "pattern": "version (constraints? )?(changed|lost) (their |its )?meaning|operators stripped from (the )?version",
       "remediation": "keep the declared spec verbatim; only an exact == pin collapses to its version, and a purl carries a version only when the spec pins one",
