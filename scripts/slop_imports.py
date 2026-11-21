@@ -10,6 +10,7 @@ from pathlib import Path
 from slop_files import read_text_lax
 from slop_model import Finding, _finding
 from slop_patterns import NODE_BUILTINS, PY_IMPORT_ALIASES, SKIP_DIRS, STD_LIB_NAMES
+from slop_span_mask import mask_span_forms, string_spans
 
 # Scoped suppression on an import line (ruff/flake8 F401 convention).
 _NOQA_RE = re.compile(r"#\s*noqa\b")
@@ -309,11 +310,22 @@ def _js_undeclared_findings(
     grammar accepts that none of those sites names is the finding -
     the slopsquatting shape, and the project's own ``eslint-plugin-*``
     gap when a config file imports it.
+
+    The scan reads a comment-blanked copy (string contents kept, every
+    offset intact), so an import that exists only as a comment -
+    ``// export { foo } from 'ghost-package'`` - or inside a regular
+    expression's body imports nothing, and a specifier quoted inside a
+    longer string or template is example text, not a declaration: only
+    a specifier whose quote opens a top-level literal is code.
     """
     findings: list[Finding] = []
     seen_pkgs: set[str] = set()
-    for match in _JS_IMPORT_RE.finditer(text):
+    code_only = mask_span_forms(text, quotes="\"'`", keep_strings=True)
+    spans = string_spans(code_only)
+    for match in _JS_IMPORT_RE.finditer(code_only):
         spec = match.group(1)
+        if _quoted_inside_string(match.start(1) - 1, spans):
+            continue
         if spec.startswith((".", "/", "node:", "#", "data:")):
             continue
         if _is_alias(spec, aliases):
@@ -336,6 +348,16 @@ def _js_undeclared_findings(
             )
         )
     return findings[:5]
+
+
+def _quoted_inside_string(quote_pos: int, spans: list[tuple[int, int]]) -> bool:
+    """True when the specifier's opening quote sits inside another literal.
+
+    A top-level string's own quote starts its span, so it never
+    matches; a quote inside a template or an outer string - the
+    ``"import x from 'ghost'"`` example shape - does.
+    """
+    return any(start < quote_pos < end for start, end in spans)
 
 
 def _is_alias(spec: str, aliases: frozenset[str]) -> bool:

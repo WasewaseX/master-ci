@@ -149,6 +149,13 @@ CHECK_CATEGORIES: dict[str, str] = {
     "undeclared-import": "dependency-health",
     "no-new-array": "maintainability",
     "set-state-in-effect": "code-health",
+    # round-19 capability adoption: the lint-shape gates, by bucket.
+    "bare-node-builtin": "code-health",
+    "self-assign": "code-health",
+    "useless-empty-export": "code-health",
+    "impure-render-call": "code-health",
+    "prefer-starts-ends-with": "maintainability",
+    "useless-escape": "maintainability",
     "unused-dependency": "dependency-health",
     # AI integrity: authorship and machine-prose signals. This is the
     # dimension the --max-slop-score gate measures; everything stylistic

@@ -108,6 +108,14 @@ ADVISORY_ONLY_CHECKS = frozenset(
         # user-facing scan's repeated hits - advisory by registry.
         "no-new-array",
         "set-state-in-effect",
+        # round-19 capability adoption: the lint-shape gates the
+        # user-facing scans kept surfacing as misses - advisory by registry.
+        "bare-node-builtin",
+        "self-assign",
+        "useless-empty-export",
+        "impure-render-call",
+        "prefer-starts-ends-with",
+        "useless-escape",
         "bloat-long-file",
         "bloat-param-count",
         "bloat-comment-ratio",

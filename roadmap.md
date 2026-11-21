@@ -957,6 +957,61 @@ format clean, mypy clean, the accuracy benchmark exit 0 with the
 clean controls clean, the fixture benchmark pass, the ratchet exit 0,
 and the self-scan verdict CLEAN.
 
+## Round-19.7 - the seventh greptile pass verified the twenty and shipped the lint column (2026-11-21)
+
+The review listed twenty open findings. Thirteen were already closed
+by earlier passes (verified against this tree finding by finding: the
+SBOM readers' attribute-order and alias rules, the purl identity
+rules, the requirement constraint preservation, the requirements*
+pattern, the section coverage, the NOASSERTION license rule, the
+per-fixture holdout judging keyed by slug, the manifest-sourced split
+labels, the registry-refused labels, the wrong-shape ValueError, and
+the push-branch test's unchanged comparison with its
+prevention-only docstring). Seven were real and are fixed now:
+
+- the manifest walk followed directory symlinks with no visited set
+  and never read `MAX_WALKED_DIRS` - a link back to a parent stalls
+  both full scans and per-edit hooks; the walk now skips directory
+  symlinks, tracks visited directories by real path, and enforces the
+  budget;
+- tsconfig's trailing commas were refused by the strict JSONC read,
+  so a valid config's real aliases were reported as undeclared
+  packages; trailing commas outside strings are dropped now, a comma
+  inside a string value stays;
+- the re-export and dynamic-import patterns ran over raw source, so a
+  commented-out or documented import was a finding; the scan reads a
+  comment-blanked, string-kept, regex-body-blanked copy and a
+  specifier quoted inside a longer literal is example text, not a
+  declaration;
+- the set-state-in-effect arrow exclusion never ended - one nested
+  callback muted every later statement in the same effect, which is
+  exactly why the use-mobile listener shape the user's app ships
+  passed silent; the exclusion now ends where the arrow's body ends;
+- the effect's first-argument scan treated any comma at paren depth
+  one as the argument end, so the comma inside a body's `[1, 2]`
+  hid a later synchronous update; every bracket kind is counted now;
+- the span mask treated quotes inside a regex literal as string
+  openers - the apostrophe in `/'/g` blanked the rest of the file;
+  a `/` the walk can prove opens a literal is consumed as one, and a
+  `/` that never closes on its line falls back to division.
+
+The same user-facing evidence demanded the capability column, and
+`slop_lint_shapes.py` ships it advisory: `bare-node-builtin`,
+`self-assign`, `useless-empty-export`, `impure-render-call`,
+`prefer-starts-ends-with` and `useless-escape` - one oracle per shape
+the external linters caught and the engine did not, each quiet by
+construction (binding evidence silences the builtin check, render
+purity reads only the statement depth of a JSX-returning PascalCase
+component, the anchored-regex suggestion asks for the test/match use
+and a plain body). Both halves ride the per-file scan, the facade
+re-exports, the registry (remedies, categories, advisory) and a
+25-test contract file; the complexity column (`god-function`,
+`bloat-param-count`, `bloat-long-file`) already carried the
+function-too-long, too-many-params and file-too-large classes.
+
+Regression held: the full suite 1,514 green, ruff check and format
+clean, and the accuracy benchmark's clean controls clean.
+
 ## The 50-feature reverse-engineering program (2026-11-19)
 
 The external spec lists fifty features across three reference

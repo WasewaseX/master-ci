@@ -101,6 +101,24 @@ REMEDIES = {
         "Derive the state during render or set it behind a callback - "
         "a synchronous setState in an effect renders, runs, renders again"
     ),
+    "bare-node-builtin": (
+        "Import the node module the file uses (import fs from 'node:fs') "
+        "or drop the dead reference - a bare builtin is a ReferenceError on first run"
+    ),
+    "self-assign": (
+        "Assign the intended source or delete the assignment - a self-assignment changes nothing"
+    ),
+    "useless-empty-export": (
+        "Delete the empty export - the file already imports or exports, "
+        "so it is a module without it"
+    ),
+    "impure-render-call": (
+        "Compute the value outside the component or inside an event/effect - render must stay pure"
+    ),
+    "prefer-starts-ends-with": (
+        "Use String#startsWith/endsWith - the prefix or suffix test reads without a regex"
+    ),
+    "useless-escape": ("Drop the backslash - the escaped character needs no escape here"),
     "blanket-suppression": "Scope the suppression to a single rule with a reason",
     "step-comments": "Let the code read like code; move narration to the PR description",
     "placeholder-naming": "Rename placeholder identifiers to names that describe the data",

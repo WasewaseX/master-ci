@@ -151,6 +151,14 @@ from slop_lcom4 import (  # noqa: F401,E402
     MAX_LCOM4_FINDINGS as MAX_LCOM4_FINDINGS,
     check_class_cohesion as check_class_cohesion,
 )
+from slop_lint_shapes import (  # noqa: F401,E402
+    check_bare_node_builtin as check_bare_node_builtin,
+    check_impure_render_call as check_impure_render_call,
+    check_prefer_starts_ends_with as check_prefer_starts_ends_with,
+    check_self_assign as check_self_assign,
+    check_useless_empty_export as check_useless_empty_export,
+    check_useless_escape as check_useless_escape,
+)
 from slop_model import (  # noqa: F401,E402
     ADVISORY_ONLY_CHECKS as ADVISORY_ONLY_CHECKS,
     BLOCKING_CHECKS as BLOCKING_CHECKS,

@@ -1910,3 +1910,36 @@ commit with regression tests.
   per-file scan and are registered advisory with remedies and
   categories; the jsx-a11y and remaining react-hooks families stay
   unadopted and are claimed by nothing.
+- **Round-19 lint-shape gates (advisory):** the classes the user's
+  own report showed other linters catching while the engine stood
+  still, each with its own oracle in `slop_lint_shapes.py`:
+  `bare-node-builtin` reports a node builtin module used as a bare
+  name nothing imports (`fs.readFileSync` with no `import` of `fs` is
+  a `ReferenceError` on first run) - any evidence of a local binding
+  (the module imported, a declaration, an `as` rename, a parameter or
+  key of the same name) silences the file, and globals that need no
+  import (`console`, `process`, `Math`, `Date`, `Buffer`) are not
+  builtins here. `self-assign` reports `x = x`, `a.b = a.b` and
+  `const x = x` - `==`, `=>`, compound assignment and a right-hand
+  side that continues (`x = x + 1`) are not self-assignments.
+  `useless-empty-export` reports `export {}` in a file that already
+  imports or exports - the one empty export that makes a bare file a
+  module stays. `impure-render-call` reports `Math.random()`,
+  `Date.now()`, `new Date()` and the crypto randomness pair at a
+  PascalCase component's own statement depth when the body returns
+  JSX - calls inside callbacks, effects, memos, handlers or deeper
+  braces run when their owner runs, not during render, and stay out.
+  `prefer-starts-ends-with` reports a plain anchored literal
+  (`/^GET/`, `/app$/`) used by `test`/`match`/`exec`/`search` with
+  the string-method suggestion - metacharacters, case-insensitive
+  flags and untested literals stay out. `useless-escape` reports the
+  four escape shapes that never change a string's meaning (`\"` in
+  single quotes, `\'` in double quotes, an escaped backtick in
+  either, `\/` anywhere) - templates and regex bodies stay out whole.
+  The `set-state-in-effect` arrow exclusion now ends where the
+  arrow's body ends (a concise body at its `;` or line end, a block
+  body at its closing brace), so `load().then(d => setData(d));
+  setReady(true)` reports the later synchronous set - the
+  use-mobile/listener shape the user's scan missed - and the
+  first-argument scan tracks every bracket kind, so the comma inside
+  a body's `[1, 2]` no longer ends the effect callback.

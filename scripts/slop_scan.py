@@ -69,6 +69,14 @@ from slop_imports import (
 )
 from slop_js_shapes import check_no_new_array, check_set_state_in_effect
 from slop_lcom4 import check_class_cohesion
+from slop_lint_shapes import (
+    check_bare_node_builtin,
+    check_impure_render_call,
+    check_prefer_starts_ends_with,
+    check_self_assign,
+    check_useless_empty_export,
+    check_useless_escape,
+)
 from slop_model import Finding, _finding
 from slop_orphan import check_orphan_modules
 from slop_patterns import CODE_EXTS, DOC_EXTS, FAMILY_OF_EXT, TODO_PATTERN, UI_EXTS
@@ -129,6 +137,15 @@ def scan_code_file(
     # and the synchronous setState inside an effect.
     findings.extend(check_no_new_array(path, text, family, rel))
     findings.extend(check_set_state_in_effect(path, text, family, rel))
+    # round-19 capability adoption: the lint-shape gates the user-facing
+    # scans kept surfacing as misses - bare node builtins, self-assignment,
+    # the empty export, impure render calls, anchored regexes, escapes.
+    findings.extend(check_bare_node_builtin(path, text, family, rel))
+    findings.extend(check_self_assign(path, text, family, rel))
+    findings.extend(check_useless_empty_export(path, text, family, rel))
+    findings.extend(check_impure_render_call(path, text, family, rel, ext))
+    findings.extend(check_prefer_starts_ends_with(path, text, family, rel))
+    findings.extend(check_useless_escape(path, text, family, rel))
     findings.extend(check_ts_slop(path, text, family, rel))
     findings.extend(check_jvm_slop(path, text, family, rel))
     findings.extend(check_csharp_slop(path, text, family, rel))

@@ -12,11 +12,12 @@ bounded price for workspace knowledge and ``node_modules`` pays none.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from slop_files import read_text_lax
 from slop_patterns import SKIP_DIRS
-from slop_span_mask import mask_span_forms
+from slop_span_mask import mask_span_forms, string_spans
 
 MAX_JS_MANIFESTS = 64
 MAX_ALIAS_CONFIGS = 16
@@ -76,20 +77,35 @@ def _bounded_named_files(root: Path, names: frozenset[str], cap: int) -> list[Pa
 
     The walk skips the same directories the scanner's file iteration
     skips (``SKIP_DIRS`` plus dot-directories - ``node_modules`` alone
-    can hold thousands of package.json files) and stops after ``cap``
-    files, so a monorepo pays a bounded walk for workspace knowledge.
+    can hold thousands of package.json files), never re-enters a
+    directory it has already visited (two linked folders back to the
+    same parent would otherwise revisit the subtree once per link
+    path), and stops at ``cap`` files or ``MAX_WALKED_DIRS`` visited
+    directories - so a monorepo, and a link cycle, pays a bounded walk
+    for workspace knowledge.
     """
     found: list[Path] = []
     pending = [root]
-    while pending and len(found) < cap:
-        dirs, named = _split_entries(pending.pop(), names)
+    visited: set[str] = set()
+    while pending and len(found) < cap and len(visited) < MAX_WALKED_DIRS:
+        current = pending.pop()
+        key = os.path.realpath(current)
+        if key in visited:
+            continue
+        visited.add(key)
+        dirs, named = _split_entries(current, names)
         found.extend(named[: cap - len(found)])
         pending.extend(dirs)
     return found
 
 
 def _split_entries(current: Path, names: frozenset[str]) -> tuple[list[Path], list[Path]]:
-    """(descendable directories, named files) of one directory."""
+    """(descendable directories, named files) of one directory.
+
+    A directory symlink never descends: a link back to an ancestor
+    would turn the walk into a cycle, and a link to a sibling subtree
+    would read its manifests once per link path.
+    """
     try:
         entries = sorted(current.iterdir())
     except OSError:
@@ -97,7 +113,10 @@ def _split_entries(current: Path, names: frozenset[str]) -> tuple[list[Path], li
     dirs = [
         entry
         for entry in entries
-        if entry.is_dir() and entry.name not in SKIP_DIRS and not entry.name.startswith(".")
+        if entry.is_dir()
+        and not entry.is_symlink()
+        and entry.name not in SKIP_DIRS
+        and not entry.name.startswith(".")
     ]
     named = [entry for entry in entries if entry.is_file() and entry.name in names]
     return dirs, named
@@ -122,19 +141,62 @@ def collect_js_alias_prefixes(root: Path) -> frozenset[str]:
 def _read_jsonc(path: Path) -> object:
     """The parsed config, comments masked out; None when unparseable.
 
-    tsconfig/jsconfig allow comments; a raw ``json.loads`` refuses them
-    and a regex strip would eat ``//`` inside string values, so the
-    document is read over the length-preserving mask (double-quoted
-    strings only - JSON has no bare-quote literals) before parsing.
+    tsconfig/jsconfig allow comments and trailing commas; a raw
+    ``json.loads`` refuses both and a regex strip would eat ``//``
+    inside string values, so the document is read over the
+    length-preserving mask (double-quoted strings only - JSON has no
+    bare-quote literals), then trailing commas outside strings are
+    dropped before parsing. A config that still will not parse
+    contributes nothing - an advisory check never guesses.
     """
     try:
         raw = read_text_lax(path)
     except OSError:
         return None
     try:
-        return json.loads(mask_span_forms(raw, quotes='"', keep_strings=True))
+        masked = mask_span_forms(raw, quotes='"', keep_strings=True)
+        return json.loads(_strip_trailing_commas(masked))
     except (json.JSONDecodeError, ValueError):
         return None
+
+
+def _strip_trailing_commas(masked: str) -> str:
+    """The document with trailing commas outside strings removed.
+
+    tsconfig's JSON dialect allows ``{"paths": {"@app/*": ["./src/*"],}}``;
+    a strict ``json.loads`` refuses the comma and the config's real
+    aliases would be reported as undeclared packages instead. The
+    string spans come from the same masked copy (its strings are kept,
+    its comments are blanks), so a comma the reader cannot prove is
+    outside a literal stays, and everything else parses as written.
+    """
+    spans = string_spans(masked)
+    out: list[str] = []
+    index = 0
+    while index < len(masked):
+        char = masked[index]
+        if char == "," and not _inside_spans(index, spans):
+            look = _next_significant(masked, index + 1)
+            if look < len(masked) and masked[look] in "}]":
+                out.extend(masked[index + 1 : look])
+                index = look
+                continue
+        out.append(char)
+        index += 1
+    return "".join(out)
+
+
+def _inside_spans(index: int, spans: list[tuple[int, int]]) -> bool:
+    """True when ``index`` sits inside a string literal's span."""
+    return any(start < index < end for start, end in spans)
+
+
+def _next_significant(masked: str, start: int) -> int:
+    """The first index at or after ``start`` that is not whitespace."""
+    look = start
+    while look < len(masked) and masked[look] in " \t\r\n":
+        look += 1
+    return look
 
 
 def _alias_prefixes(data: object) -> set[str]:
