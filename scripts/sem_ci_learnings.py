@@ -186,7 +186,8 @@ def record_learning(path: Path, kind: str, pattern: str, remediation: str, sourc
         (lesson.kind, lesson.pattern): lesson for lesson in existing
     }
     kept[(learning.kind, learning.pattern)] = learning
-    rendered = json.dumps(_store_document(list(kept.values())), indent=1)
+    # indent=2, not 1: this store is committed, so its bytes obey .editorconfig
+    rendered = json.dumps(_store_document(list(kept.values())), indent=2)
     _parse_store(rendered, store_path)  # the writer must eat its own output
     store_path.write_text(rendered + "\n", encoding="utf-8")
     return rendered

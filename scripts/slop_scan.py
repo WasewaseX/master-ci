@@ -63,10 +63,20 @@ from slop_imports import (
     DepContext,
     check_phantom_imports,
     check_undeclared_imports,
+    collect_js_alias_prefixes,
     collect_js_dependencies,
     collect_py_dependencies,
 )
+from slop_js_shapes import check_no_new_array, check_set_state_in_effect
 from slop_lcom4 import check_class_cohesion
+from slop_lint_shapes import (
+    check_bare_node_builtin,
+    check_impure_render_call,
+    check_prefer_starts_ends_with,
+    check_self_assign,
+    check_useless_empty_export,
+    check_useless_escape,
+)
 from slop_model import Finding, _finding
 from slop_orphan import check_orphan_modules
 from slop_patterns import CODE_EXTS, DOC_EXTS, FAMILY_OF_EXT, TODO_PATTERN, UI_EXTS
@@ -79,6 +89,7 @@ from slop_reliability import (
 )
 from slop_residue import check_residue
 from slop_security import check_security_column
+from slop_similarity import check_near_duplicates
 from slop_suppress import apply_inline_suppression, collect_suppression
 from slop_symbol_graph import check_semantic_dead_symbols
 from slop_test_redundancy import check_test_redundancy
@@ -92,8 +103,7 @@ def scan_code_file(
     ext: str,
     rel: str,
     phrases: dict,
-    py_manifests: tuple[set[str], set[str]],
-    js_deps: set[str],
+    deps: DepContext,
 ) -> list[Finding]:
     text = read_text_lax(path)
     family = FAMILY_OF_EXT.get(ext, "")
@@ -122,6 +132,20 @@ def scan_code_file(
     findings.extend(check_rust(path, text, family))
     findings.extend(check_debug_left(path, text, family, rel))
     findings.extend(check_js_slop(path, text, family, rel))
+    # scanaislop round-19 adoption: the two JS judgment calls the
+    # user-facing scans kept surfacing - the length-trap constructor
+    # and the synchronous setState inside an effect.
+    findings.extend(check_no_new_array(path, text, family, rel))
+    findings.extend(check_set_state_in_effect(path, text, family, rel))
+    # round-19 capability adoption: the lint-shape gates the user-facing
+    # scans kept surfacing as misses - bare node builtins, self-assignment,
+    # the empty export, impure render calls, anchored regexes, escapes.
+    findings.extend(check_bare_node_builtin(path, text, family, rel))
+    findings.extend(check_self_assign(path, text, family, rel))
+    findings.extend(check_useless_empty_export(path, text, family, rel))
+    findings.extend(check_impure_render_call(path, text, family, rel, ext))
+    findings.extend(check_prefer_starts_ends_with(path, text, family, rel))
+    findings.extend(check_useless_escape(path, text, family, rel))
     findings.extend(check_ts_slop(path, text, family, rel))
     findings.extend(check_jvm_slop(path, text, family, rel))
     findings.extend(check_csharp_slop(path, text, family, rel))
@@ -134,11 +158,7 @@ def scan_code_file(
     # scanaislop round-16: the security column rides the per-file pass.
     findings.extend(check_security_column(path, text, family, rel))
     findings.extend(check_phantom_imports(path, text, family))
-    findings.extend(
-        check_undeclared_imports(
-            path, text, family, rel, DepContext(path.parent, py_manifests, js_deps)
-        )
-    )
+    findings.extend(check_undeclared_imports(path, text, family, rel, deps))
     todos = len(TODO_PATTERN.findall(text))
     code_lines = max(len([line for line in text.splitlines() if line.strip()]), 1)
     if code_lines >= 20 and todos / code_lines > 0.05:
@@ -226,11 +246,16 @@ def inventory_findings(
 
 @dataclass(frozen=True)
 class ScanContext:
-    """Everything one file scan needs, resolved once per run."""
+    """Everything one file scan needs, resolved once per run.
+
+    ``deps`` carries the whole declared-set surface - the Python
+    manifests, the tree's npm package.json names, the tsconfig/jsconfig
+    ``paths`` prefixes - so the undeclared-import check trusts every
+    site the resolver trusts and the per-file signature stays small.
+    """
 
     phrases: dict
-    py_manifests: tuple[set[str], set[str]]
-    js_deps: set[str]
+    deps: DepContext
     provenance: bool
 
 
@@ -239,9 +264,7 @@ def _scan_one_file(path: Path, suffix: str, rel: str, ctx: ScanContext) -> list[
     if suffix in DOC_EXTS:
         findings.extend(scan_doc_file(path, suffix, ctx.phrases))
     elif suffix in CODE_EXTS or suffix in UI_EXTS:
-        findings.extend(
-            scan_code_file(path, suffix, rel, ctx.phrases, ctx.py_manifests, ctx.js_deps)
-        )
+        findings.extend(scan_code_file(path, suffix, rel, ctx.phrases, ctx.deps))
     else:
         return findings
     if ctx.provenance:
@@ -291,6 +314,8 @@ def _repo_level_findings(
     """
     findings: list[Finding] = []
     findings.extend(scan_duplicates(files, root, globs))
+    # round-19 (A9): the similarity-scored end of the clone spectrum.
+    findings.extend(check_near_duplicates(root, files, globs))
     findings.extend(check_duplicate_type_decls(root, files, globs))
     findings.extend(check_unused_declarations(root, files, globs))
     # nextgen vertical slice: the parse-tree deadness oracle joins the
@@ -367,8 +392,12 @@ def scan(
     base = root if root.is_dir() else root.parent
     ctx = ScanContext(
         phrases,
-        collect_py_dependencies(base),
-        collect_js_dependencies(base),
+        DepContext(
+            base,
+            collect_py_dependencies(base),
+            collect_js_dependencies(base),
+            collect_js_alias_prefixes(base),
+        ),
         provenance,
     )
     findings = _file_findings(root, files, globs, ctx)

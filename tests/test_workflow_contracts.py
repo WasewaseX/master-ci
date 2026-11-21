@@ -1363,6 +1363,32 @@ def test_zizmor_suppressions_sit_where_zizmor_parses_them():
             )
 
 
+def test_test_suite_optional_parsers_install_on_miss(master_ci_text: str):
+    """The suite's optional-parser prerequisites install on miss, by name.
+
+    The contract suites parse workflow YAML (PyYAML) and untrusted csproj
+    manifests (defusedxml, the safe-XML boundary for the inventory);
+    neither ships with pytest. The python job's pytest step installs
+    each on import miss, and the fixture-contracts job pins defusedxml
+    beside the parsers it already installs - the same on-miss pattern -
+    so a stock toolchain runs the XML contracts for real instead of
+    skipping them or failing on a missing reader.
+    """
+    pytest_step = _extract_workflow_step(master_ci_text, "Run pytest")
+    for module, package in (("yaml", "pyyaml"), ("defusedxml", "defusedxml")):
+        on_miss = (
+            f'python -c "import {module}" 2>/dev/null || python -m pip install --quiet {package}'
+        )
+        assert on_miss in pytest_step, f"the pytest step must install {package} on import miss"
+    detector_step = _extract_workflow_step(
+        (WF_DIR / "ci.yml").read_text(encoding="utf-8"),
+        "Detector unit tests (incl. edge cases)",
+    )
+    assert "defusedxml)" in detector_step, (
+        "the fixture-contracts job must install the pinned defusedxml beside the parsers"
+    )
+
+
 def test_parser_dependent_jobs_install_and_demand_parsers(master_ci_text: str):
     """The v2.5 parser guarantee: every job that promises parse-backed
     metrics installs the exact pinned analyzers, the scan jobs demand
@@ -2436,3 +2462,46 @@ def test_quality_cpp_summary_names_every_project_outcome(master_ci_text: str):
         "always() && steps.detect.outputs.tool"
         in _quality_cpp_step_ifs(master_ci_text)["Report per-project outcomes"]
     ), "a mid-loop crash must still render the rows already written"
+
+
+# --- round-19: the push-branch filters are lists, not scalars ----------------
+
+
+def test_push_branch_filters_are_real_lists():
+    """A mangled ``branches`` value that is still a valid YAML scalar is a silent hole.
+
+    A scalar such as ``ain]`` - a list whose opening bracket was eaten
+    by a rendering artifact - parses cleanly, every gate stays green,
+    and the trigger quietly stops matching any branch. This test is
+    preventive: the repository never shipped such a filter (the
+    mangling that drew attention to the shape was a display artifact
+    in a review, and the workflow files were byte-verified clean), and
+    the contract exists so one can never ship for real. The contract:
+    every ``on.push.branches`` / ``on.pull_request.branches`` filter is
+    a YAML list of real branch names - a scalar filter is a
+    misconfiguration, not a branch, and each entry is compared
+    unchanged, because stripping brackets before matching would bless
+    exactly the mangling this test exists to catch.
+    """
+    real_branches = {
+        line.split()[-1]
+        for line in subprocess.run(
+            ["git", "branch", "--list", "--all"], capture_output=True, text=True, check=True
+        ).stdout.splitlines()
+    }
+    real_branches.update({"main", "master"})
+    for path in WORKFLOWS:
+        doc = load(path)
+        on = doc.get(True) or doc.get("on") or {}
+        for event in ("push", "pull_request"):
+            branch_config = on.get(event) if isinstance(on, dict) else None
+            if not branch_config or "branches" not in branch_config:
+                continue
+            branches = branch_config["branches"]
+            assert isinstance(branches, list) and branches, (
+                f"{path.name}: on.{event}.branches must be a YAML list of branch names"
+            )
+            for branch in branches:
+                assert isinstance(branch, str) and branch in real_branches, (
+                    f"{path.name}: on.{event}.branches names {branch!r}, which does not exist"
+                )

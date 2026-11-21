@@ -104,6 +104,18 @@ ADVISORY_ONLY_CHECKS = frozenset(
         "placeholder-note",
         "ts-suppression",
         "undeclared-import",
+        # scanaislop round-19 adoption: the JS judgment calls behind the
+        # user-facing scan's repeated hits - advisory by registry.
+        "no-new-array",
+        "set-state-in-effect",
+        # round-19 capability adoption: the lint-shape gates the
+        # user-facing scans kept surfacing as misses - advisory by registry.
+        "bare-node-builtin",
+        "self-assign",
+        "useless-empty-export",
+        "impure-render-call",
+        "prefer-starts-ends-with",
+        "useless-escape",
         "bloat-long-file",
         "bloat-param-count",
         "bloat-comment-ratio",
@@ -237,6 +249,10 @@ ADVISORY_ONLY_CHECKS = frozenset(
         # - both advisory like every other budget.
         "long-but-cohesive",
         "redundant-test",
+        # round-19 (roadmap A9): the similarity-scored near-duplicate -
+        # a measurement with the score as evidence, advisory like the
+        # other budgets; the exact end stays with the duplication checks.
+        "near-duplicate-clone",
     }
 )
 

@@ -753,6 +753,265 @@ Guardrails red is its designed red. Seven open dependabot PRs were
 rebased onto the fixed base - their earlier reds were the ratchet
 correctly refusing an outdated base.
 
+## Round-19 - the inventory round: batch 2 closed, batch 3 opened (2026-11-20)
+
+PR #23 (round-18, batch 2's four features plus the greptile rounds'
+fixes) merged by rebase after the second greptile pass's three findings
+were fixed - the learnings writer now obeys its loader's contracts,
+the diagnoser keeps every learned fix and counts unknown lines per
+line across jobs. Round-19 then landed four more roadmap items:
+
+- **A19 - SBOM and license policy** (`sem_sbom.py` + `sem_sbom_readers.py`):
+  six ecosystems, SPDX-2.3-shaped deterministic documents (digest-named,
+  constant creation stamp, sorted rows), fail-closed policy with
+  allow/deny/deny_unknown and a contradiction-is-config-error rule;
+  unparseable manifests are data gaps. The third greptile pass held the
+  readers to their own claims and the contracts were corrected: the
+  declared version spec stays verbatim (only an exact pin reaches a
+  purl as a version), purls follow each ecosystem's identity rules
+  (npm scopes keep the percent-encoded at-sign, Go module paths and
+  NuGet ids keep their declared casing), dependency licenses stay
+  NOASSERTION while each manifest's own license is reported separately
+  as a project license, every declared section is read (npm's four
+  tables, PEP 621 optional-dependencies, PEP 735 dependency-groups,
+  Poetry main/dev/groups, Cargo main/dev/build/target with
+  ``package =`` aliases resolved), discovery matches the advertised
+  requirements filename pattern, csproj rows parse by element and
+  attribute names (attribute order, quoting, extra attributes and
+  child Version elements all parse), and wrong-shape manifests are
+  recorded gaps instead of crashes. Twenty contract tests pin the
+  corrected shapes, the determinism, the exit codes (0/1/2) and the
+  gap behavior.
+- **A20 - the holdout split** (`sem_holdout.py`): sha256(salt:id)
+  splits, purity and disjointness test-pinned, the accuracy-real-v1
+  manifest fail-closed (schema, provenance, 40-hex commit, label
+  verbs, and labels validated against the live check registry - a
+  typo check id is a configuration error, never a vacuous clean row),
+  missing vendored fixtures recorded as gaps, present ones judged per
+  label through the positive-verdict kernel shared with the accuracy
+  benchmark. Judging is per fixture slug - the case the split
+  manifest names is the case the counts name - and every row's split
+  label comes from that same manifest, never a re-hash under a
+  different ratio. The manifest ships with zero repos and the row
+  stays partial - no real-world claim without a vendored corpus.
+- **A9 - near-duplicate clones** (`slop_similarity.py`): pair-shingle
+  anchors vote on alignments, blocks grow inside a mismatch ratio, the
+  similarity is the evidence. Two fixture rows joined the benchmark
+  table (167 fixtures now), the clean controls stayed clean, and the
+  detector's own scan cost was measured A/B on the synthetic corpus:
+  136.1 with the check, 135.5 without - under one percent.
+- **C43 - rerun inventory** (`sem_reruns.py`): run_attempt > 1 jobs
+  named with recovery verdicts, missing attempts as data gaps,
+  deterministic output, run-level payloads refused nothing silently.
+
+The round paid its own ratchet, the second time in three rounds the
+repo's gates caught the round's own code: seven functions past the
+cognitive/cyclomatic/nesting budgets, one chained-dict-get, one
+environment URL baked into the SBOM namespace (rebuilt as a spec-valid
+URN), the test preamble repeated past the boilerplate floor because
+the four new test modules ignored the round-13 conftest convention
+(they were migrated off it), and both CLI signature groups pushed to
+ten identical lines. Every row was paid by refactor, not re-record -
+the single baseline move is the new check's own three advisory rows,
+the documented catalog-adoption path: `near-duplicate-clone` joins the
+floor at its honest count with identities pinned, nothing else moved.
+
+One verification discipline note, recorded because it almost cost the
+round a phantom bug: the selftest workflow's push filter rendered as
+`branches: ain]` in tool output for an entire working session. Before
+claiming the defect, the raw bytes were checked - the line is
+`branches: [main]`, and the "ain]" was the renderer swallowing the
+`[m`. A hardening contract test now pins every `on.push.branches` /
+`on.pull_request.branches` filter to be a YAML list of real branch
+names, so a genuinely mangled filter of that shape can never merge -
+but the test's honest description is prevention, not a fix: no such
+defect existed on main.
+
+Regression held: 1425 tests green (up from the merged baseline),
+ruff check and format clean, mypy clean over 221 source files, the
+accuracy benchmark exit 0 with the clean controls clean, the fixture
+benchmark 167/167 pass, the ratchet exit 0, the self-scan verdict
+CLEAN grade A exit 0, and hosted CI verified by step name after the
+push.
+
+## Round-19.5 - the third greptile pass held the inventory round to its own claims (2026-11-21)
+
+PR #24's review returned twenty-six findings, all real, and every one
+of them a case of a module not believing its own docstring - the
+reader promised the advertised manifests and read fewer, promised
+declared values and altered them, promised a complete inventory and
+skipped sections, stamped the project's license onto its
+dependencies, re-hashed splits under a default ratio, judged a typo
+label as a vacuous clean row, and grew only the first anchor of an
+alignment. The fixes (all on round-19, per finding a regression test
+that encodes the review's own focused check): the SBOM readers moved
+to `sem_sbom_readers.py` and now parse by shape and name - verbatim
+specs with pin-only purls, per-ecosystem purl identity, NOASSERTION
+dependency licenses with project licenses reported separately, every
+declared section read, the advertised requirements pattern matched,
+csproj by element/attribute, wrong-shape documents recorded as gaps;
+the holdout judges per fixture slug with split labels read from the
+computed manifest and labels refused outside the live check registry,
+sharing one positive-verdict kernel with the accuracy benchmark (the
+detector's own near-duplicate check caught the round's first draft
+duplicating `judge_positives` - the kernel is the fix); the similarity
+oracle grows every anchor of an alignment and keeps the best block
+(most matched evidence first, then score, then earliest start), and
+the growth reuses the walk instead of repeating it - growing one
+anchor pair is an integer random walk, so a dense alignment answers
+every anchor's stop from the diagonal's prefixed gauge
+(`4 x misses - offset`, range-min/range-max lookups) and returns the
+identical best block the re-walk returned, at one pass instead of one
+walk per anchor line (the 4,000-line near-copy pair that cost ~1.8s
+of re-walking is judged in 0.04s, and the equivalence is pinned by a
+seeded differential test on every diagonal shape plus a wall-clock
+budget); the csproj reader maps the codec class too - an unknown
+declared encoding reaches ElementTree as `LookupError`, not
+`ParseError`, and now lands in the recorded-gap class with the rest,
+pinned by a hostile-manifest battery through `scan_sbom` (every
+failure class each parser can raise: nothing escapes, unreadable
+manifests are gaps with reasons, readable ones stay rows); the
+push-branch-filter test compares entries unchanged and its docstring
+now records what the byte-level verification showed - prevention,
+not a shipped-outage fix. The round's lessons went into the learnings
+store through the validated write path: twelve bug-class lessons from
+the review, then two more from the findings the first fixes missed -
+an exception surface must cover every class a parser can raise
+(`encoding-exception-surface`), and a per-candidate regrowth is
+quadratic work for what a prefixed walk answers by query
+(`quadratic-anchor-regrowth`) - fourteen lessons, the store's first
+real evidence.
+
+Regression held: 1449 tests green, ruff check and format clean, mypy
+clean over the source tree, the accuracy benchmark exit 0 with the
+clean controls clean, the fixture benchmark 167/167 pass, the
+self-scan verdict CLEAN grade A at its baseline counts (13 findings,
+none new), and the learnings store loads clean through the loader.
+
+## Round-19.6 - the sixth greptile pass closed the routing finding and adopted the surfaced capability column (2026-11-21)
+
+The review re-listed fifteen open findings. Fourteen were already
+closed by the third, fourth and fifth passes (each verified against
+this tree, finding by finding: the SBOM readers' shapes and identity
+rules, the section coverage, the requirements pattern, the
+NOASSERTION license rule, the per-fixture holdout judging, the
+manifest-sourced split labels, the registry-refused labels, the
+push-branch test's unchanged comparison and prevention-only
+docstring); the fifteenth was the gauge's own routing - the fourth
+pass had replaced the per-anchor re-walk with the prefix gauge but
+chosen the path by anchor count alone, and the count prices a
+20-line helper shared inside 4,000-line files with tables over the
+whole diagonal: 276 such alignments cost 2.34s where the direct
+walks take 0.016s, identical results. The route is estimated work
+now: three sampled walks measure the alignment's actual block length
+and the gauge is paid only when that measured cost outweighs the
+tables it would build (`2 x span x log2(span)` cells) - the helper
+alignment stays on the walks, the 4,000-line near-copy still takes
+the gauge, and both decisions are pinned by a sentinel test plus the
+24-file/4,000-line budget test encoding the review's own numbers.
+
+The same review's user-facing evidence listed shapes other scanners
+surfaced that this engine had no oracle for, and the round adopted
+the column:
+
+- **undeclared-import trusts every site the resolver trusts.** The js
+  family read one root package.json and priced `@/lib/x` aliases,
+  `#app/config` subpath imports, `@scope/pkg/plugin` subpaths (the
+  scope takes two segments, not the whole specifier) and workspace
+  members as undeclared packages. Now the declared set is every
+  package.json under the root (bounded walk, skip dirs pruned) -
+  dep sections plus each manifest's own `name`, so a monorepo
+  package is importable by its own name - and tsconfig/jsconfig
+  `paths` prefixes (a comment-tolerant JSONC read; the prefix
+  matches at a segment boundary, `@app` covers `@app/x` but not
+  `@app-data/x`). The import shapes widened too: re-exports
+  (`export { x } from 'pkg'`, `export * from 'pkg'`) and dynamic
+  `import('pkg')` name the same undeclared package a static import
+  does. The shape this round started from reports: an
+  `eslint.config.mjs` importing `eslint-plugin-import` that no
+  dependency section names.
+- **no-new-array** (unicorn adoption): the single-argument
+  `new Array(x)` is the length trap - `new Array(5)` reserves a
+  length, `new Array('5')` builds one element. Advisory; the
+  zero- and two-argument calls and a nested-call argument stay out,
+  and the scan reads a length-preserving masked copy so a string or
+  comment mentioning the shape is not a finding and the reported
+  line is the real one.
+- **set-state-in-effect** (react compiler adoption): a synchronous
+  setState in an `useEffect`/`useLayoutEffect` body renders, runs,
+  renders again. Advisory; the shape gate stays where the evidence
+  is - the effect's first argument at its statement depth, over the
+  masked copy - and the quiet directions are named: a call behind a
+  paren (`.then`, a timer), past a nested `=>` (a listener body),
+  on a method receiver (`store.setState`, `el.setAttribute` - a
+  hook setter is a bare identifier), inside deeper braces, or one
+  of the timer trio the setter shape matches (`setTimeout`,
+  `setInterval`, `setImmediate`), exempt by name. Both checks ride
+  `scan_code_file` and are registered advisory with remedies and
+  categories; the jsx-a11y and remaining react-hooks families stay
+  unadopted and are claimed by nothing - a future column, not a
+  shipped one.
+
+Regression held: the full suite green per file, ruff check and
+format clean, mypy clean, the accuracy benchmark exit 0 with the
+clean controls clean, the fixture benchmark pass, the ratchet exit 0,
+and the self-scan verdict CLEAN.
+
+## Round-19.7 - the seventh greptile pass verified the twenty and shipped the lint column (2026-11-21)
+
+The review listed twenty open findings. Thirteen were already closed
+by earlier passes (verified against this tree finding by finding: the
+SBOM readers' attribute-order and alias rules, the purl identity
+rules, the requirement constraint preservation, the requirements*
+pattern, the section coverage, the NOASSERTION license rule, the
+per-fixture holdout judging keyed by slug, the manifest-sourced split
+labels, the registry-refused labels, the wrong-shape ValueError, and
+the push-branch test's unchanged comparison with its
+prevention-only docstring). Seven were real and are fixed now:
+
+- the manifest walk followed directory symlinks with no visited set
+  and never read `MAX_WALKED_DIRS` - a link back to a parent stalls
+  both full scans and per-edit hooks; the walk now skips directory
+  symlinks, tracks visited directories by real path, and enforces the
+  budget;
+- tsconfig's trailing commas were refused by the strict JSONC read,
+  so a valid config's real aliases were reported as undeclared
+  packages; trailing commas outside strings are dropped now, a comma
+  inside a string value stays;
+- the re-export and dynamic-import patterns ran over raw source, so a
+  commented-out or documented import was a finding; the scan reads a
+  comment-blanked, string-kept, regex-body-blanked copy and a
+  specifier quoted inside a longer literal is example text, not a
+  declaration;
+- the set-state-in-effect arrow exclusion never ended - one nested
+  callback muted every later statement in the same effect, which is
+  exactly why the use-mobile listener shape the user's app ships
+  passed silent; the exclusion now ends where the arrow's body ends;
+- the effect's first-argument scan treated any comma at paren depth
+  one as the argument end, so the comma inside a body's `[1, 2]`
+  hid a later synchronous update; every bracket kind is counted now;
+- the span mask treated quotes inside a regex literal as string
+  openers - the apostrophe in `/'/g` blanked the rest of the file;
+  a `/` the walk can prove opens a literal is consumed as one, and a
+  `/` that never closes on its line falls back to division.
+
+The same user-facing evidence demanded the capability column, and
+`slop_lint_shapes.py` ships it advisory: `bare-node-builtin`,
+`self-assign`, `useless-empty-export`, `impure-render-call`,
+`prefer-starts-ends-with` and `useless-escape` - one oracle per shape
+the external linters caught and the engine did not, each quiet by
+construction (binding evidence silences the builtin check, render
+purity reads only the statement depth of a JSX-returning PascalCase
+component, the anchored-regex suggestion asks for the test/match use
+and a plain body). Both halves ride the per-file scan, the facade
+re-exports, the registry (remedies, categories, advisory) and a
+25-test contract file; the complexity column (`god-function`,
+`bloat-param-count`, `bloat-long-file`) already carried the
+function-too-long, too-many-params and file-too-large classes.
+
+Regression held: the full suite 1,514 green, ruff check and format
+clean, and the accuracy benchmark's clean controls clean.
+
 ## The 50-feature reverse-engineering program (2026-11-19)
 
 The external spec lists fifty features across three reference
@@ -767,11 +1026,13 @@ was grep plus source reads over `scripts/`, `tests/`, `docs/` and
 `.github/workflows/` - no status was copied from prose.
 
 The build order follows value and integration cost, fastest first:
-batch 1 is this round's slice plus the two validators the audit found
-missing; batches 2-4 stage the review-platform features, which are the
-one true gap (13 of 19 rows are missing or partial after round-18).
+batch 1 was round-17's slice plus the two validators the audit found
+missing; batch 2 closed with round-18 and round-19; batches 3-4 stage
+the review-platform features, which remain the one true gap (13 of 19
+B-rows are missing or partial after round-19, plus the four open
+A-rows; the C column has none left).
 
-### A. Quality engine (SonarQube, Qlty, Qodana): 14 shipped, 5 partial, 1 missing
+### A. Quality engine (SonarQube, Qlty, Qodana): 16 shipped, 4 partial, 0 missing
 
 | # | Feature | Master CI asset | Status |
 | --- | --- | --- | --- |
@@ -783,7 +1044,7 @@ one true gap (13 of 19 rows are missing or partial after round-18).
 | A6 | Independent quality dimensions | 8 dimensions in `slop_outputs.py` (architecture, code-health, reliability, maintainability, security, test-assurance, dependency-health, ai-integrity) | shipped |
 | A7 | Coverage ingestion, new-code coverage | `coverage_gate.py`, `coverage_parsers.py` | shipped |
 | A8 | Exact duplicated-block detection | `slop_duplicates.py` + `dup-block-density` (v2.18 audit D) | shipped |
-| A9 | Near-duplicate (similarity-scored) clones | only exact blocks and repeated lines; no similarity score | missing - batch 3 |
+| A9 | Near-duplicate (similarity-scored) clones | `slop_similarity.py` (round-19): pair-shingle anchors vote on (file pair, delta) alignments, a passing vote grows outward while the mismatch ratio holds, and a block reports with matched/length similarity in the message - the score is the evidence; same-file overlapping regions never accuse each other, one alignment reports once, findings capped at three best-score rows, advisory by registry; the path an alignment takes is estimated work - three sampled walks measure the block length and the prefixed gauge is paid only when that outweighs the tables it would build, so a small helper shared inside long files keeps the direct walks while a long near-copy answers every stop by query; the exact end of the spectrum stays with `slop_duplicates.py` and `dup-block-density` | shipped |
 | A10 | Cross-language class cohesion | `slop_lcom4.py` (Python AST; other families approximate) | partial - batch 3 |
 | A11 | Multi-dimensional complexity | `slop_cognitive.py`, `slop_lizard.py`, `slop_bloat.py`, `slop_density.py` | shipped |
 | A12 | Semantic dead-code detection | `slop_dead.py` (textual) + `semantic-dead-symbol` (parse-tree, round-17) | shipped |
@@ -793,8 +1054,8 @@ one true gap (13 of 19 rows are missing or partial after round-18).
 | A16 | File selection and analysis scope | `slop_files.py`, `path_filters.py` | shipped |
 | A17 | CodeQL integration | `codeql.yml`, `codeql_detect.py`, SARIF in the required gate | shipped |
 | A18 | Semgrep taint rule packs | `slop_security.py` sink column; interprocedural taint stays with Semgrep itself | partial - batch 4 |
-| A19 | Supply-chain analysis | `slop_deps.py`, `slop_ecosystem.py`, `vulnerable-dependency`; SBOM and license policy are docs-only | partial - batch 2 |
-| A20 | Real-world accuracy benchmark | `accuracy_benchmark.py` + labeled fixtures; real-repo corpus and holdout split missing | partial - batch 2 |
+| A19 | Supply-chain analysis | `slop_deps.py`, `slop_ecosystem.py`, `vulnerable-dependency`, plus `sem_sbom.py` + `sem_sbom_readers.py` (round-19, contracts corrected under the third greptile pass): an SPDX-2.3-shaped SBOM over the six supported manifests (PyPI requirements*/pyproject incl. PEP 621 optional-dependencies and PEP 735 dependency-groups and Poetry main/dev/groups, npm package.json with all four dependency tables, go.mod, Cargo.toml incl. dev/build/target tables with `package =` aliases resolved, csproj parsed by element and attribute names, Gemfile) with declared version specs verbatim (ranges keep their operators; a purl carries a version only when the spec pins exactly one), purls by ecosystem identity (npm scopes keep the percent-encoded at-sign, Go module paths and NuGet ids keep declared casing), dependency licenses at NOASSERTION with each manifest's own license reported separately as a project license (an MIT application never licenses its dependencies), digest-named deterministic documents (identical trees render byte-identical), and a fail-closed allow/deny/deny_unknown license policy judged per package - an unparseable or wrong-shape manifest is a recorded data gap, never a silent skip and never a stopped scan; resolution stays with the lock files | shipped |
+| A20 | Real-world accuracy benchmark | `accuracy_benchmark.py` + labeled fixtures; the holdout split shipped in round-19 (`sem_holdout.py`): a case's split is a pure sha256 function of salt and id (two runs agree, no case in both), judging is per fixture slug - the case the split manifest names is the case the counts name, each row's split label read from that same manifest (never a re-hash) - with per-case counts in a holdout-report-v1 artifact and labels validated against the live check registry before judging; the real-repo corpus protocol is implemented fail-closed (`benchmarks/accuracy/corpus-real.json`, accuracy-real-v1: upstream URL, exact 40-hex commit, labels written before the engine runs) and the manifest ships empty - a named-but-unvendored fixture is a recorded data gap, never a guessed pass; zero real repos are vendored yet, so real-world accuracy stays unproven | partial - batch 4 |
 
 ### B. Review platform (CodeRabbit): 6 shipped, 7 partial, 6 missing
 
@@ -807,20 +1068,20 @@ one true gap (13 of 19 rows are missing or partial after round-18).
 | B25 | Repository code graph | IR v1 + `slop_symbol_graph.py` (first slice); graph persistence shipped in round-18: versioned JSON bundles (graph schema + IR version, both refused on mismatch), use counts and parse failures stored, def sites rebuilt from the files - the loaded graph accuses exactly what the built graph accused | shipped |
 | B26 | Linked-issue requirement validation | nothing | missing - batch 4 |
 | B27 | Repo coding guidelines / path instructions | `AGENTS.md` exists; no instruction engine | partial - batch 3 |
-| B28 | Persistent reviewer learnings | `sem_ci_learnings.py` (slice, round-18): versioned learnings-v1 store of failure-signature lessons (pattern, the remediation that fixed it, the review that taught it), fail-closed loading, deterministic deduplicated recording, `--learnings` integration in `sem_ci_diagnose.py` with `learned` confidence; the writer is held to the loader's own contracts (required-field rule before any write, rendered document re-parsed through the loader before disk, refusals leave the file byte-unchanged); the cross-review memory lifecycle stays open | partial |
+| B28 | Persistent reviewer learnings | `sem_ci_learnings.py` (slice, round-18): versioned learnings-v1 store of failure-signature lessons (pattern, the remediation that fixed it, the review that taught it), fail-closed loading, deterministic deduplicated recording, `--learnings` integration in `sem_ci_diagnose.py` with `learned` confidence; the writer is held to the loader's own contracts (required-field rule before any write, rendered document re-parsed through the loader before disk, refusals leave the file byte-unchanged); the store now carries its first real evidence - the twelve bug-class lessons the pr-24 review taught, each recorded through the validated write path (`.github/master-ci-learnings.json`) - and the cross-review memory lifecycle stays open | partial |
 | B29 | Custom pre-merge checks | `hook_gate.py` per-edit gate; no declarative custom-check config | partial - batch 3 |
 | B30 | Incremental review orchestration | CI re-runs only; no commit-aware review state | missing - batch 4 |
 | B31 | PR merge-risk assessment | `sem_merge_risk.py` (round-17): model v1, registry-driven severity, evidence rows, data gaps reported as incomplete | shipped |
 | B32 | PR triage queue | nothing | missing - batch 4 |
 | B33 | Reviewer and label recommendations | `label.yml` (actions/labeler v7); no reviewer derivation | partial - batch 3 |
-| B34 | CI failure diagnosis | `sem_ci_diagnose.py` (round-18): signature table over this repo's own gates (ruff, ruff-format, mypy, pytest, yamllint, markdown-lint, file-too-large, ratchet, pin-lag) driven from Actions jobs JSON or raw logs; step-name matches are exact (including the workflow's own "Lint YAML" spelling), log matches textual, learnings matches learned, no match stays unclassified with evidence - clear failure lines without a signature (Actions error annotations, `fatal:`, `Error:`, non-zero exit-code wrappers) are preserved as unclassified evidence while progress lines stay silence, Actions log prefixes (runner timestamp, `gh run view --log` job/step tabs) are stripped before matching, and cancelled/skipped work is claimed as nothing; merge parity is test-pinned - jobs reports count unknown lines per line (not per job) exactly as log mode does, and lessons that teach different fixes stay separate causes through every merge | shipped |
+| B34 | CI failure diagnosis | `sem_ci_diagnose.py` (round-18): signature table over this repo's own gates (ruff, ruff-format, mypy, pytest, yamllint, markdown-lint, file-too-large, ratchet, pin-lag) driven from Actions jobs JSON or raw logs; step-name matches are exact (including the workflow's own "Lint YAML" spelling), log matches textual, learnings matches learned, no match stays unclassified with evidence - clear failure lines without a signature (Actions error annotations, `fatal:`, `Error:`, non-zero exit-code wrappers) are preserved as unclassified evidence while progress lines stay silence, Actions log prefixes (runner timestamp, `gh run view --log` job/step tabs) are stripped before matching, and cancelled/skipped work is claimed as nothing; merge parity is test-pinned - jobs reports count unknown lines per line (not per job) exactly as log mode does, and lessons that teach different fixes stay separate causes through every merge; `sem_reruns.py` (round-19) reads the same payload for the rerun inventory | shipped |
 | B35 | Finishing touches / verified fixes | `fix_engine.py`, `fix_tools.py` with tiers and dry-run | shipped |
 | B36 | Cross-repository context via MCP | `mcp_server.py`, `mcp_tools.py`; no allowlisted cross-repo context | partial - batch 4 |
 | B37 | Repo-wide security deep scans | `slop_security.py` + scheduled `audit.yml` | partial - batch 3 |
 | B38 | Security finding lifecycle | SARIF out; no finding state machine | missing - batch 4 |
 | B39 | Post-merge automation | quality-store pin promotion + metric store | partial - batch 3 |
 
-### C. Pipeline model (Semaphore): 10 shipped, 1 partial, 0 missing
+### C. Pipeline model (Semaphore): 11 shipped, 0 partial, 0 missing
 
 The parity research lives in `docs/semaphore-parity-research.md`; the
 round-16 contracts are pinned by tests.
@@ -830,7 +1091,7 @@ round-16 contracts are pinned by tests.
 | C40 | Pipeline schema compile-time validation | `tests/test_workflow_contracts.py`, `sem_secrets_lint.py` | shipped |
 | C41 | Pipeline DAG, global config, after-pipeline | workflow DAG + `if: always()` summary jobs | shipped |
 | C42 | Matrix expansion safety | `sem_matrix_validate.py` (round-17): duplicate keys, empty/non-list dims, product vs the documented 64 ceiling, exclude-only key checks, dynamic expansion reported gate-neutral | shipped |
-| C43 | Partial reruns / failed-job recovery | GitHub native rerun used; rerun inventory not exposed | partial - batch 3 |
+| C43 | Partial reruns / failed-job recovery | `sem_reruns.py` (round-19): the run-level jobs JSON becomes a rerun inventory - every job with `run_attempt` > 1 named with its attempt count, conclusion and recovery verdict (recovered / still-failing / rerun-pending), a missing `run_attempt` recorded as a data gap rather than guessed attempt one, deterministic rows, byte-identical output, run-level payloads only; advisory by design - the recovery question stays a human one | shipped |
 | C44 | Fail-fast, auto-cancel, concurrency | concurrency groups per workflow | shipped |
 | C45 | Dynamic init, monorepo detection, preflight | `path_filters.py` + changes jobs | shipped |
 | C46 | Parameterized promotions | `sem_promotions.py` + `.semaphore/promotions.yml` (round-16) | shipped |
@@ -844,24 +1105,27 @@ round-16 contracts are pinned by tests.
 - **Batch 1 (this round):** the IR vertical slice (A12/B25), C42 the
   matrix-expansion validator, B23 the change-stack cohorts, B31 the
   merge-risk scorer. Evidence in `docs/nextgen-architecture.md`.
-- **Batch 2 - the summary and profiles round (round-18 landed four of
-  six):** A4 profile
-  inheritance with three-level merge precedence (`slop_profile_merge.py`),
-  B21 PR summaries tied to head SHAs (`sem_pr_summary.py`), B34 CI
-  failure diagnosis (`sem_ci_diagnose.py`), B25 graph persistence
-  (`save_graph`/`load_graph` bundles). Still open in this batch: A19
-  SBOM + license policy, A20 real-repo corpus - neither is claimed as
-  done.
-- **Batch 3 - the review-platform round:** B22 walkthroughs, B26
-  linked-issue validation, B27 instruction engine, B29 custom checks,
-  B33 reviewer derivation, B37 deep-scan schedule, A9 near-duplicate
-  similarity, A10 cross-language cohesion, A15 registry descriptors,
-  C43 rerun inventory.
+- **Batch 2 - the summary and profiles round (closed):** round-18
+  landed A4 profile inheritance, B21 PR summaries tied to head SHAs,
+  B34 CI failure diagnosis and B25 graph persistence; round-19 landed
+  A19 SBOM + license policy (`sem_sbom.py`) and the A20 holdout split
+  (`sem_holdout.py`). A20 stays partial by honesty: the real-repo
+  protocol is implemented fail-closed and the manifest ships empty -
+  zero real repos are vendored, so real-world accuracy is not claimed;
+  the remaining half moves to batch 4.
+- **Batch 3 - the review-platform round (round-19 landed two of ten):**
+  A9 near-duplicate similarity (`slop_similarity.py`) and C43 rerun
+  inventory (`sem_reruns.py`) shipped; still open: B22 walkthroughs,
+  B26 linked-issue validation, B27 instruction engine, B29 custom
+  checks, B33 reviewer derivation, B37 deep-scan schedule, A10
+  cross-language cohesion, A15 registry descriptors.
 - **Batch 4 - the lifecycle round:** B28 learnings (the store and the
   `learned`-confidence diagnosis slice landed in round-18; the full
-  cross-review lifecycle remains), B30 incremental
-  review state, B32 triage, B24 optional diagrams, B36 cross-repo MCP,
-  B38 security lifecycle, A18 taint pack boundaries.
+  cross-review lifecycle remains), A20 real-repo corpus (the vendoring
+  protocol landed in round-19; the first real repo does not exist
+  yet), B30 incremental review state, B32 triage, B24 optional
+  diagrams, B36 cross-repo MCP, B38 security lifecycle, A18 taint pack
+  boundaries.
 
 Every batch lands with the same contract the template holds itself to:
 tests first against the acceptance criteria, the ratchet on its own

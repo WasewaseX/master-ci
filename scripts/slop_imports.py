@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ast
-import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,24 +10,34 @@ from pathlib import Path
 from slop_files import read_text_lax
 from slop_model import Finding, _finding
 from slop_patterns import NODE_BUILTINS, PY_IMPORT_ALIASES, SKIP_DIRS, STD_LIB_NAMES
+from slop_span_mask import mask_span_forms, string_spans
 
 # Scoped suppression on an import line (ruff/flake8 F401 convention).
 _NOQA_RE = re.compile(r"#\s*noqa\b")
 
-# --- JavaScript/TypeScript binding-aware import shapes -------------------
-#
-# The phantom-import question for the js family is binding-aware: an
-# import is unused only when NONE of the names it binds is referenced
-# outside the import statements. The pre-v2.18 version deleted the
-# import statement and searched for the PACKAGE NAME in the rest of the
-# file, so `import { calculate } from "math-library"` followed by
-# `calculate(10)` was flagged - the binding was used, the package
-# string was not. Audit finding A (2026-11-17): 8 of 10 usage shapes
-# false-positived, including side-effect imports, which have no
-# bindings at all and are intentional by definition.
+# Static imports (multi-line lists included - a negated class matches
+# the newline), re-exports, dynamic import() and require(): a package
+# only those shapes name is undeclared too.
+_JS_IMPORT_RE = re.compile(
+    r"(?:import\s+[^'\"]*?from\s+|import\s*\(\s*|import\s+|"
+    r"export\s+[^'\"]*?from\s+|require\s*\(\s*)[\"']([^\"']+)[\"']"
+)
+
+# A specifier whose first part fails this npm-name grammar names no
+# package: ``@/lib/...`` (empty scope), ``#app/config``, ``~/lib/a``.
+_JS_PKG_PART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+# The js phantom-import question is binding-aware (audit finding A,
+# 2026-11-17): an import is unused only when NONE of the names it binds
+# appears outside the import statements - the package-string search the
+# pre-v2.18 check ran false-positived 8 of 10 usage shapes.
 
 
 from slop_js_bindings import _js_phantom_imports  # noqa: E402 - grammar lives beside the parser
+from slop_js_manifests import (  # noqa: E402,F401 - the declared-set surface lives beside its walkers
+    collect_js_alias_prefixes,
+    collect_js_dependencies,
+)
 
 
 def check_phantom_imports(path: Path, text: str, family: str) -> list[Finding]:
@@ -196,22 +205,6 @@ def collect_py_dependencies(root: Path) -> tuple[set[str], set[str]]:
     return declared, local
 
 
-def collect_js_dependencies(root: Path) -> set[str]:
-    manifest = root / "package.json" if root.is_dir() else None
-    if not manifest or not manifest.is_file():
-        return set()
-    try:
-        data = json.loads(read_text_lax(manifest))
-    except (OSError, json.JSONDecodeError):
-        return set()
-    deps: set[str] = set()
-    for key in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
-        value = data.get(key)
-        if isinstance(value, dict):
-            deps.update(value.keys())
-    return deps
-
-
 def _is_declared(top: str, declared: set[str]) -> bool:
     """True when the module is declared, under any spelling convention."""
     norm = top.lower().replace("_", "-")
@@ -278,18 +271,67 @@ def _py_undeclared_findings(
     return findings[:5]
 
 
-def _js_undeclared_findings(path: Path, text: str, js_deps: set[str]) -> list[Finding]:
-    """npm packages that package.json does not declare (advisory)."""
+def _package_of(spec: str) -> str | None:
+    """The npm package a bare specifier names, or None when it names no package.
+
+    ``@scope/pkg/sub`` names ``@scope/pkg`` - the subpath rides on the
+    same declaration; ``@scope/pkg`` alone too. ``@/components/ui``
+    (an empty scope) and ``#app/config`` (a Node subpath import,
+    declared in package.json's own ``imports`` field) are resolver
+    features, not packages, and never reach the check.
+    """
+    if spec.startswith("@"):
+        scope, _, rest = spec[1:].partition("/")
+        if not scope or not rest:
+            return None
+        pkg, _, _sub = rest.partition("/")
+        if not _JS_PKG_PART.fullmatch(pkg):
+            return None
+        return f"@{scope}/{pkg}"
+    pkg = spec.partition("/")[0]
+    if not pkg or not _JS_PKG_PART.fullmatch(pkg):
+        return None
+    return pkg
+
+
+def _js_undeclared_findings(
+    path: Path,
+    text: str,
+    js_deps: set[str],
+    aliases: frozenset[str] = frozenset(),
+) -> list[Finding]:
+    """npm packages that no manifest declares (advisory).
+
+    The declaration sites this check trusts: every ``package.json`` dep
+    section in the tree (workspace members included - a monorepo
+    package is importable by its own name), tsconfig/jsconfig
+    ``paths`` aliases, Node ``#`` subpath imports, ``node:`` builtins,
+    and any specifier the package grammar refuses. A bare package the
+    grammar accepts that none of those sites names is the finding -
+    the slopsquatting shape, and the project's own ``eslint-plugin-*``
+    gap when a config file imports it.
+
+    The scan reads a comment-blanked copy (string contents kept, every
+    offset intact), so an import that exists only as a comment -
+    ``// export { foo } from 'ghost-package'`` - or inside a regular
+    expression's body imports nothing, and a specifier quoted inside a
+    longer string or template is example text, not a declaration: only
+    a specifier whose quote opens a top-level literal is code.
+    """
     findings: list[Finding] = []
     seen_pkgs: set[str] = set()
-    for match in re.finditer(
-        r"(?:import\s+[^'\"]*?from\s+|import\s+|require\s*\(\s*)[\"']([^\"']+)[\"']", text
-    ):
+    code_only = mask_span_forms(text, quotes="\"'`", keep_strings=True)
+    spans = string_spans(code_only)
+    for match in _JS_IMPORT_RE.finditer(code_only):
         spec = match.group(1)
-        if spec.startswith((".", "/", "node:")):
+        if _quoted_inside_string(match.start(1) - 1, spans):
             continue
-        pkg = spec if spec.startswith("@") else spec.split("/")[0]
-        if pkg in seen_pkgs or pkg in NODE_BUILTINS or pkg in js_deps:
+        if spec.startswith((".", "/", "node:", "#", "data:")):
+            continue
+        if _is_alias(spec, aliases):
+            continue
+        pkg = _package_of(spec)
+        if pkg is None or pkg in seen_pkgs or pkg in NODE_BUILTINS or pkg in js_deps:
             continue
         seen_pkgs.add(pkg)
         findings.append(
@@ -308,6 +350,25 @@ def _js_undeclared_findings(path: Path, text: str, js_deps: set[str]) -> list[Fi
     return findings[:5]
 
 
+def _quoted_inside_string(quote_pos: int, spans: list[tuple[int, int]]) -> bool:
+    """True when the specifier's opening quote sits inside another literal.
+
+    A top-level string's own quote starts its span, so it never
+    matches; a quote inside a template or an outer string - the
+    ``"import x from 'ghost'"`` example shape - does.
+    """
+    return any(start < quote_pos < end for start, end in spans)
+
+
+def _is_alias(spec: str, aliases: frozenset[str]) -> bool:
+    """True when a tsconfig/jsconfig ``paths`` prefix renames the specifier.
+
+    The prefix matches at a path-segment boundary: alias ``@app``
+    covers ``@app/components/x`` but not ``@app-data/x``.
+    """
+    return any(spec == alias or spec.startswith(alias + "/") for alias in aliases)
+
+
 @dataclass(frozen=True)
 class DepContext:
     """Manifest knowledge for the undeclared-import check."""
@@ -315,6 +376,7 @@ class DepContext:
     root: Path
     py_manifests: tuple[set[str], set[str]]
     js_deps: set[str]
+    js_aliases: frozenset[str] = frozenset()
 
 
 def check_undeclared_imports(
@@ -328,5 +390,5 @@ def check_undeclared_imports(
     if family == "py":
         return _py_undeclared_findings(path, text, deps.py_manifests)
     if family == "js" and deps.js_deps:
-        return _js_undeclared_findings(path, text, deps.js_deps)
+        return _js_undeclared_findings(path, text, deps.js_deps, deps.js_aliases)
     return []

@@ -68,6 +68,7 @@ from slop_model import Finding
 from slop_patterns import FAMILY_OF_EXT
 from slop_py_checks import check_py_ast
 from slop_py_family import check_py_print_debug
+from slop_similarity import check_near_duplicates
 from slop_ts_checks import check_ts_slop
 
 
@@ -101,6 +102,11 @@ class Probe:
 def _probe_duplicates(root: Path, files: list[Path]) -> list[Finding]:
     del root  # the duplication oracle reads only the file list
     return scan_duplicates(files)
+
+
+def _probe_similarity(root: Path, files: list[Path]) -> list[Finding]:
+    """The A9 similarity oracle: root-scoped so the fixtures judge alone."""
+    return check_near_duplicates(root, files, [])
 
 
 def _probe_family_scan(root: Path, files: list[Path]) -> list[Finding]:
@@ -192,6 +198,10 @@ PROBES: dict[str, Probe] = {
     "circular-dependencies": Probe("slop_cycles", "import-cycle", probe_cycles),
     "duplicate-implementation": Probe(
         "slop_duplicates", "boilerplate-duplication", _probe_duplicates
+    ),
+    "near-duplicate-clone": Probe("slop_similarity", "near-duplicate-clone", _probe_similarity),
+    "near-duplicate-clone-clean": Probe(
+        "slop_similarity", "near-duplicate-clone", _probe_similarity
     ),
     "dynamic-registration": Probe("slop_dead", "unused-declaration", probe_dead),
     "framework-wrapper": Probe("slop_abstraction", "no-behavior-class", probe_abstraction),

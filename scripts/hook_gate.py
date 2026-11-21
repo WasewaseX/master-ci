@@ -37,7 +37,12 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from slop_files import load_phrases
-from slop_imports import collect_js_dependencies, collect_py_dependencies
+from slop_imports import (
+    DepContext,
+    collect_js_alias_prefixes,
+    collect_js_dependencies,
+    collect_py_dependencies,
+)
 from slop_scan import ScanContext, _scan_one_file
 
 
@@ -85,8 +90,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     base = (args.root or Path.cwd()).resolve()
     ctx = ScanContext(
         load_phrases(),
-        collect_py_dependencies(base),
-        collect_js_dependencies(base),
+        DepContext(
+            base,
+            collect_py_dependencies(base),
+            collect_js_dependencies(base),
+            collect_js_alias_prefixes(base),
+        ),
         provenance=False,
     )
     blocking: list = []

@@ -59,7 +59,7 @@ jobs:
           # shellcheck disable=SC2046
           python -m pip install --quiet \
             pytest \
-            $(python3 scripts/tool_versions.py pip lizard tree-sitter tree-sitter-language-pack)
+            $(python3 scripts/tool_versions.py pip lizard tree-sitter tree-sitter-language-pack defusedxml)
           python -m pytest -q tests/
       - name: Fixture - empty project passes
         run: |

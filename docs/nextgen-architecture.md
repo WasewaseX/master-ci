@@ -106,6 +106,38 @@ What is still open from slice 2: content-hash keyed incremental refresh
 and module-path-qualified def sites - neither is implemented and both
 stay on the staged list.
 
+### Round-19: the measurement inventory (batch 2 closed, batch 3 opened)
+
+Round-19 extended the measurement engine with four inventoried
+oracles, each advisory and each carrying its evidence in the output:
+
+- `sem_sbom.py` (A19) - the declared dependency surface as an
+  SPDX-2.3-shaped document: deterministic (digest-named namespace,
+  sorted rows, constant creation stamp), six ecosystems, manifest
+  licenses, fail-closed license policy. The namespace is a URN, not a
+  URL: the SPDX field only requires uniqueness, and a URN cannot bake
+  an environment-specific host into source.
+- `sem_holdout.py` (A20) - the accuracy corpus now splits: a case's
+  split is sha256(salt:id), pure and disjoint, so a widening PR can
+  prove its labels generalize across both halves. The real-repo
+  manifest (`corpus-real.json`, accuracy-real-v1) validates
+  fail-closed and ships empty - vendoring zero repos claims zero
+  real-world accuracy.
+- `slop_similarity.py` (A9) - the near-duplicate column: pair-shingle
+  anchors vote on alignments, blocks grow within a mismatch ratio, and
+  the finding's message carries the similarity score. The A/B on the
+  synthetic corpus measured the cost at under one percent (136.1 vs
+  135.5 files/s), and the fixture benchmark's two new rows judge
+  167/167.
+- `sem_reruns.py` (C43) - the Actions jobs JSON read as a rerun
+  inventory: attempts, conclusions, recovery verdicts, missing
+  `run_attempt` as data gaps. The same payload `sem_ci_diagnose.py`
+  consumes, so one fetch feeds both tools.
+
+Still open from the staged list: content-hash keyed incremental
+refresh and module-path-qualified def sites (slice 2's remainder),
+slice 3 TS scope-awareness, and the A20 vendoring itself.
+
 ## 3. The language capability matrix
 
 Built from `EXTRACTORS` in `slop_ir.py` plus the live check families.

@@ -188,9 +188,22 @@ ROUND15_SLUGS = (
     set(ROUND15_CSHARP_DETECTED) | set(ROUND15_CSHARP_RENAMED) | set(ROUND15_CSHARP_CLEAN_RULES)
 )
 
+# round-19 (roadmap A9): the similarity-scored near-duplicate, one
+# detected row and its exemption-pinning clean row.
+ROUND19_SLUGS = {
+    "near-duplicate-clone",
+    "near-duplicate-clone-clean",
+}
+
 
 BENCH_SLUGS = (
-    SEED_SLUGS | ROUND8_SLUGS | ROUND9_SLUGS | ROUND10_SLUGS | ROUND13_SLUGS | ROUND15_SLUGS
+    SEED_SLUGS
+    | ROUND8_SLUGS
+    | ROUND9_SLUGS
+    | ROUND10_SLUGS
+    | ROUND13_SLUGS
+    | ROUND15_SLUGS
+    | ROUND19_SLUGS
 )
 
 
@@ -216,7 +229,7 @@ def test_manifests_cover_the_benchmark_table():
     """Every fixture dir declares exactly the table's slugs: seed to round-15."""
     rows = fb.load_benchmark(BENCH)
     assert {row.slug for row in rows} == BENCH_SLUGS
-    assert len(rows) == 165
+    assert len(rows) == 167
     assert {row.slug for row in rows} >= SEED_SLUGS
     for row in rows:
         assert row.expected in ("detected", "clean", "pending")
@@ -298,10 +311,10 @@ def test_table_run_exits_zero_all_proven():
     assert code == 0
     assert lines[0].split() == ["slug", "rule", "expected", "observed", "verdict"]
     data_rows = lines[1:-1]
-    assert len(data_rows) == 165
+    assert len(data_rows) == 167
     slugs = [line.split()[0] for line in data_rows]
     assert slugs == sorted(slugs)
-    assert lines[-1] == "165 fixtures: 165 pass, 0 fail, 0 pending"
+    assert lines[-1] == "167 fixtures: 167 pass, 0 fail, 0 pending"
 
 
 def test_json_run_shape_and_summary():
@@ -311,8 +324,8 @@ def test_json_run_shape_and_summary():
     assert code == 0
     assert {fixture["slug"] for fixture in payload["fixtures"]} == BENCH_SLUGS
     summary = payload["summary"]
-    assert summary["total"] == 165
-    assert summary["pass"] == 165 and summary["fail"] == 0 and summary["pending"] == 0
+    assert summary["total"] == 167
+    assert summary["pass"] == 167 and summary["fail"] == 0 and summary["pending"] == 0
 
 
 def test_failed_declaration_exits_one(tmp_path):

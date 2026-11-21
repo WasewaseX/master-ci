@@ -324,3 +324,75 @@ def test_cli_without_mode_is_a_usage_error():
     with pytest.raises(SystemExit) as exc:
         main(["--store", "whatever.json"])
     assert exc.value.code == 2
+
+
+# --- the store's bytes obey the repo's own editorconfig contract -----------
+#
+# The writer's indent=1 render once red-flagged 16 committed lines; this gate parses the real .editorconfig.
+
+
+def _editorconfig_rules(name: str) -> dict[str, str]:
+    """Effective .editorconfig rules for one filename, last-section-wins."""
+    config = _HERE.parent / ".editorconfig"
+    assert config.is_file(), "the repo's .editorconfig must stay committed"
+    rules: dict[str, str] = {}
+    matched = False
+    for raw in config.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith(("#", ";")):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            glob = line[1:-1]
+            matched = _glob_matches(glob, name)
+            continue
+        if matched and "=" in line:
+            key, _, value = line.partition("=")
+            rules[key.strip()] = value.strip()
+    return rules
+
+
+def _glob_matches(glob: str, name: str) -> bool:
+    """The subset of fnmatch the config uses: literal, *, {a,b}."""
+    import fnmatch
+
+    return any(fnmatch.fnmatch(name, part) for part in glob.split(","))
+
+
+def _assert_obey_editorconfig(text: str, name: str) -> None:
+    rules = _editorconfig_rules(name)
+    indent = int(rules.get("indent_size", "2"))
+    lines = text.split("\n")
+    assert lines[-1] == "", f"{name}: final newline required"
+    if rules.get("trim_trailing_whitespace") == "true":
+        for number, line in enumerate(lines[:-1], 1):
+            assert line == line.rstrip(), f"{name}:{number}: trailing whitespace"
+    if rules.get("indent_style") == "space":
+        for number, line in enumerate(lines[:-1], 1):
+            padding = len(line) - len(line.lstrip(" "))
+            assert padding % indent == 0, (
+                f"{name}:{number}: left padding {padding} is not a multiple of {indent}"
+            )
+
+
+def test_recorded_store_obey_the_editorconfig_contract(tmp_path):
+    # the writer's own output - not just the committed copy - must satisfy
+    # the repo's formatting contract: this store is committed, so any
+    # render the hygiene gate would red-flag never reaches the bytes
+    store = tmp_path / "s.json"
+    record_learning(store, "epic-flake", "epic .* failed", "rerun", "review")
+    text = store.read_text(encoding="utf-8")
+    _assert_obey_editorconfig(text, "master-ci-learnings.json")
+    assert "\r" not in text, "charset lf forbids carriage returns"
+    # the contract holds across a re-record too (the committed path)
+    record_learning(store, "aa-flake", "a .* failed", "rerun", "review")
+    _assert_obey_editorconfig(store.read_text(encoding="utf-8"), "master-ci-learnings.json")
+
+
+def test_committed_store_obey_the_editorconfig_contract():
+    # the committed store itself: fail-closed load proves it parses, the
+    # byte check proves the repo's own gate would pass it
+    committed = _HERE.parent / ".github" / "master-ci-learnings.json"
+    text = committed.read_text(encoding="utf-8")
+    lessons = load_learnings(committed)
+    assert lessons, "the committed store carries the repo's real lessons"
+    _assert_obey_editorconfig(text, "master-ci-learnings.json")

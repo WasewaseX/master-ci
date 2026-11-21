@@ -1,0 +1,137 @@
+{
+  "version": 1,
+  "learnings": [
+    {
+      "kind": "alias-resolution",
+      "pattern": "cargo.*alias|dependency (table )?key.*package =|serde1",
+      "remediation": "a dependency-table key with a package value is a local alias: read the real name from spec['package'] and keep the alias out of the identity",
+      "source": "greptile pr-24 findings 11/20: serde1 = { package = \"serde\" } reported an unrelated crate named serde1"
+    },
+    {
+      "kind": "committed-text-final-newline",
+      "pattern": "wrong line endings or no final newline|MD047|single-trailing-newline|docs? job.*lint markdown.*fail",
+      "remediation": "a tool that appends to or rewrites a committed text file must byte-verify the tail after the write - final newline (MD047), line endings, indentation - before the commit; an in-place string replace that drops the file's trailing newline reds the docs and hygiene jobs on the same push",
+      "source": "hosted docs+hygiene red on round-19.6 commit 1a7cf53: the checks.md capability bullet was appended by a python replace whose replacement string ended without the newline the file previously carried - MD047 and 'wrong line endings or no final newline' failed both jobs and ci-success aggregated the red"
+    },
+    {
+      "kind": "declared-values-verbatim",
+      "pattern": "version (constraints? )?(changed|lost) (their |its )?meaning|operators stripped from (the )?version",
+      "remediation": "keep the declared spec verbatim; only an exact == pin collapses to its version, and a purl carries a version only when the spec pins one",
+      "source": "greptile pr-24 findings 8/12: lstrip('=<>~! ') made demo!=1.0 report 1.0 and ranges read as resolved pins"
+    },
+    {
+      "kind": "dependency-sections-complete",
+      "pattern": "optionalDependencies|peerDependencies|dependency-groups|build-dependencies|dev-dependencies",
+      "remediation": "read every declared section - npm's four tables, PEP 621 optional-dependencies, PEP 735 dependency-groups, Poetry main/dev/groups, Cargo main/dev/build/target - before calling the inventory complete",
+      "source": "greptile pr-24 findings 6/15: this repo's own [dependency-groups] produced no rows and no gap"
+    },
+    {
+      "kind": "depth-walk-balance",
+      "pattern": "second.*call.*missed|only first.*flagged|paren.*unbalanced|depth walk.*drift",
+      "remediation": "a depth walk that skips ahead past a match must re-enter at the matched delimiter or the walk's balance drifts and every later candidate in the same region sees the wrong depth - consume delimiters exactly once, wherever the fast path lands",
+      "source": "greptile round-19.6: the set-state walker jumped past setX( ... ) including its '(', so a second setState statement in one effect body saw paren == -1 and stayed silent"
+    },
+    {
+      "kind": "discovery-matches-advertised-globs",
+      "pattern": "requirements-dev|requirements-test|discovery accepts only .*exact names",
+      "remediation": "discovery must match the advertised filename pattern (requirements*.txt as a regex), never an exact-name list",
+      "source": "greptile pr-24 findings 5/14: requirements-dev.txt and requirements-test.txt were never parsed and produced no gap"
+    },
+    {
+      "kind": "encoding-exception-surface",
+      "pattern": "unknown encoding|LookupError|ET\\.ParseError as exc|escape[sd]? (the |both )?handler",
+      "remediation": "a parser boundary maps every failure class it can raise to the handled class before the scan entry: ElementTree reports an unknown declared encoding as LookupError, not ParseError (and LookupError is not a ValueError), so catch (ET.ParseError, LookupError) at the reader and pin the property with a hostile-input battery through scan_sbom - every unreadable manifest a gap with a reason, nothing escapes - not one crafted example",
+      "source": "pr-24 round-19 finding 2: one csproj declaring encoding=unknown-encoding stopped the whole inventory"
+    },
+    {
+      "kind": "estimated-work-routing",
+      "pattern": "slow scan|anchor count.*rout|routing by count|gauge tables.*entire file|2\\.34s|scan cost grew with file length, not similarity",
+      "remediation": "a fast path chosen by a count misprices alignments whose real work is small - measure the work instead: sample a few candidates' actual cost, scale it, and take the fast path only when the measured cost outweighs the fast path's own fixed price; pin both directions with a sentinel test and a budget test at the reported scale",
+      "source": "greptile round-19.6 finding 1: the prefix-gauge routing keyed on 16 anchors, so 276 alignments of 24 files sharing a 20-line helper built 4,000-line tables (2.34s) for walks that finish in 0.016s"
+    },
+    {
+      "kind": "generated-files-obey-editorconfig",
+      "pattern": "wrong amount of left-padding|editorconfig.*multiple of 2|indent=1.*(store|committed)|committed.*indent=1",
+      "remediation": "a writer whose output is a committed file must satisfy the repo's .editorconfig - the learnings store renders indent=2, and tests/test_ci_learnings.py pins the writer's own bytes to the padding/final-newline contract, not just the committed copy",
+      "source": "hosted hygiene red on round-19 fix 12c9b04: the store's indent=1 render put 16 odd-padding lines into .github/master-ci-learnings.json and editorconfig-checker failed the master and happy-path hygiene jobs"
+    },
+    {
+      "kind": "naming-shape-collisions",
+      "pattern": "setTimeout.*flagged|setter.*false positive|set\\[A-Z\\].*collision|listener.*flagged|method receiver.*flagged",
+      "remediation": "a check keyed on a naming shape collides with the stdlib and with methods - gate on the shape plus the discriminator the real API implies (a React hook setter is a bare identifier, not obj.setter) and name the collision set outright (setTimeout/setInterval/setImmediate); run every gate past a flag-list and a quiet-list before shipping",
+      "source": "greptile round-19.6: the set-state-in-effect shape matched setTimeout, listener arrow bodies and store.setState before the bare-identifier, nested-arrow and named-exemption gates"
+    },
+    {
+      "kind": "no-invented-history",
+      "pattern": "docstring (says|claims).*(shipped|stopped)|incident that never happened",
+      "remediation": "tests document contracts, not invented incidents; any artifact a review shows is byte-verified against disk before it enters release history",
+      "source": "greptile pr-24 findings 22/24/25: a rendering artifact was written up as a shipped outage; the strip-then-compare test would have blessed the mangling"
+    },
+    {
+      "kind": "offset-preserving-mask",
+      "pattern": "finding line wrong|match.*wrong line|strip.*strings.*offset|regex scan.*string.*line",
+      "remediation": "a scan that must map a regex match back to a line cannot read over a collapsing strip (it moves every offset) - blank string and comment contents in place, length preserved, and run the match on the masked copy with offsets intact",
+      "source": "greptile round-19.6: the no-new-array scan first read over _strip_strings, whose single-space replacement would have reported every match at a drifted line"
+    },
+    {
+      "kind": "parse-shape-validation",
+      "pattern": "AttributeError: ('list' object has no attribute 'items'|'NoneType' object)",
+      "remediation": "validate the decoded object and its section shapes before use and raise ValueError, so the scan records a data gap instead of stopping",
+      "source": "greptile pr-24 findings 4/26: package.json as [] or a dependency table as an array stopped the whole scan"
+    },
+    {
+      "kind": "purl-identity-per-ecosystem",
+      "pattern": "pkg:npm/(types|node)|purl.*lowercased|scope lost its @",
+      "remediation": "npm scoped names keep the %40 escape, Go module paths and NuGet ids keep declared casing; identity rules are per ecosystem, never one shared lowercase",
+      "source": "greptile pr-24 findings 10/19: @types/node became pkg:npm/types/node"
+    },
+    {
+      "kind": "quadratic-anchor-regrowth",
+      "pattern": "grow[s]? every anchor|one growth per anchor|long clones? stall|1\\.8s|quadruples with (their |the )?length",
+      "remediation": "growing one anchor is an integer random walk (match -1, mismatch +3, alive while 4*misses - k <= 2): prefix the diagonal once as G[v] = 4*misses - v and every anchor's stop becomes a last-under / first-over range query - identical blocks, no per-anchor re-walk; pin the optimization with a seeded differential test against the direct walk on every diagonal shape plus a wall-clock budget on a 4,000-line near-copy pair",
+      "source": "pr-24 round-19 finding 1: two 4,000-line near-copies took ~1.8s of repeated growth during every scan"
+    },
+    {
+      "kind": "registry-validate-labels",
+      "pattern": "debug-prnit|not a live check id|typo.*clean row",
+      "remediation": "external labels are validated against the live check registry (slop_model.REMEDIES) before judging; a typo is a configuration error, never a vacuous clean row",
+      "source": "greptile pr-24 finding 23: debug-prnit: clean always scored a correct clean result"
+    },
+    {
+      "kind": "resolver-trust-surface",
+      "pattern": "undeclared.*false positive|alias.*undeclared|workspace.*undeclared|scoped.*subpath.*flagged|@/.*finding|hallucinated import.*fp",
+      "remediation": "an undeclared-import check must trust every site the resolver trusts before pricing a specifier: every manifest in the tree (dep sections plus the package's own name), tsconfig/jsconfig paths prefixes at segment boundaries, # subpath imports, and a scoped specifier's two-segment package - anything else is a false positive on the project's own layout",
+      "source": "greptile round-19.6 user evidence: the check priced @/ aliases, #app/config, @scope/pkg/plugin and monorepo members as undeclared packages because it read only the root package.json"
+    },
+    {
+      "kind": "sbom-license-inheritance",
+      "pattern": "license.*stamped onto (every|the) dependenc|unknown-license dependenc(y|ies) passed",
+      "remediation": "dependencies carry NOASSERTION; the manifest's license is a project license reported separately, never stamped onto dependency rows",
+      "source": "greptile pr-24 findings 1/17: an MIT application made unknown-license deps pass deny_unknown"
+    },
+    {
+      "kind": "split-travels-with-the-case",
+      "pattern": "split_case\\(case\\)|row labels ignore (the )?ratio|counts mix (both splits|training and holdout)",
+      "remediation": "judge per case id (the fixture slug the manifest assigns) and read each row's split from the already-computed manifest; never re-hash the case under a default ratio",
+      "source": "greptile pr-24 findings 2/3/16/18: stats keyed by rule merged both splits and contradicted the report's own manifest"
+    },
+    {
+      "kind": "try-all-candidates",
+      "pattern": "min\\(anchors\\)|only the (earliest|first) anchor|later (clone|block).*never tried",
+      "remediation": "grow every candidate and keep the best (most matched evidence first, then score, then earliest start); one alignment still reports once",
+      "source": "greptile pr-24 findings 13/21: min(anchors) let a shared import preamble hide a 14-line near-copy at the same offset"
+    },
+    {
+      "kind": "untrusted-xml-entity-refusal",
+      "pattern": "use-defused-xml|EntitiesForbidden|billion laughs|entity expansion|DOCTYPE in manifest",
+      "remediation": "manifests scanned from arbitrary repos are untrusted input - stdlib ElementTree expands entity bombs (measured: 30,000 characters from a four-level nest), so the csproj reader parses through defusedxml and fails closed to a recorded gap when the safe reader is absent; it never falls back to entity expansion enabled",
+      "source": "semgrep pr-24 alert 441 (error severity): the new csproj reader imported xml.etree.ElementTree, one new code-scanning alert red-flagged Semgrep OSS on the pull request"
+    },
+    {
+      "kind": "xml-parse-by-names",
+      "pattern": "PackageReference|CSPROJ_REF|Include before Version|PrivateAssets",
+      "remediation": "parse XML by element and attribute names (ElementTree, namespace-tolerant): attribute order, quoting, extra attributes and child Version elements are all ordinary references",
+      "source": "greptile pr-24 findings 7/9: the Include-first regex silently dropped valid references"
+    }
+  ]
+}

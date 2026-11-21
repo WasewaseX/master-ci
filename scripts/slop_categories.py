@@ -75,6 +75,7 @@ CHECK_CATEGORIES: dict[str, str] = {
     "unreachable-code": "code-health",
     "constant-condition": "code-health",
     "boilerplate-duplication": "code-health",
+    "near-duplicate-clone": "code-health",
     "duplicate-import": "code-health",
     "phantom-import": "code-health",
     "bloat-long-file": "code-health",
@@ -146,6 +147,15 @@ CHECK_CATEGORIES: dict[str, str] = {
     "low-new-coverage": "test-assurance",
     # Dependency health: the manifest against the imports.
     "undeclared-import": "dependency-health",
+    "no-new-array": "maintainability",
+    "set-state-in-effect": "code-health",
+    # round-19 capability adoption: the lint-shape gates, by bucket.
+    "bare-node-builtin": "code-health",
+    "self-assign": "code-health",
+    "useless-empty-export": "code-health",
+    "impure-render-call": "code-health",
+    "prefer-starts-ends-with": "maintainability",
+    "useless-escape": "maintainability",
     "unused-dependency": "dependency-health",
     # AI integrity: authorship and machine-prose signals. This is the
     # dimension the --max-slop-score gate measures; everything stylistic
