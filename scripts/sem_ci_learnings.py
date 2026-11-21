@@ -186,11 +186,7 @@ def record_learning(path: Path, kind: str, pattern: str, remediation: str, sourc
         (lesson.kind, lesson.pattern): lesson for lesson in existing
     }
     kept[(learning.kind, learning.pattern)] = learning
-    # indent=2, not 1: this store is a committed file, so its bytes obey
-    # the repo's .editorconfig (left padding a multiple of 2). An odd
-    # indent renders lines the hosted hygiene gate red-flags - the
-    # writer must satisfy the repo's own formatting contract, proved by
-    # test_recorded_store_obey_the_editorconfig_contract.
+    # indent=2, not 1: this store is committed, so its bytes obey .editorconfig
     rendered = json.dumps(_store_document(list(kept.values())), indent=2)
     _parse_store(rendered, store_path)  # the writer must eat its own output
     store_path.write_text(rendered + "\n", encoding="utf-8")

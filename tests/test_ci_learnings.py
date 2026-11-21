@@ -328,11 +328,7 @@ def test_cli_without_mode_is_a_usage_error():
 
 # --- the store's bytes obey the repo's own editorconfig contract -----------
 #
-# Hosted hygiene held this round to its own gate: the writer rendered the
-# committed store with indent=1, editorconfig-checker red-flagged 16
-# odd-padding lines, and the master/happy-path hygiene jobs went red on a
-# file the repo itself generated. The gate below is parsed from the real
-# .editorconfig so it tracks the config instead of a hardcoded copy.
+# The writer's indent=1 render once red-flagged 16 committed lines; this gate parses the real .editorconfig.
 
 
 def _editorconfig_rules(name: str) -> dict[str, str]:

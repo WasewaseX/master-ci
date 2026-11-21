@@ -16,6 +16,9 @@ pip:
   semgrep: 1.184.0
   tree-sitter: 0.26.0
   tree-sitter-language-pack: 1.25.0
+  # the csproj reader's safe-XML boundary (sem_sbom_readers.py): without
+  # it the reader fails closed and the XML contracts cannot run for real
+  defusedxml: 0.7.1
   # Mutation testing (scheduled workflow). Pinning these matters more
   # than for a linter: a mutmut or Stryker release can change the mutant
   # vocabulary mid-quarter and turn a stable survivor list into noise.

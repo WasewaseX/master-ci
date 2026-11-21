@@ -60,12 +60,7 @@ except ImportError:  # pragma: no cover - the scanner group ships defusedxml
 
 NOASSERTION = "NOASSERTION"
 
-# The csproj manifests this inventory reads come from arbitrary repos -
-# untrusted input. stdlib ElementTree expands entity declarations (a
-# four-level nest measured 30,000 characters; ten levels would hang the
-# scan), so the XML reader parses through defusedxml only. Without it
-# the reader refuses every csproj as a recorded gap - it never falls
-# back to a parser with entity expansion enabled.
+# Manifests are untrusted: stdlib ET expands entity bombs, so csproj XML parses through defusedxml only - without it the reader fails closed.
 
 # A bare pin: the spec names exactly one version (1.0, v0.9.1, 20).
 # Anything carrying operators (`>=1.0`, `!=1.0`, `^1.2`, `~> 2.0`,
@@ -393,18 +388,15 @@ def _parse_csproj(data: bytes, manifest: str) -> list[Package]:
 
     Attribute order, quoting style, extra attributes (``PrivateAssets``)
     and a child ``<Version>`` element all parse - one textual layout is
-    not a contract. Content that is not XML, declares an encoding the
-    Python codec registry does not know (ElementTree reports that as
-    ``LookupError``, not ``ParseError``), or declares entities the safe
-    reader refuses - every class lands on ValueError, the recorded-gap
-    class; one malformed or hostile manifest never stops the scan.
-    Without defusedxml installed the manifest is a gap too: parsing
-    untrusted XML with entity expansion enabled is never the fallback.
+    not a contract. Every failure class - not-XML, an unknown declared
+    encoding (``LookupError``, not ``ParseError``), entities the safe
+    reader refuses - lands on ValueError, the recorded-gap class.
+    Without defusedxml the manifest is a gap too: entity expansion
+    enabled is never the fallback.
     """
     if SafeET is None:
         raise ValueError(
-            f"{manifest}: no safe XML reader installed (defusedxml missing)"
-            " - manifest recorded as a gap, entity expansion refused"
+            f"{manifest}: no safe XML reader installed (defusedxml missing), entity expansion refused"
         )
     try:
         root = SafeET.fromstring(data)

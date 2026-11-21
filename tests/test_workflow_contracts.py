@@ -1369,9 +1369,10 @@ def test_test_suite_optional_parsers_install_on_miss(master_ci_text: str):
     The contract suites parse workflow YAML (PyYAML) and untrusted csproj
     manifests (defusedxml, the safe-XML boundary for the inventory);
     neither ships with pytest. The python job's pytest step installs
-    each on import miss - the same on-miss pattern - so a stock
-    toolchain runs the XML contracts for real instead of skipping them
-    or failing on a missing reader.
+    each on import miss, and the fixture-contracts job pins defusedxml
+    beside the parsers it already installs - the same on-miss pattern -
+    so a stock toolchain runs the XML contracts for real instead of
+    skipping them or failing on a missing reader.
     """
     pytest_step = _extract_workflow_step(master_ci_text, "Run pytest")
     for module, package in (("yaml", "pyyaml"), ("defusedxml", "defusedxml")):
@@ -1379,6 +1380,13 @@ def test_test_suite_optional_parsers_install_on_miss(master_ci_text: str):
             f'python -c "import {module}" 2>/dev/null || python -m pip install --quiet {package}'
         )
         assert on_miss in pytest_step, f"the pytest step must install {package} on import miss"
+    detector_step = _extract_workflow_step(
+        (WF_DIR / "ci.yml").read_text(encoding="utf-8"),
+        "Detector unit tests (incl. edge cases)",
+    )
+    assert "defusedxml)" in detector_step, (
+        "the fixture-contracts job must install the pinned defusedxml beside the parsers"
+    )
 
 
 def test_parser_dependent_jobs_install_and_demand_parsers(master_ci_text: str):
