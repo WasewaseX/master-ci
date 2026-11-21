@@ -50,10 +50,22 @@ import dataclasses as dc
 import json
 import re
 import tomllib
-import xml.etree.ElementTree as ET
 from pathlib import Path
+from typing import Any
+
+try:
+    from defusedxml import ElementTree as SafeET  # type: ignore[import-untyped]
+except ImportError:  # pragma: no cover - the scanner group ships defusedxml
+    SafeET = None  # type: ignore[assignment]
 
 NOASSERTION = "NOASSERTION"
+
+# The csproj manifests this inventory reads come from arbitrary repos -
+# untrusted input. stdlib ElementTree expands entity declarations (a
+# four-level nest measured 30,000 characters; ten levels would hang the
+# scan), so the XML reader parses through defusedxml only. Without it
+# the reader refuses every csproj as a recorded gap - it never falls
+# back to a parser with entity expansion enabled.
 
 # A bare pin: the spec names exactly one version (1.0, v0.9.1, 20).
 # Anything carrying operators (`>=1.0`, `!=1.0`, `^1.2`, `~> 2.0`,
@@ -365,7 +377,7 @@ def _parse_cargo(data: bytes, manifest: str) -> tuple[list[Package], str]:
     return rows, declared or NOASSERTION
 
 
-def _reference_version(element: ET.Element) -> str:
+def _reference_version(element: Any) -> str:
     """The declared version: the attribute, or a child ``<Version>``."""
     version = element.get("Version") or ""
     if version:
@@ -381,14 +393,24 @@ def _parse_csproj(data: bytes, manifest: str) -> list[Package]:
 
     Attribute order, quoting style, extra attributes (``PrivateAssets``)
     and a child ``<Version>`` element all parse - one textual layout is
-    not a contract. Content that is not XML - or declares an encoding
-    the Python codec registry does not know, which ElementTree reports
-    as ``LookupError``, not ``ParseError`` - raises ValueError, the
-    recorded-gap class; one malformed manifest never stops the scan.
+    not a contract. Content that is not XML, declares an encoding the
+    Python codec registry does not know (ElementTree reports that as
+    ``LookupError``, not ``ParseError``), or declares entities the safe
+    reader refuses - every class lands on ValueError, the recorded-gap
+    class; one malformed or hostile manifest never stops the scan.
+    Without defusedxml installed the manifest is a gap too: parsing
+    untrusted XML with entity expansion enabled is never the fallback.
     """
+    if SafeET is None:
+        raise ValueError(
+            f"{manifest}: no safe XML reader installed (defusedxml missing)"
+            " - manifest recorded as a gap, entity expansion refused"
+        )
     try:
-        root = ET.fromstring(data)
-    except (ET.ParseError, LookupError) as exc:
+        root = SafeET.fromstring(data)
+    except (SafeET.ParseError, ValueError, LookupError) as exc:
+        # defusedxml's refusals (EntitiesForbidden, DTDForbidden) subclass
+        # ValueError, so the entity-declaration class lands here as well
         raise ValueError(f"{manifest}: not parseable XML: {exc}") from exc
     rows: list[Package] = []
     for element in root.iter():

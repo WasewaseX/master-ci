@@ -1363,6 +1363,24 @@ def test_zizmor_suppressions_sit_where_zizmor_parses_them():
             )
 
 
+def test_test_suite_optional_parsers_install_on_miss(master_ci_text: str):
+    """The suite's optional-parser prerequisites install on miss, by name.
+
+    The contract suites parse workflow YAML (PyYAML) and untrusted csproj
+    manifests (defusedxml, the safe-XML boundary for the inventory);
+    neither ships with pytest. The python job's pytest step installs
+    each on import miss - the same on-miss pattern - so a stock
+    toolchain runs the XML contracts for real instead of skipping them
+    or failing on a missing reader.
+    """
+    pytest_step = _extract_workflow_step(master_ci_text, "Run pytest")
+    for module, package in (("yaml", "pyyaml"), ("defusedxml", "defusedxml")):
+        on_miss = (
+            f'python -c "import {module}" 2>/dev/null || python -m pip install --quiet {package}'
+        )
+        assert on_miss in pytest_step, f"the pytest step must install {package} on import miss"
+
+
 def test_parser_dependent_jobs_install_and_demand_parsers(master_ci_text: str):
     """The v2.5 parser guarantee: every job that promises parse-backed
     metrics installs the exact pinned analyzers, the scan jobs demand

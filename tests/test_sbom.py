@@ -16,6 +16,11 @@ The documented contracts, test-pinned:
 - manifests are read by shape, not by spelling: PackageReference rows
     parse by element and attribute names, JSON shapes that do not fit
     are recorded gaps, one bad manifest never stops the scan;
+- untrusted XML never expands: manifests come from arbitrary repos, so
+    the csproj reader parses through defusedxml (stdlib ElementTree
+    expands entity bombs), declares a hostile entity manifest a gap,
+    and without the safe reader installed it records gaps too - it
+    never falls back to a parser with entity expansion enabled;
 - determinism: identical trees render byte-identical SPDX documents -
     sorted rows, digest namespace, constant creation timestamp;
 - the policy: deny-list hits and deny_unknown gaps are violations,
@@ -28,6 +33,7 @@ import json
 from pathlib import Path
 
 import sem_sbom as sbom  # noqa: E402
+import sem_sbom_readers  # noqa: E402
 
 
 def _write(path: Path, text: str) -> Path:
@@ -320,6 +326,52 @@ def test_non_xml_csproj_is_a_gap(tmp_path):
     assert [p.purl for p in result.packages] == ["pkg:pypi/requests@2.31.0"]
     assert len(result.gaps) == 1
     assert "XML" in result.gaps[0]["reason"] or "xml" in result.gaps[0]["reason"]
+
+
+def test_csproj_entity_declarations_are_refused(tmp_path):
+    """An entity-expansion bomb never parses and never reaches rows.
+
+    Manifests come from arbitrary repos - untrusted input. stdlib
+    ElementTree expands entity declarations (a four-level nest measured
+    30,000 characters; a ten-level nest would hang the scan), so the
+    reader parses through defusedxml, which refuses entity declarations
+    outright. The hostile manifest is a visible gap carrying the
+    refusal, and the scan carries on beside it.
+    """
+    bomb = (
+        '<?xml version="1.0"?>\n<!DOCTYPE lolz [\n'
+        '  <!ENTITY lol "lol">\n'
+        '  <!ENTITY lol1 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;">\n'
+        "]>\n<root>&lol1;</root>"
+    )
+    _write(tmp_path / "Bomb.csproj", bomb)
+    _write(tmp_path / "requirements.txt", "requests==2.31.0\n")
+    result = sbom.scan_sbom(tmp_path)
+    assert [p.purl for p in result.packages] == ["pkg:pypi/requests@2.31.0"]
+    assert [gap["manifest"] for gap in result.gaps] == ["Bomb.csproj"]
+    reason = result.gaps[0]["reason"].lower()
+    assert "entit" in reason or "refus" in reason, result.gaps[0]["reason"]
+
+
+def test_csproj_reader_fails_closed_without_the_safe_reader(tmp_path, monkeypatch):
+    """Without defusedxml the csproj reader records gaps; it never falls back.
+
+    The scanner group ships defusedxml, but a stock interpreter does
+    not have it. Parsing untrusted XML with entity expansion enabled is
+    never the fallback: every csproj becomes a gap that names the
+    missing reader, while every other manifest still parses.
+    """
+    monkeypatch.setattr(sem_sbom_readers, "SafeET", None)
+    _write(
+        tmp_path / "App.csproj",
+        "<Project><ItemGroup>"
+        '<PackageReference Include="Demo" Version="1.0" /></ItemGroup></Project>',
+    )
+    _write(tmp_path / "requirements.txt", "requests==2.31.0\n")
+    result = sbom.scan_sbom(tmp_path)
+    assert [p.purl for p in result.packages] == ["pkg:pypi/requests@2.31.0"]
+    assert [gap["manifest"] for gap in result.gaps] == ["App.csproj"]
+    assert "defusedxml" in result.gaps[0]["reason"]
 
 
 def test_unparseable_manifest_is_a_recorded_gap(tmp_path):

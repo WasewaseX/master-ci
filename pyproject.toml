@@ -10,12 +10,18 @@ extend-exclude = ["_ci", "fixtures"]
 # lizard backs the unified syntax-tree parse in slop_lizard.py; without
 # it the structural budgets degrade to the line scanner. tree-sitter
 # backs the cognitive-complexity measure in slop_cognitive.py; without
-# it that check reports nothing rather than guessing.
+# it that check reports nothing rather than guessing. defusedxml backs
+# the csproj reader in sem_sbom_readers.py: manifests scanned from
+# arbitrary repos are untrusted, stdlib ElementTree expands entity
+# bombs (30,000 characters from a four-level nest, measured), so the
+# reader parses through defusedxml and records a gap when it is absent
+# - it never falls back to a parser with entity expansion enabled.
 scanner = [
     "pyyaml>=6.0",
     "lizard>=1.17",
     "tree-sitter>=0.21",
     "tree-sitter-language-pack>=0.6",
+    "defusedxml>=0.7",
 ]
 # the contract-test suite (tests/) runs under stock pytest.
 test = ["pytest>=8.0"]

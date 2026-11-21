@@ -1757,6 +1757,10 @@ jobs:
             # test suites that parse workflow YAML need PyYAML; it ships with
             # many toolchains but is not a pytest dependency - install on miss
             python -c "import yaml" 2>/dev/null || python -m pip install --quiet pyyaml
+            # the csproj reader parses untrusted manifests through
+            # defusedxml (stdlib ElementTree expands entity bombs) - the
+            # scanner group declares it, stock toolchains do not
+            python -c "import defusedxml" 2>/dev/null || python -m pip install --quiet defusedxml
             if [ -d "$dir/tests" ] || find "$dir" -maxdepth 3 \( -name 'test_*.py' -o -name '*_test.py' \) \
               -not -path './_ci/*' -not -path '*/node_modules/*' | grep -q .; then
               echo "Running pytest in $dir"
