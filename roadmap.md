@@ -888,6 +888,75 @@ clean controls clean, the fixture benchmark 167/167 pass, the
 self-scan verdict CLEAN grade A at its baseline counts (13 findings,
 none new), and the learnings store loads clean through the loader.
 
+## Round-19.6 - the sixth greptile pass closed the routing finding and adopted the surfaced capability column (2026-11-21)
+
+The review re-listed fifteen open findings. Fourteen were already
+closed by the third, fourth and fifth passes (each verified against
+this tree, finding by finding: the SBOM readers' shapes and identity
+rules, the section coverage, the requirements pattern, the
+NOASSERTION license rule, the per-fixture holdout judging, the
+manifest-sourced split labels, the registry-refused labels, the
+push-branch test's unchanged comparison and prevention-only
+docstring); the fifteenth was the gauge's own routing - the fourth
+pass had replaced the per-anchor re-walk with the prefix gauge but
+chosen the path by anchor count alone, and the count prices a
+20-line helper shared inside 4,000-line files with tables over the
+whole diagonal: 276 such alignments cost 2.34s where the direct
+walks take 0.016s, identical results. The route is estimated work
+now: three sampled walks measure the alignment's actual block length
+and the gauge is paid only when that measured cost outweighs the
+tables it would build (`2 x span x log2(span)` cells) - the helper
+alignment stays on the walks, the 4,000-line near-copy still takes
+the gauge, and both decisions are pinned by a sentinel test plus the
+24-file/4,000-line budget test encoding the review's own numbers.
+
+The same review's user-facing evidence listed shapes other scanners
+surfaced that this engine had no oracle for, and the round adopted
+the column:
+
+- **undeclared-import trusts every site the resolver trusts.** The js
+  family read one root package.json and priced `@/lib/x` aliases,
+  `#app/config` subpath imports, `@scope/pkg/plugin` subpaths (the
+  scope takes two segments, not the whole specifier) and workspace
+  members as undeclared packages. Now the declared set is every
+  package.json under the root (bounded walk, skip dirs pruned) -
+  dep sections plus each manifest's own `name`, so a monorepo
+  package is importable by its own name - and tsconfig/jsconfig
+  `paths` prefixes (a comment-tolerant JSONC read; the prefix
+  matches at a segment boundary, `@app` covers `@app/x` but not
+  `@app-data/x`). The import shapes widened too: re-exports
+  (`export { x } from 'pkg'`, `export * from 'pkg'`) and dynamic
+  `import('pkg')` name the same undeclared package a static import
+  does. The shape this round started from reports: an
+  `eslint.config.mjs` importing `eslint-plugin-import` that no
+  dependency section names.
+- **no-new-array** (unicorn adoption): the single-argument
+  `new Array(x)` is the length trap - `new Array(5)` reserves a
+  length, `new Array('5')` builds one element. Advisory; the
+  zero- and two-argument calls and a nested-call argument stay out,
+  and the scan reads a length-preserving masked copy so a string or
+  comment mentioning the shape is not a finding and the reported
+  line is the real one.
+- **set-state-in-effect** (react compiler adoption): a synchronous
+  setState in an `useEffect`/`useLayoutEffect` body renders, runs,
+  renders again. Advisory; the shape gate stays where the evidence
+  is - the effect's first argument at its statement depth, over the
+  masked copy - and the quiet directions are named: a call behind a
+  paren (`.then`, a timer), past a nested `=>` (a listener body),
+  on a method receiver (`store.setState`, `el.setAttribute` - a
+  hook setter is a bare identifier), inside deeper braces, or one
+  of the timer trio the setter shape matches (`setTimeout`,
+  `setInterval`, `setImmediate`), exempt by name. Both checks ride
+  `scan_code_file` and are registered advisory with remedies and
+  categories; the jsx-a11y and remaining react-hooks families stay
+  unadopted and are claimed by nothing - a future column, not a
+  shipped one.
+
+Regression held: the full suite green per file, ruff check and
+format clean, mypy clean, the accuracy benchmark exit 0 with the
+clean controls clean, the fixture benchmark pass, the ratchet exit 0,
+and the self-scan verdict CLEAN.
+
 ## The 50-feature reverse-engineering program (2026-11-19)
 
 The external spec lists fifty features across three reference
@@ -920,7 +989,7 @@ A-rows; the C column has none left).
 | A6 | Independent quality dimensions | 8 dimensions in `slop_outputs.py` (architecture, code-health, reliability, maintainability, security, test-assurance, dependency-health, ai-integrity) | shipped |
 | A7 | Coverage ingestion, new-code coverage | `coverage_gate.py`, `coverage_parsers.py` | shipped |
 | A8 | Exact duplicated-block detection | `slop_duplicates.py` + `dup-block-density` (v2.18 audit D) | shipped |
-| A9 | Near-duplicate (similarity-scored) clones | `slop_similarity.py` (round-19): pair-shingle anchors vote on (file pair, delta) alignments, a passing vote grows outward while the mismatch ratio holds, and a block reports with matched/length similarity in the message - the score is the evidence; same-file overlapping regions never accuse each other, one alignment reports once, findings capped at three best-score rows, advisory by registry; the exact end of the spectrum stays with `slop_duplicates.py` and `dup-block-density` | shipped |
+| A9 | Near-duplicate (similarity-scored) clones | `slop_similarity.py` (round-19): pair-shingle anchors vote on (file pair, delta) alignments, a passing vote grows outward while the mismatch ratio holds, and a block reports with matched/length similarity in the message - the score is the evidence; same-file overlapping regions never accuse each other, one alignment reports once, findings capped at three best-score rows, advisory by registry; the path an alignment takes is estimated work - three sampled walks measure the block length and the prefixed gauge is paid only when that outweighs the tables it would build, so a small helper shared inside long files keeps the direct walks while a long near-copy answers every stop by query; the exact end of the spectrum stays with `slop_duplicates.py` and `dup-block-density` | shipped |
 | A10 | Cross-language class cohesion | `slop_lcom4.py` (Python AST; other families approximate) | partial - batch 3 |
 | A11 | Multi-dimensional complexity | `slop_cognitive.py`, `slop_lizard.py`, `slop_bloat.py`, `slop_density.py` | shipped |
 | A12 | Semantic dead-code detection | `slop_dead.py` (textual) + `semantic-dead-symbol` (parse-tree, round-17) | shipped |

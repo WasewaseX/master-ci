@@ -1883,3 +1883,30 @@ commit with regression tests.
   signature table itself moved to `sem_ci_signatures.py` (pure matchers
   and remediations), keeping `sem_ci_diagnose.py` under the 400-line
   hygiene ceiling by the same split the scan pipeline made before it.
+- **Round-19 capability adoption (advisory):** the shapes user-facing
+  scans kept surfacing that the engine had no oracle for.
+  `undeclared-import` now trusts every site the resolver trusts: every
+  `package.json` under the root (dep sections plus each manifest's own
+  `name`, workspace members included - a monorepo package is
+  importable by its own name), tsconfig/jsconfig `paths` prefixes (a
+  comment-tolerant read; segment-boundary matching, `@app` covers
+  `@app/x` but not `@app-data/x`), Node `#` subpath imports, `@/` and
+  `~/` shorthands, and scoped specifiers resolve to their two-segment
+  package (`@scope/pkg/plugin` is declared by `@scope/pkg`); re-exports
+  and dynamic `import('pkg')` name the same undeclared package a
+  static import does, so an `eslint.config.mjs` importing
+  `eslint-plugin-import` that no dependency section names reports.
+  `no-new-array` reports the single-argument `new Array(x)` length
+  trap (the zero- and two-argument calls and nested-call arguments
+  stay out; the scan reads a length-preserving masked copy, so a
+  string or comment mentioning the shape is not a finding and the
+  line is the real one). `set-state-in-effect` reports a synchronous
+  setState in an `useEffect`/`useLayoutEffect` body at the body's own
+  statement depth - a call behind a `.then`, a timer, a listener
+  arrow, a method receiver (`store.setState`, `el.setAttribute` - a
+  hook setter is a bare identifier) or deeper braces stays out, and
+  the timer trio the setter shape matches (`setTimeout`,
+  `setInterval`, `setImmediate`) are exempt by name. Both ride the
+  per-file scan and are registered advisory with remedies and
+  categories; the jsx-a11y and remaining react-hooks families stay
+  unadopted and are claimed by nothing.

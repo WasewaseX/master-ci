@@ -147,6 +147,8 @@ CHECK_CATEGORIES: dict[str, str] = {
     "low-new-coverage": "test-assurance",
     # Dependency health: the manifest against the imports.
     "undeclared-import": "dependency-health",
+    "no-new-array": "maintainability",
+    "set-state-in-effect": "code-health",
     "unused-dependency": "dependency-health",
     # AI integrity: authorship and machine-prose signals. This is the
     # dimension the --max-slop-score gate measures; everything stylistic

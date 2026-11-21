@@ -26,11 +26,18 @@ module closes that gap:
     block wins - and the walk is reused instead of repeated: growing
     one anchor pair is an integer random walk, so prefixing the
     diagonal once turns every anchor's stop into a range query over
-    ``4 x misses - offset``. Dense alignments (one anchor per copied
-    line) pay one prefix pass instead of one walk per anchor line -
-    re-walking made a 4,000-line near-copy cost ~1.8s; the query path
-    keeps the identical best block for a fraction of that - and sparse
-    alignments keep the direct walk. The score is the evidence: the
+    ``4 x misses - offset``. Which path an alignment takes is decided
+    by estimated work, not by anchor count alone: the gauge tables
+    cover the whole diagonal, so a short shared helper inside long
+    otherwise-unrelated files (19 anchors over a 4,000-line span)
+    would pay 96,000 table cells for walks it finishes in ~400
+    comparisons - three sampled walks measure the alignment's actual
+    block length, and only an alignment whose sampled cost outweighs
+    the tables (a long near-copy, one anchor per copied line) takes
+    the gauge. Re-walking made that 4,000-line near-copy cost ~1.8s;
+    the query path keeps the identical best block for a fraction of
+    that - and sparse alignments keep the direct walk. The score is
+    the evidence: the
     message names both locations and the similarity, so a review
     starts from a number, not a vibe.
 
@@ -54,16 +61,23 @@ from pathlib import Path
 from slop_files import is_ignored, read_text_lax
 from slop_model import Finding
 from slop_patterns import CODE_EXTS
+from slop_similarity_gauge import (  # noqa: F401 - the row kernel lives beside the gauge queries
+    MIN_MATCHED,
+    SIM_THRESHOLD,
+    _best_block_by_queries,
+    _best_row,
+    _qualifying_row,
+)
 
-SIM_THRESHOLD = 0.7
-MIN_MATCHED = 8
 MISMATCH_RATIO = 0.25
 VOTE_FLOOR = 5
 MAX_OWNERS = 24
 MAX_CLONES = 3
 
-# Alignments denser than this answer their stops from the prefix gauge
-# instead of growing each anchor directly (the re-walk is quadratic).
+# Alignments with more anchors than this are candidates for the prefix
+# gauge; the routing decision itself is estimated work (see
+# ``_best_alignment_block``) - the count only skips the sampling for
+# alignments that are cheap to walk regardless of their span.
 _DIRECT_WALK_ANCHORS = 16
 
 _COMMENT_PREFIXES = ("#", "//", "*", "<!--")
@@ -179,170 +193,35 @@ def _grow_block(
     return start_a, length, matched
 
 
-def _qualifying_row(
-    file_a: int, file_b: int, delta: int, start_a: int, length: int, matched: int
-) -> tuple[float, int, int, int, int, int] | None:
-    """The reported row for one grown block, or None when it does not qualify.
+def _query_table_work(span: int) -> int:
+    """The gauge path's work: two extreme tables, one level per doubling.
 
-    The mismatch budget is guaranteed by the walk itself - the ratio
-    caps mismatches at a quarter of the block - so the filters here
-    are the match floor, the same-file overlap rule and the threshold,
-    kept explicit rather than assumed.
+    ``_sparse_extremes`` builds ``mins`` and ``maxs`` over ``span``
+    entries, ``ceil(log2(span))`` levels each - the cost every anchor's
+    two range queries amortize against.
     """
-    if matched < MIN_MATCHED:
-        return None
-    start_b = start_a - delta
-    if file_a == file_b and start_b < start_a + length and start_a < start_b + length:
-        return None  # overlapping self-regions, or the same region
-    score = matched / length
-    if score < SIM_THRESHOLD:
-        return None
-    return (score, file_a, start_a, file_b, start_b, length)
+    return 2 * span * max(1, span.bit_length())
 
 
-def _best_row(
-    rows: list[tuple[int, float, int, tuple[float, int, int, int, int, int]]],
-) -> tuple[float, int, int, int, int, int] | None:
-    """Most matched evidence first, then score, ties by the earliest start."""
-    if not rows:
-        return None
-    return max(rows)[-1]
-
-
-def _sparse_extremes(values: list[int]) -> tuple[list[list[int]], list[list[int]]]:
-    """(min, max) sparse tables over ``values``; any slice's extreme is O(1).
-
-    ``table[k][i]`` holds the extreme of ``values[i : i + 2**k]``, so a
-    slice is one overlap of two power-of-two windows; the stop queries
-    binary-search this predicate, which turns a per-anchor walk into a
-    log-squared lookup.
-    """
-    size = len(values)
-    levels = size.bit_length()
-    mins: list[list[int]] = [values]
-    maxs: list[list[int]] = [values]
-    for k in range(1, levels):
-        half = 1 << (k - 1)
-        width = size - (1 << k) + 1
-        mins.append([min(mins[k - 1][i], mins[k - 1][i + half]) for i in range(width)])
-        maxs.append([max(maxs[k - 1][i], maxs[k - 1][i + half]) for i in range(width)])
-    return mins, maxs
-
-
-def _range_extreme(table: list[list[int]], start: int, end: int, bigger: bool) -> int:
-    """The slice's min (``bigger=False``) or max (``bigger=True``), O(1)."""
-    k = (end - start).bit_length() - 1
-    row = table[k]
-    left, right = row[start], row[end - (1 << k)]
-    return max(left, right) if bigger else min(left, right)
-
-
-def _last_under(table: list[list[int]], start: int, end: int, limit: int) -> int | None:
-    """The largest index in [start, end) whose value is under ``limit``."""
-    if start >= end or _range_extreme(table, start, end, False) >= limit:
-        return None
-    low, high = start, end - 1
-    while low < high:
-        mid = (low + high + 1) // 2
-        if _range_extreme(table, mid, end, False) < limit:
-            low = mid
-        else:
-            high = mid - 1
-    return low
-
-
-def _first_over(table: list[list[int]], start: int, end: int, limit: int) -> int | None:
-    """The smallest index in [start, end) whose value is over ``limit``."""
-    if start >= end or _range_extreme(table, start, end, True) <= limit:
-        return None
-    low, high = start, end - 1
-    while low < high:
-        mid = (low + high) // 2
-        if _range_extreme(table, start, mid + 1, True) > limit:
-            high = mid
-        else:
-            low = mid + 1
-    return low
-
-
-def _diagonal_gauge(
-    lines_a: list[str], lines_b: list[str], delta: int
-) -> tuple[int, int, list[int], list[int]]:
-    """One alignment's diagonal: (low, span, misses, gauge).
-
-    ``misses[v]`` counts mismatched line pairs before ``low + v``;
-    ``gauge[v] = 4 x misses[v] - v`` is the walk's budget in integer
-    form - a match steps -1, a mismatch +3, alive inside its budget.
-    """
-    low = max(0, delta)
-    high = min(len(lines_a), len(lines_b) + delta)
-    span = high - low
-    misses = [0] * (span + 1)
-    for v in range(span):
-        misses[v + 1] = misses[v] + (0 if lines_a[low + v] == lines_b[low + v - delta] else 1)
-    return low, span, misses, [4 * misses[v] - v for v in range(span + 1)]
-
-
-def _left_stop(mins: list[list[int]], gauge: list[int], v_anchor: int) -> int:
-    """The walk's left break, as a gauge index; the block starts above it.
-
-    Absorbing the k-th line below the anchor keeps the block iff
-    ``4 x mismatches - k <= 2``; prefixed, that is ``gauge[i] >=
-    gauge[anchor] - 2`` - one range-min query over the gauge.
-    """
-    if v_anchor == 0:
-        return 0
-    below = _last_under(mins, 0, v_anchor, gauge[v_anchor] - 2)
-    return 0 if below is None else below + 1
-
-
-def _right_stop(
-    maxs: list[list[int]], gauge: list[int], v_start: int, v_anchor: int, span: int
+def _sampled_walk_work(
+    positions: list[int], lines_a: list[str], lines_b: list[str], delta: int
 ) -> int:
-    """The walk's right break, exclusive, as a gauge index.
+    """The direct walks' measured cost: three spread anchors, scaled.
 
-    The whole-block budget check - ``4 x misses over the block > block
-    length`` - reads ``gauge[e+1] > gauge[block start]``, so the stop
-    is the first such index past the anchor pair - one range-max query.
+    A walk's cost is the block it grows, and an alignment's blocks live
+    around its anchors - so the longest block among the first, middle
+    and last anchor (the spread covers a cluster at either end) times
+    the anchor count estimates the full routing's cost without walking
+    every anchor. A 19-anchor helper shared inside 4,000-line files
+    samples ~20-line blocks: 380 comparisons, far under its 96,000
+    table cells - the gauge would price the whole diagonal for an
+    alignment the walks finish near the helper. A 4,000-line near-copy
+    samples a 4,000-line block: the estimate clears the tables and the
+    gauge earns its prefix pass.
     """
-    if v_anchor + 2 >= span:
-        return span
-    over = _first_over(maxs, v_anchor + 3, span + 1, gauge[v_start])
-    return span if over is None else over - 1
-
-
-def _best_block_by_queries(
-    lines_a: list[str],
-    lines_b: list[str],
-    delta: int,
-    positions: list[int],
-    file_a: int,
-    file_b: int,
-) -> tuple[float, int, int, int, int, int] | None:
-    """The identical best block, computed by queries instead of re-walks.
-
-    ``_grow_block``'s walk along one diagonal is an integer random walk
-    (match -1, mismatch +3, alive while the counter stays inside its
-    budget), so prefixing the diagonal once as ``gauge[v] = 4 x misses
-    - v`` turns every anchor's stop into a range query - the same stop
-    the walk finds, without walking the same matched lines once per
-    anchor line. Re-walking made a 4,000-line near-copy quadratic
-    (~1.8s); the queries keep the best block and drop the repetition.
-    """
-    low, span, misses, gauge = _diagonal_gauge(lines_a, lines_b, delta)
-    mins, maxs = _sparse_extremes(gauge)
-    rows: list[tuple[int, float, int, tuple[float, int, int, int, int, int]]] = []
-    for anchor in positions:
-        v_anchor = anchor - low
-        v_start = _left_stop(mins, gauge, v_anchor)
-        v_end = _right_stop(maxs, gauge, v_start, v_anchor, span)
-        length = v_end - v_start
-        matched = length - (misses[v_end] - misses[v_start])
-        start_a = low + v_start
-        row = _qualifying_row(file_a, file_b, delta, start_a, length, matched)
-        if row is not None:
-            rows.append((matched, row[0], -start_a, row))
-    return _best_row(rows)
+    picks = sorted({positions[0], positions[len(positions) // 2], positions[-1]})
+    longest = max(_grow_block(lines_a, lines_b, p, p - delta)[1] for p in picks)
+    return longest * len(positions)
 
 
 def _best_alignment_block(
@@ -363,10 +242,16 @@ def _best_alignment_block(
     overlaps its sibling in the same file or clears the similarity
     threshold is not a candidate.
 
-    The growths reuse the walk instead of repeating it: a sparse
-    alignment grows each anchor directly (``_grow_block``); a dense one
-    - a long near-copy votes roughly one anchor per copied line -
-    answers every anchor's stop from the diagonal's prefixed gauge
+    The growths reuse the walk instead of repeating it - and the path
+    is chosen by estimated work, not by anchor count alone: a count
+    gate alone priced a 19-anchor shared helper inside 4,000-line
+    files with gauge tables over the whole diagonal (276 such
+    alignments cost 2.34s where the walks take 0.016s), because the
+    tables cover every line of the overlap while the walks stop near
+    the helper. Three sampled walks measure the alignment's actual
+    block length; only an alignment whose sampled cost outweighs the
+    tables it would build (a long near-copy, one anchor per copied
+    line) answers its stops from the prefixed gauge
     (``_best_block_by_queries``), the identical block the walk would
     find. Re-walking every anchor made two 4,000-line near-copies cost
     about 1.8 seconds (the work quadruples with their length); the
@@ -375,7 +260,12 @@ def _best_alignment_block(
     lines_a, lines_b = per_file[file_a], per_file[file_b]
     positions = sorted({anchor_a for anchor_a, _ in anchors})
     if len(positions) > _DIRECT_WALK_ANCHORS:
-        return _best_block_by_queries(lines_a, lines_b, delta, positions, file_a, file_b)
+        low = max(0, delta)
+        span = min(len(lines_a), len(lines_b) + delta) - low
+        if span > 0 and _sampled_walk_work(positions, lines_a, lines_b, delta) > _query_table_work(
+            span
+        ):
+            return _best_block_by_queries(lines_a, lines_b, delta, positions, file_a, file_b)
     rows: list[tuple[int, float, int, tuple[float, int, int, int, int, int]]] = []
     for anchor_a in positions:
         start_a, length, matched = _grow_block(lines_a, lines_b, anchor_a, anchor_a - delta)

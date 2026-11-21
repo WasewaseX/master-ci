@@ -428,6 +428,67 @@ def test_dense_alignments_take_the_gauge_and_sparse_ones_keep_the_walk(monkeypat
     assert _best_alignment_block(per_file, 0, 1, 0, sparse) is not None
 
 
+def test_the_gauge_is_chosen_by_estimated_work_not_by_anchor_count(monkeypatch):
+    """A helper's 19 anchors over a 4,000-line span keep the direct walk.
+
+    The count gate alone sent every alignment past 16 anchors to the
+    gauge - and a small helper shared inside long otherwise-unrelated
+    files clears that count while its walks stop near the helper, so
+    the tables priced 4,000-line diagonals the walks finish in ~400
+    comparisons. Routing is estimated work now: three sampled walks
+    measure the block length, and only an alignment whose sampled cost
+    outweighs its tables takes the gauge. The gauge path is a sentinel
+    here: the helper alignment must never reach it, the near-copy must.
+    """
+    filler = [f"f{index} = step_{index}(data)" for index in range(4000)]
+    helper = [f"shared_helper_{i}(rows, {i})" for i in range(20)]
+    lines_a = filler[:1000] + helper + filler[1000:]
+    lines_b = filler[1000:2000] + helper + filler[2000:]
+    per_file = [lines_a, lines_b]
+    helper_anchors = [(1000 + i, 1000 + i) for i in range(19)]
+    near_copy = [(i, i) for i in range(30)]
+    lines_pair = [[f"line {i}" for i in range(40)]] * 2
+
+    gauge_calls: list[int] = []
+
+    def _sentinel(*_args, **_kwargs):
+        gauge_calls.append(1)
+        return None
+
+    monkeypatch.setattr("slop_similarity._best_block_by_queries", _sentinel)
+    walked = _best_alignment_block(per_file, 0, 1, 0, helper_anchors)
+    assert walked is not None, "the shared helper is still a real clone"
+    assert gauge_calls == [], "the helper alignment must never reach the gauge"
+    assert _best_alignment_block(lines_pair, 0, 1, 0, near_copy) is None
+    assert gauge_calls == [1], "the dense near-copy takes the gauge"
+
+
+def test_many_files_sharing_a_small_helper_stay_inside_the_walk_budget(tmp_path):
+    """The finding's scenario: 24 files of 4,000 lines sharing 20 lines.
+
+    Every one of the 276 pairs aligns on the helper with 19 anchors -
+    over the count gate, so the gauge used to build 4,000-line tables
+    per pair (2.34s here, 0.016s through the walks). Estimated-work
+    routing keeps every pair on the walks, the helper is still found,
+    and the scan pays walk prices, not table prices.
+    """
+    helper = [f"shared_helper_{i}(rows, {i})" for i in range(20)]
+    files = []
+    for file_index in range(24):
+        lines = [f"f{file_index} = step_{i}(data_{file_index})" for i in range(3980)]
+        lines[500:520] = helper
+        path = tmp_path / f"module_{file_index}.py"
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        files.append(path)
+    started = time.perf_counter()
+    findings = check_near_duplicates(None, files)
+    elapsed = time.perf_counter() - started
+    assert len(findings) == MAX_CLONES, (
+        "the helper clones report, capped, exactly as before the routing change"
+    )
+    assert elapsed < 1.0, f"276 helper alignments took {elapsed:.2f}s - the gauge is back"
+
+
 def test_a_long_near_copy_is_one_gauge_pass_not_one_walk_per_anchor(tmp_path):
     """The 4,000-line near-copy pair that took ~1.8s of re-walking.
 

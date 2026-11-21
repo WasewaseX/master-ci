@@ -104,6 +104,10 @@ ADVISORY_ONLY_CHECKS = frozenset(
         "placeholder-note",
         "ts-suppression",
         "undeclared-import",
+        # scanaislop round-19 adoption: the JS judgment calls behind the
+        # user-facing scan's repeated hits - advisory by registry.
+        "no-new-array",
+        "set-state-in-effect",
         "bloat-long-file",
         "bloat-param-count",
         "bloat-comment-ratio",

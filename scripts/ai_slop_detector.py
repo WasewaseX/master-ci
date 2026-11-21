@@ -139,8 +139,13 @@ from slop_imports import (  # noqa: F401,E402
     DepContext as DepContext,
     check_phantom_imports as check_phantom_imports,
     check_undeclared_imports as check_undeclared_imports,
+    collect_js_alias_prefixes as collect_js_alias_prefixes,
     collect_js_dependencies as collect_js_dependencies,
     collect_py_dependencies as collect_py_dependencies,
+)
+from slop_js_shapes import (  # noqa: F401,E402
+    check_no_new_array as check_no_new_array,
+    check_set_state_in_effect as check_set_state_in_effect,
 )
 from slop_lcom4 import (  # noqa: F401,E402
     MAX_LCOM4_FINDINGS as MAX_LCOM4_FINDINGS,

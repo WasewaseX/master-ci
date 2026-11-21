@@ -92,6 +92,15 @@ REMEDIES = {
     ),
     "lint-escape": "Fix the underlying issue or scope the suppression to one rule and line",
     "ts-suppression": "Fix the type instead of suppressing; avoid any",
+    "no-new-array": (
+        "Build arrays from a literal, Array.from({ length: n }) or "
+        "Array(n).fill() - new Array(x) with one argument reserves a "
+        "length, it does not create one element"
+    ),
+    "set-state-in-effect": (
+        "Derive the state during render or set it behind a callback - "
+        "a synchronous setState in an effect renders, runs, renders again"
+    ),
     "blanket-suppression": "Scope the suppression to a single rule with a reason",
     "step-comments": "Let the code read like code; move narration to the PR description",
     "placeholder-naming": "Rename placeholder identifiers to names that describe the data",
